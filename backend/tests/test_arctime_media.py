@@ -36,6 +36,7 @@ def test_srt_bom_multiline_and_crlf(tmp_path):
 
 
 @pytest.mark.parametrize("content", ["", "1\n00:00:02,000 --> 00:00:01,000\nwrong", "1\n00:00:00,000 --> 00:00:01,000\n",
+    "1\n00:00:00,000 --> 00:00:01,000\nvalid\n\n2\n00:00:01,000 --> 00:00:01,000\nzero duration",
     "1\n00:00:00,000 --> 00:00:01,000\nvalid\n\n2\nINVALID\nignored"])
 def test_bad_or_partial_srt_is_rejected(tmp_path, content):
     path = tmp_path / "bad.srt"
