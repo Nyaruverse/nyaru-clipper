@@ -7,7 +7,7 @@ import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from sqlmodel import Session, select
 
@@ -29,6 +29,7 @@ from app.settings import get_settings
 _WAV_SAMPLE_RATE_HZ = 16000
 _WAV_CHANNELS = 1
 _WAV_SAMPLE_WIDTH_BYTES = 2
+_WAV_DURATION_TOLERANCE_SECONDS: Final = 0.05
 
 
 @dataclass(slots=True)
@@ -197,7 +198,7 @@ def _has_valid_chunk_audio(chunk: MediaChunk) -> bool:
     except (OSError, wave.Error):
         return False
     expected_duration_seconds = chunk.end_seconds - chunk.start_seconds
-    return matches_format and abs(actual_duration_seconds - expected_duration_seconds) <= 1 / _WAV_SAMPLE_RATE_HZ
+    return matches_format and abs(actual_duration_seconds - expected_duration_seconds) <= _WAV_DURATION_TOLERANCE_SECONDS
 
 
 def _invalidate_existing_chunk_audio(work_dir: Path) -> None:

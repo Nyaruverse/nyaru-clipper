@@ -62,6 +62,16 @@ def _install_media_commands(monkeypatch: pytest.MonkeyPatch, commands: list[list
     monkeypatch.setattr("subprocess.run", fake_run)
 
 
+def test_chunk_audio_accepts_small_resampling_boundary_drift(tmp_path: Path) -> None:
+    from app.services.media_chunks import MediaChunk
+    from app.services.media_prep import _has_valid_chunk_audio
+
+    audio_path = tmp_path / "chunk.wav"
+    _write_wav(audio_path, duration_seconds=300 + 9 / 16000)
+
+    assert _has_valid_chunk_audio(MediaChunk(0, 0.0, 300.0, audio_path))
+
+
 def test_prepare_media_for_asr_creates_exact_wav_chunks_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir = tmp_path / "data"
     task_id = _create_task("https://www.bilibili.com/video/BV1mn411c7mP", data_dir=data_dir, monkeypatch=monkeypatch)

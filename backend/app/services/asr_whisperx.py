@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol, TypeVar
+from typing import Any, Callable, Final, Protocol, TypeVar
 
 from sqlmodel import Session
 
@@ -41,6 +41,7 @@ ASR_CHUNK_OUTPUT_DIRECTORY = "asr-chunks"
 ASR_CHUNK_RESULT_MANIFEST_FILENAME = "asr-result.json"
 ASR_AGGREGATE_MANIFEST_FILENAME = "asr-aggregate-manifest.json"
 ASR_AGGREGATE_MANIFEST_SCHEMA_VERSION = 1
+ASR_SEGMENT_OVERLAP_TOLERANCE_SECONDS: Final = 0.25
 
 
 @dataclass(slots=True)
@@ -124,12 +125,12 @@ def merge_asr_chunk_segments(
     for chunk, local_segments in chunks:
         chunk_duration_seconds = chunk.end_seconds - chunk.start_seconds
         for local_segment in local_segments:
-            _validate_chunk_local_segment(
+            normalized_start_seconds = _validate_chunk_local_segment(
                 local_segment,
                 chunk_duration_seconds=chunk_duration_seconds,
                 previous_end_seconds=previous_end_seconds - chunk.start_seconds,
             )
-            global_start_seconds = chunk.start_seconds + local_segment.start_seconds
+            global_start_seconds = chunk.start_seconds + normalized_start_seconds
             global_end_seconds = chunk.start_seconds + local_segment.end_seconds
             words = _rebase_chunk_words(
                 local_segment.words,
@@ -154,18 +155,28 @@ def _validate_chunk_local_segment(
     *,
     chunk_duration_seconds: float,
     previous_end_seconds: float,
-) -> None:
+) -> float:
     if (
         segment.start_seconds < 0
         or segment.end_seconds < segment.start_seconds
         or segment.end_seconds > chunk_duration_seconds
-        or segment.start_seconds < previous_end_seconds
         or not segment.text.strip()
     ):
         raise AsrFailure(
             code="invalid_chunk_output",
             message="ASR chunk transcript contains non-monotonic, overlapping, or out-of-range segments.",
         )
+    if segment.start_seconds >= previous_end_seconds:
+        return segment.start_seconds
+    if (
+        previous_end_seconds - segment.start_seconds <= ASR_SEGMENT_OVERLAP_TOLERANCE_SECONDS
+        and segment.end_seconds > previous_end_seconds
+    ):
+        return previous_end_seconds
+    raise AsrFailure(
+        code="invalid_chunk_output",
+        message="ASR chunk transcript contains non-monotonic, overlapping, or out-of-range segments.",
+    )
 
 
 def _rebase_chunk_words(

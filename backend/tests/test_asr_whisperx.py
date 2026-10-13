@@ -687,6 +687,29 @@ def test_merge_asr_chunk_segments_rebases_times_and_assigns_global_ids() -> None
     assert merged[1].words[0].start_seconds == 300.0
 
 
+def test_merge_asr_chunk_segments_clamps_short_adjacent_overlap() -> None:
+    # Given: WhisperX emits a 100 ms overlap at a segment boundary.
+    from app.services.asr_whisperx import merge_asr_chunk_segments
+    from app.services.media_chunks import MediaChunk
+    from app.services.subtitles import SubtitleSegment
+
+    chunks = [
+        (
+            MediaChunk(0, 0.0, 10.0, Path("/tmp/chunk-0000.wav")),
+            [
+                SubtitleSegment("a", 1.0, 3.0, "甲"),
+                SubtitleSegment("b", 2.9, 4.0, "乙"),
+            ],
+        )
+    ]
+
+    # When: the parent merges the chunk transcript.
+    merged = merge_asr_chunk_segments(chunks)
+
+    # Then: the second segment begins at the prior segment boundary.
+    assert [(segment.start_seconds, segment.end_seconds) for segment in merged] == [(1.0, 3.0), (3.0, 4.0)]
+
+
 def test_merge_asr_chunk_segments_rejects_overlapping_global_output() -> None:
     # Given: a chunk transcript whose local segments overlap.
     from app.services.asr_whisperx import AsrFailure, merge_asr_chunk_segments
