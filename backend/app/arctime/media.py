@@ -48,7 +48,7 @@ def parse_time(value: str) -> float:
     return seconds
 
 
-def read_subtitles(path: Path) -> list[SubtitleSegment]:
+def read_subtitles(path: Path, *, merge_contiguous_zero_duration: bool = False) -> list[SubtitleSegment]:
     content = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").strip()
     cues: list[SubtitleSegment] = []
     if path.suffix.lower() == ".ass":
@@ -79,6 +79,15 @@ def read_subtitles(path: Path) -> list[SubtitleSegment]:
             cues.append(SubtitleSegment(str(len(cues) + 1), parse_time(match[1]), parse_time(match[2]), "\n".join(lines[2:])))
     else:
         raise ValueError("Expected ASS or SRT subtitles")
+    if merge_contiguous_zero_duration:
+        normalized: list[SubtitleSegment] = []
+        for cue in cues:
+            if (cue.start_seconds == cue.end_seconds and cue.text.strip() and normalized
+                    and normalized[-1].text.strip() and normalized[-1].end_seconds == cue.start_seconds):
+                normalized[-1].text += "\n" + cue.text
+            else:
+                normalized.append(cue)
+        cues = normalized
     if not cues or any(c.start_seconds >= c.end_seconds or not c.text.strip() for c in cues):
         raise ValueError("Subtitles must contain nonempty text and positive cue durations")
     return sorted(cues, key=lambda c: (c.start_seconds, c.end_seconds))

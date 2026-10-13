@@ -1,6 +1,8 @@
 # macOS App
 
-**Nyaru Clipper.app 0.1.0** 已包含链接下载、本地字幕文字和句子时间轴、指定时间段／高光切片、进度、预览及导出。Python、yt-dlp、FFmpeg、whisper.cpp 和多语种 small 模型均内置，运行时无需终端、Homebrew 或 ArcTime 付费服务。
+**Nyaru Clipper.app 0.1.1** 已包含链接下载、本地字幕文字和句子时间轴、指定时间段／高光切片、进度、预览及导出。Python、yt-dlp、FFmpeg、whisper.cpp 和多语种 small 模型均内置，运行时无需终端、Homebrew 或 ArcTime 付费服务。
+
+0.1.1 修复识别块末尾越界和连续零时长文字片段：末尾区域按实际音频边界裁剪，允许的尾部窗口最多 30 秒，短块最多为块长一半；跨越非末尾区域或超过窗口的异常仍拒绝。普通字幕读取仍执行严格校验。
 
 ## 打开和使用
 

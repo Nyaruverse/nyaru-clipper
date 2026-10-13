@@ -89,6 +89,71 @@ def test_process_error_preserves_no_successful_chunk(tmp_path, engine, monkeypat
     assert not (tmp_path / "asr" / "chunk-0001.json").exists()
 
 
+def test_small_terminal_timestamp_overrun_is_clipped_and_cached(tmp_path, engine, monkeypatch):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    calls = fake_tools(monkeypatch, content="1\n00:04:57,000 --> 00:04:59,000\n前一句\n\n"
+                       "2\n00:04:59,000 --> 00:05:01,000\n跨越分块边界\n")
+    cues = engine.transcribe(video, tmp_path, 300)
+    assert [(cue.start_seconds, cue.end_seconds) for cue in cues] == [(297, 299), (299, 300)]
+    assert engine.transcribe(video, tmp_path, 300) == cues
+    assert len(calls) == 2
+    cached = json.loads((tmp_path / "asr/chunk-0001.json").read_text())
+    assert cached["segments"][-1]["end_seconds"] == 300
+
+
+@pytest.mark.parametrize("end", ["00:05:02,040", "00:05:12,000", "00:05:30,000"])
+def test_terminal_asr_window_overrun_is_clipped(tmp_path, engine, monkeypatch, end):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    fake_tools(monkeypatch, content=f"1\n00:04:57,960 --> {end}\n末尾一句\n")
+    cues = engine.transcribe(video, tmp_path, 300)
+    assert [(cue.start_seconds, cue.end_seconds, cue.text) for cue in cues] == [(297.96, 300, "末尾一句")]
+
+
+@pytest.mark.parametrize("timing", ["00:04:57,960 --> 00:05:30,001", "00:02:00,000 --> 00:05:02,040"])
+def test_nonterminal_or_excessive_asr_overrun_is_rejected(tmp_path, engine, monkeypatch, timing):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    fake_tools(monkeypatch, content=f"1\n{timing}\n异常时间\n")
+    with pytest.raises(ValueError, match="timestamps exceed chunk duration"):
+        engine.transcribe(video, tmp_path, 300)
+    assert not (tmp_path / "asr/chunk-0001.json").exists()
+
+
+def test_fractional_final_chunk_clips_end_without_zero_length_cues(tmp_path, engine, monkeypatch):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    fake_tools(monkeypatch, content="1\n00:00:07,000 --> 00:00:09,000\n最后一句\n\n"
+               "2\n00:00:08,300 --> 00:00:09,000\n音频以外\n")
+    cues = engine.transcribe(video, tmp_path, 8.27225)
+    assert len(cues) == 1
+    assert (cues[0].start_seconds, cues[0].end_seconds) == (7, 8.27225)
+
+
+def test_zero_duration_asr_fragment_merges_into_contiguous_previous_cue(tmp_path, engine, monkeypatch):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    calls = fake_tools(monkeypatch, content="1\n00:00:56,260 --> 00:00:58,760\n上一句\n\n"
+                       "2\n00:00:58,760 --> 00:00:58,760\n补充文字\n\n"
+                       "3\n00:00:58,760 --> 00:01:02,080\n下一句\n")
+    cues = engine.transcribe(video, tmp_path, 300)
+    assert [(cue.start_seconds, cue.end_seconds, cue.text) for cue in cues] == [
+        (56.26, 58.76, "上一句\n补充文字"), (58.76, 62.08, "下一句")]
+    assert engine.transcribe(video, tmp_path, 300) == cues
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("timing", ["00:00:01,000 --> 00:00:01,000", "00:00:02,000 --> 00:00:01,000"])
+def test_isolated_zero_or_reversed_asr_cue_is_rejected(tmp_path, engine, monkeypatch, timing):
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"source")
+    fake_tools(monkeypatch, content=f"1\n{timing}\n文字\n")
+    with pytest.raises(ValueError, match="positive cue durations"):
+        engine.transcribe(video, tmp_path, 10)
+    assert not (tmp_path / "asr/chunk-0001.json").exists()
+
+
 def test_missing_or_invalid_model_fails_preflight(tmp_path, monkeypatch):
     monkeypatch.setattr(local_asr.media, "tool_path", lambda name: name)
     with pytest.raises(FileNotFoundError):

@@ -6,6 +6,8 @@ belong to 2026-10-13; the installed app was not operated again.
 
 ## Direction and status
 
+Subsequent live repair (2026-10-14): the current downloaded-video task failed with a 2.040-second terminal overrun. Bounded terminal-window handling repaired it; this worktree built installed 0.1.1 (build 2), and recovery produced 658 cues and two clips. 99 selected macOS tests and native completion/playback checks passed. See [Issue #1 retest](macos-app-issue1-retest-2026-10-14.md). Changes remain uncommitted/unpushed; earlier branch/runtime snapshots below retain their historical scope.
+
 The approved route is a standalone local companion and macOS app: URL download,
 offline text and sentence timestamps, explicit ranges or subtitle-rule highlights,
 progress, preview, export and interrupted-run recovery. It does not launch ArcTime

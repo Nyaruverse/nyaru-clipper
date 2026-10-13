@@ -1,9 +1,15 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.0** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.1** includes URL download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
 Python, yt-dlp, FFmpeg, whisper.cpp and the multilingual small model are bundled.
 Runtime use requires no terminal, Homebrew or paid ArcTime service.
+
+0.1.1 handles terminal ASR overruns and contiguous zero-duration text fragments.
+Terminal cues are clipped to actual audio bounds; the accepted tail window is at
+most 30 seconds, or half the duration for short chunks. Overruns outside that
+terminal region or beyond the window remain invalid. Ordinary subtitle parsing
+retains strict validation.
 
 ## Use
 

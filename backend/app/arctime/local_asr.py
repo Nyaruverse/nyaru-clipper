@@ -13,6 +13,7 @@ from app.services.subtitles import SubtitleSegment
 
 DEFAULT_MODEL = Path.home() / ".cache" / "nyaru-clipper" / "models" / "ggml-small.bin"
 CHUNK_SECONDS = 300
+ASR_TAIL_WINDOW_SECONDS = 30.0
 
 
 def _segments_hash(rows: list[dict]) -> str:
@@ -111,8 +112,10 @@ class LocalASR:
                 raise RuntimeError(f"Local ASR failed to produce subtitles; see asr/{log_path.name}")
             if not subtitle.read_text(encoding="utf-8-sig").strip():
                 return []
-            segments = media.read_subtitles(subtitle)
-            if any(c.end_seconds > length + .25 for c in segments):
+            segments = media.read_subtitles(subtitle, merge_contiguous_zero_duration=True)
+            tail_window = min(ASR_TAIL_WINDOW_SECONDS, length / 2)
+            if any(c.end_seconds > length and (c.start_seconds < length - tail_window
+                                               or c.end_seconds > length + tail_window) for c in segments):
                 raise ValueError("Local ASR timestamps exceed chunk duration")
             return [asdict(SubtitleSegment(c.id, c.start_seconds, min(c.end_seconds, length), c.text))
                     for c in segments if c.start_seconds < length]
