@@ -14,6 +14,8 @@
 
 优先阅读以下文档：
 
+- [项目交接](docs/project-handoff.zh-CN.md)：当前本地工具与 macOS App 的交付、验收、数据保护和待办
+
 - `docs/deployment-guide.md`：English deployment guide, recommends `uv + pnpm` as the primary local and self-hosted workflow
 - `docs/deployment-guide.zh-CN.md`：中文部署指南，明确 `uv + pnpm` 为主路径，Docker 仅作为回退方案
 - `docs/operator-manual.md`：English operator manual
