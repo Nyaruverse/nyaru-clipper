@@ -70,8 +70,8 @@ test("renders the task overview and selected-stage inspector in production Chrom
   await page.screenshot({ path: "/tmp/nyaru-task13-evidence/overview-stage-selected.png", fullPage: true });
 });
 
-test("keeps a Japanese title clause unbroken at the compact desktop width", async ({ page }) => {
-  const title = "映像の中にある字幕レビューを確認する";
+test("keeps a long Japanese title readable across native CJK lines at the compact desktop width", async ({ page }) => {
+  const title = "映像の中にある字幕レビューを確認する。音声の整合性を確認して、映像の場面ごとの文脈を確認する。";
   const japaneseOverview = { ...taskOverview, title };
   await page.setViewportSize({ height: 900, width: 1280 });
   await page.route("http://127.0.0.1:8000/api/**", async (route) => {
@@ -86,87 +86,29 @@ test("keeps a Japanese title clause unbroken at the compact desktop width", asyn
   await page.goto("/workstation/tasks/task-e2e-overview");
 
   const heading = page.getByRole("heading", { name: title });
-  const locationClause = heading.locator(".ny-task-overview__title-phrase", { hasText: "映像の中にある" });
-  const reviewClause = heading.locator(".ny-task-overview__title-phrase", { hasText: "字幕レビューを確認する" });
   await expect(heading).toBeVisible();
-  await expect(locationClause).toHaveText("映像の中にある");
-  await expect(reviewClause).toHaveText("字幕レビューを確認する");
-  expect(await locationClause.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    return range.getClientRects().length;
-  })).toBe(1);
-  expect(await reviewClause.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    return range.getClientRects().length;
-  })).toBe(1);
+  await expect(heading).toHaveAttribute("lang", "ja");
+  const titleLines = await heading.evaluate((element) => {
+    const textNode = element.firstChild;
+    if (!(textNode instanceof Text)) return [];
+
+    const lines = new Map<number, string>();
+    for (let index = 0; index < textNode.length; index += 1) {
+      const range = document.createRange();
+      range.setStart(textNode, index);
+      range.setEnd(textNode, index + 1);
+      const rect = range.getBoundingClientRect();
+      lines.set(Math.round(rect.top), `${lines.get(Math.round(rect.top)) ?? ""}${textNode.textContent?.[index] ?? ""}`);
+    }
+    return [...lines.values()];
+  });
+
+  expect(titleLines.length).toBeGreaterThan(1);
+  expect(titleLines.every((line) => line.length > 1)).toBe(true);
+  expect(titleLines.every((line) => !/^[のにへをがはもとでやかねよ]/u.test(line))).toBe(true);
+  expect(titleLines.join("|")).not.toContain("確|認する");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await page.screenshot({ path: "/tmp/nyaru-japanese-title-evidence/task-overview-1280.png", fullPage: true });
-});
-
-test("moves a Japanese particle with its content at the twelve-character boundary", async ({ page }) => {
-  const title = "映像の字幕の確認の場面の表示を確認する";
-  const boundaryOverview = { ...taskOverview, title };
-  await page.setViewportSize({ height: 900, width: 1280 });
-  await page.route("http://127.0.0.1:8000/api/**", async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
-    if (pathname === "/api/v2/tasks/task-e2e-overview") return route.fulfill({ json: boundaryOverview });
-    if (pathname.endsWith("asr-segments.json")) return route.fulfill({ json: { segments: [{ id: "seg-0001", start_seconds: 0, end_seconds: 1.5, text: "こんにちは" }] } });
-    if (pathname.endsWith("subtitles.zh-ja.json")) return route.fulfill({ json: { segments: [{ id: "seg-0001", start_seconds: 0, end_seconds: 1.5, text: "こんにちは", translated_text: "字幕" }] } });
-    if (pathname.endsWith("highlight-candidates.json")) return route.fulfill({ json: { candidate_count: 0, candidates: [], no_candidates: "候補はありません" } });
-    return route.fulfill({ json: {} });
-  });
-
-  await page.goto("/workstation/tasks/task-e2e-overview");
-
-  const heading = page.getByRole("heading", { name: title });
-  const phrase = heading.locator(".ny-task-overview__title-phrase", { hasText: "の表示を確認する" });
-  await expect(heading).toBeVisible();
-  await expect(phrase).toHaveText("の表示を確認する");
-  expect(await phrase.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    return range.getClientRects().length;
-  })).toBe(1);
-  expect(await heading.locator(".ny-task-overview__title-phrase").allTextContents()).not.toContain("映像の字幕の確認の場面の");
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.screenshot({ path: "/tmp/nyaru-japanese-title-evidence/task-overview-boundary-1280.png", fullPage: true });
-});
-
-test("starts a new title phrase after a split Japanese predicate", async ({ page }) => {
-  const title = "映像の字幕レビューを確認して映像の場面";
-  const predicateOverview = { ...taskOverview, title };
-  await page.setViewportSize({ height: 900, width: 1280 });
-  await page.route("http://127.0.0.1:8000/api/**", async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
-    if (pathname === "/api/v2/tasks/task-e2e-overview") return route.fulfill({ json: predicateOverview });
-    if (pathname.endsWith("asr-segments.json")) return route.fulfill({ json: { segments: [{ id: "seg-0001", start_seconds: 0, end_seconds: 1.5, text: "こんにちは" }] } });
-    if (pathname.endsWith("subtitles.zh-ja.json")) return route.fulfill({ json: { segments: [{ id: "seg-0001", start_seconds: 0, end_seconds: 1.5, text: "こんにちは", translated_text: "字幕" }] } });
-    if (pathname.endsWith("highlight-candidates.json")) return route.fulfill({ json: { candidate_count: 0, candidates: [], no_candidates: "候補はありません" } });
-    return route.fulfill({ json: {} });
-  });
-
-  await page.goto("/workstation/tasks/task-e2e-overview");
-
-  const heading = page.getByRole("heading", { name: title });
-  const predicatePhrase = heading.locator(".ny-task-overview__title-phrase", { hasText: "を確認して" });
-  const followingPhrase = heading.locator(".ny-task-overview__title-phrase", { hasText: "映像の場面" });
-  await expect(heading).toBeVisible();
-  await expect(predicatePhrase).toHaveText("を確認して");
-  await expect(followingPhrase).toHaveText("映像の場面");
-  expect(await predicatePhrase.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    return range.getClientRects().length;
-  })).toBe(1);
-  expect(await followingPhrase.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    return range.getClientRects().length;
-  })).toBe(1);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.screenshot({ path: "/tmp/nyaru-japanese-title-evidence/task-overview-predicate-1280.png", fullPage: true });
 });
 
 test("recovers a failed stage and exports a confirmed clip", async ({ page }) => {
