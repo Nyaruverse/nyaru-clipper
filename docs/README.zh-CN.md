@@ -9,6 +9,15 @@
 
 当前中文文档对应关系如下：
 
+- [project-handoff.zh-CN.md](project-handoff.zh-CN.md)：当前项目交接，含本地工具／macOS App、验收、运行状态及待办
+- [project-handoff.md](project-handoff.md)：对应英文交接
+
+- `macos-app.zh-CN.md`：本地工具的 macOS App、数据目录与构建说明
+- `macos-app.md`：对应英文说明
+
+- `local-companion.zh-CN.md`：本地链接下载、字幕识别、时间轴、指定片段／高光切片及恢复
+- `local-companion.md`：对应英文说明
+
 - `user-manual.zh-CN.md`：用户手册（中文）
 - `operator-manual.zh-CN.md`：运维/操作手册（中文）
 - `deployment-guide.zh-CN.md`：部署指南（中文）

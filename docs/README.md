@@ -9,6 +9,15 @@ Start here for setup and local deployment:
 
 Available documents:
 
+- [project-handoff.md](project-handoff.md): Current local companion/macOS handoff, evidence, runtime snapshot and next actions
+- [project-handoff.zh-CN.md](project-handoff.zh-CN.md): Chinese handoff
+
+- `macos-app.md`: Bundled macOS companion, persistent data and build instructions
+- `macos-app.zh-CN.md`: Chinese macOS app guide
+
+- `local-companion.md`: Local URL download, offline ASR, range/highlight clipping and recovery
+- `local-companion.zh-CN.md`: Chinese local companion guide
+
 - `user-manual.md`: English user manual
 - `operator-manual.md`: English operator manual
 - `deployment-guide.md`: English deployment guide
