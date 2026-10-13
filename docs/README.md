@@ -9,6 +9,12 @@ Start here for setup and local deployment:
 
 Available documents:
 
+- [project-handoff.md](project-handoff.md): Browser companion handoff, branch separation, evidence and next actions
+- [project-handoff.zh-CN.md](project-handoff.zh-CN.md): Chinese handoff
+
+- `local-companion.md`: Local URL download, offline ASR, range/highlight clipping and recovery
+- `local-companion.zh-CN.md`: Chinese local companion guide
+
 - `user-manual.md`: English user manual
 - `operator-manual.md`: English operator manual
 - `deployment-guide.md`: English deployment guide
