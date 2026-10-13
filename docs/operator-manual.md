@@ -276,7 +276,7 @@ Media preparation creates exact 300-second task-local WAV slices for new runs. T
 
 During a live run, the task overview can expose safe substep summaries from `execution_progress` and the stage summary. `ASR 2/5` and `Translation 4/5` mean completed work slices out of the task total. `Translation merge` means per-slice translations are being assembled, while `Translation proofread` means the final required text review is running. These strings do not expose an API key, provider header, prompt, raw response, cookie, host path, or media payload.
 
-The DeepSeek key is backend-only. Set `APP_DEEPSEEK_API_KEY` in the API/worker process environment or its secret store, and never in the browser, task metadata, frontend file, artifact, or log. The only task-derived data that leave the workstation for proofreading are subtitle text, stable row IDs, and timestamps; source video and audio do not. The fixed server prompt and raw provider response remain backend-only.
+The DeepSeek key is backend-only. Place it in the Git-ignored `config/deepseek.env` file before starting the API and worker; `APP_DEEPSEEK_CONFIG_FILE` can point to an external secret file, and individual `APP_DEEPSEEK_*` process variables override file values. Never place it in the browser, task metadata, frontend file, artifact, or log. The only task-derived data that leave the workstation for proofreading are subtitle text, stable row IDs, and timestamps; source video and audio do not. The fixed server prompt and raw provider response remain backend-only.
 
 ### Resume and failure recovery
 

@@ -276,7 +276,7 @@ worker 会一次领取一个待处理的持久化任务。
 
 任务运行期间，任务概览可以从 `execution_progress` 和阶段摘要显示安全的子步骤信息。`ASR 2/5` 和 `Translation 4/5` 表示已完成的工作分片数与任务总数。`Translation merge` 表示正在汇总每个分片的翻译，`Translation proofread` 表示必需的最终文本校对正在运行。这些字符串不会泄露 API Key、供应商请求头、提示词、原始响应、Cookie、主机路径或媒体载荷。
 
-DeepSeek Key 仅供后端使用。请在 API/worker 的进程环境或密钥存储中设置 `APP_DEEPSEEK_API_KEY`，绝不能放入浏览器、任务元数据、前端文件、产物或日志。校对时离开工作站的任务派生数据只有字幕文本、稳定行 ID 和时间戳；源视频与音频不会外发。固定的服务端提示词和原始供应商响应始终只保留在后端。
+DeepSeek Key 仅供后端使用。请在启动 API/worker 前写入被 Git 忽略的 `config/deepseek.env`；也可用 `APP_DEEPSEEK_CONFIG_FILE` 指向外部密钥文件，单独的 `APP_DEEPSEEK_*` 进程环境变量会覆盖文件中的值。绝不能放入浏览器、任务元数据、前端文件、产物或日志。校对时离开工作站的任务派生数据只有字幕文本、稳定行 ID 和时间戳；源视频与音频不会外发。固定的服务端提示词和原始供应商响应始终只保留在后端。
 
 ### 恢复与失败处理
 

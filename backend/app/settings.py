@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
+DEFAULT_DEEPSEEK_CONFIG_FILE: Final = PROJECT_ROOT / "config" / "deepseek.env"
 
 
 class Settings(BaseSettings):
@@ -51,7 +55,9 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    return Settings()
+    configured_file = os.getenv("APP_DEEPSEEK_CONFIG_FILE")
+    config_file = Path(configured_file) if configured_file is not None else DEFAULT_DEEPSEEK_CONFIG_FILE
+    return Settings(_env_file=config_file)
 
 
 def get_bbdown_extra_args(settings: Settings) -> list[str]:
