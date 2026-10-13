@@ -32,6 +32,7 @@
 - Node.js `>=20`
 - `pnpm@10.33.2`，或同一代 pnpm 10 版本
 - 主机 `PATH` 上可用的媒体工具：`BBDown`、`yt-dlp`、`ffmpeg`、`ffprobe`
+- Linux 或 WSL 的浏览器主机需安装 CJK 字体包（例如 `fonts-noto-cjk`），以保证工作台中的中文和日文可读
 
 后端依赖的唯一事实来源是 `backend/pyproject.toml`。仓库中的 `backend/requirements.txt` 由 `./scripts/export_backend_requirements.sh` 生成，不应手工修改。
 
@@ -48,6 +49,12 @@
 
 ```bash
 pnpm --dir web install --frozen-lockfile
+```
+
+如果 Ubuntu/WSL 主机尚未提供 CJK 字体，请在首次打开 Web UI 前执行一次：
+
+```bash
+sudo apt-get update && sudo apt-get install --yes fonts-noto-cjk
 ```
 
 本地脚本会自动创建仓库内的数据与缓存目录。默认值如下：
@@ -440,14 +447,16 @@ warning 的含义如下：
 
 逐分片翻译合并后，后端向 DeepSeek 发送的任务派生数据只有双语字幕文本、稳定行 ID 与时间戳，用于必需的校对步骤。不会发送源视频、音频、Cookie、主机路径、API Key 或浏览器状态。固定的服务端提示词和原始供应商响应始终只保留在后端。浏览器只会看到安全的阶段进度/摘要，例如 `ASR 2/5`、`Translation 4/5`、`Translation merge` 和 `Translation proofread`。
 
-仅在启动 API 与 worker 的进程环境中设置供应商 Key：
+默认情况下，API 与 worker 会在启动时读取仓库根目录的 `config/deepseek.env`。先创建仅本机可见的配置文件：
 
 ```bash
-export APP_DEEPSEEK_API_KEY='请在 shell 或密钥存储中设置'
+cp config/deepseek.env.example config/deepseek.env
+# 编辑 config/deepseek.env，填写 APP_DEEPSEEK_API_KEY
+chmod 600 config/deepseek.env
 ./scripts/dev_up.sh
 ```
 
-不要把 Key 放入 `VITE_*` 变量、前端 `.env` 文件、任务载荷、浏览器存储、日志或产物。worker 通过配置的服务端端点使用 `deepseek-v4-flash`；浏览器中不存在供应商控制项。
+`config/deepseek.env` 已被 Git 忽略。若密钥由外部密钥存储管理，可用 `APP_DEEPSEEK_CONFIG_FILE=/绝对路径/secret.env` 指向其他文件；单独的 `APP_DEEPSEEK_*` 进程环境变量仍会覆盖文件中的值。不要把 Key 放入 `VITE_*` 变量、前端 `.env` 文件、任务载荷、浏览器存储、日志或产物。worker 通过配置的服务端端点使用 `deepseek-v4-flash`；浏览器中不存在供应商控制项。
 
 如果校对期间翻译失败，请使用安全失败码和阶段日志摘要恢复：
 
