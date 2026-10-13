@@ -1,0 +1,7 @@
+fastapi==0.143.0
+uvicorn==0.54.0
+sqlmodel==0.0.48
+pydantic-settings==2.15.0
+anyio==4.15.1
+yt-dlp==2026.8.19
+pyinstaller==6.22.3

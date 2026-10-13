@@ -4,7 +4,7 @@
 
 ## 图形界面
 
-本分支为 `codex/local-companion-web`；双击启动且内置工具及模型的版本单独维护在 `codex/local-companion-macos`。
+双击启动且内置工具及模型的版本见 [macOS App](macos-app.zh-CN.md)。
 
 在项目根目录执行。首次构建界面需要 Node.js 20 以上和项目指定的 pnpm；Corepack 会使用 `web/package.json` 指定的版本。
 

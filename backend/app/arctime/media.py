@@ -113,6 +113,11 @@ def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[
 
 
 def tool_path(name: str) -> str:
+    if getattr(sys, "frozen", False):
+        path = Path(sys.executable) if name == "yt-dlp" else Path(sys._MEIPASS) / name
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        raise FileNotFoundError(f"Bundled tool is missing: {name}")
     found = shutil.which(name)
     bundled = Path(__file__).resolve().parents[3] / ".bin" / name
     if found:
@@ -144,6 +149,8 @@ def download_video(url: str, directory: Path) -> Path:
     if (directory / "source.mp4").exists():
         raise FileExistsError("Download destination already exists")
     downloader = [tool_path("yt-dlp")]
+    if getattr(sys, "frozen", False):
+        downloader.append("--yt-dlp")
     result = subprocess.run([*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
                              "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
                              "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),

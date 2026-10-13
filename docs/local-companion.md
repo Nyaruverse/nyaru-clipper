@@ -4,7 +4,7 @@ The standalone browser GUI and CLI download one video URL, generate original-lan
 
 ## Browser GUI
 
-The double-click macOS package is maintained on `codex/local-companion-macos`; this branch is `codex/local-companion-web`.
+For the double-click package with bundled tools and model, see [macOS app](macos-app.md).
 
 From the repository root, build the frontend once with Node.js 20+ and the project's pinned pnpm. Corepack uses the version in `web/package.json`.
 
