@@ -1,0 +1,15 @@
+# DeepSeek Japanese/Chinese bilingual subtitles
+
+Select `deepseek-flash` or `deepseek-v4-pro` under Translation model and save independently of the Key. The `deepseek_model` field is stored in the same configuration and restored on restart; old Key-only files default to Flash. Started translations keep their recorded model when resumed; the current task model is shown in the panel. Changing the default applies to tasks that have not started translation and never overwrites an existing translation or mixes models within cached batches.
+
+In the local companion and macOS App 0.1.4 (build 5), select a completed task, enter a DeepSeek API Key in the bilingual panel, save it to the configuration file and generate bilingual subtitles. Translation sends existing subtitle text to the official DeepSeek API and consumes API credit. It does not upload, download, recognize or encode video.
+
+The Key is persisted in `config.json` at the companion run root and loaded on startup. The macOS path is `~/Library/Application Support/Nyaru Clipper/runs/config.json`. Saving a new Key atomically replaces the configuration with owner-only read/write permissions (0600). It is not returned by the API or stored in task manifests, logs or browser storage. The file contains plaintext credentials; do not share or commit it. To configure manually, use `{"deepseek_api_key": "YOUR_KEY"}`, set permissions to 0600 and restart the App; an empty string disables the Key. Invalid configurations show an error and can be repaired by saving again. Progress shows translated/total cues. Authentication, balance, network and malformed-response failures remain separate from the completed video task. Retrying resumes validated translation batches.
+
+New outputs are `subtitles.ja-zh.srt` and `clip-NNN.ja-zh.srt`. Each cue contains Japanese followed by simplified Chinese and preserves original timing. Clip timing uses the original selection, shifted to zero. Switch original/bilingual preview and download either subtitle version. Existing videos, original subtitles, ASR caches and `job.json` remain unchanged.
+
+The provider uses the selected model (default `deepseek-flash`), non-thinking JSON output and batches of at most 40 cues. It accepts exactly one nonempty translation per ordered input ID; truncated or invalid responses cannot publish results. Rate limits and temporary service/network failures get at most three attempts. A separate `translation.json` binds validated batches to the source checksum, model and prompt revision; it is not served by the download API. Do not edit caches. Missing or changed completed output is reported and preserved for inspection.
+
+Translations inherit ASR errors. This version does not correct Japanese text, add an editing/proofreading interface, or remove existing burned-in source subtitles. Bilingual SRT files are external tracks; existing MP4s retain their original pixels. Select the bilingual SRT in your player.
+
+API references: [Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/) and [model documentation](https://api-docs.deepseek.com/quick_start/pricing/), checked 2026-10-14.
