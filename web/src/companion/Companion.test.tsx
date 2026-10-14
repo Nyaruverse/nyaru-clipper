@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 
 import { Companion } from "./Companion";
+import { defaultStyle } from "./subtitleStyle";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -161,4 +162,41 @@ it("uses completed detail immediately when the history poll still says running",
   await screen.findByText("测试字幕");
   expect(screen.getByRole("button", { name: "开始处理" })).toBeEnabled();
   expect(within(screen.getByRole("region", { name: "任务记录" })).getByText("已完成")).toBeInTheDocument();
+});
+
+it('blocks new jobs while another history job exports subtitles', async () => {
+  fakeApi();
+  const original = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith('/jobs') && !options) return new Response(JSON.stringify([
+      {id:'aabbccddeeff',state:'completed',started_at:0,mode:'ranges'},
+      {id:'otherjob',state:'completed',started_at:0,mode:'ranges',subtitle_export_busy:true},
+    ]));
+    return original(url,options);
+  }));
+  mount();
+  await screen.findByText('测试字幕');
+  expect(screen.getByRole('button',{name:'已有任务处理中'})).toBeDisabled();
+  expect(screen.getByLabelText('视频链接')).toBeDisabled();
+});
+
+it('allows retry and editing after a subtitle export was interrupted', async () => {
+  fakeApi();
+  const original = globalThis.fetch;
+  const posts: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === 'POST') posts.push(url);
+    if (url.endsWith('/jobs') && !options) return new Response(JSON.stringify([{id:'aabbccddeeff',state:'completed',started_at:0,mode:'ranges'}]));
+    if (url.endsWith('/subtitle-settings')) return new Response(JSON.stringify({style:defaultStyle,templates:[],arctime_templates:[],burn_available:true,native_handoff_available:false}));
+    if (url.endsWith('/subtitle-exports')) return new Response(JSON.stringify({active:{state:'interrupted',message:'字幕导出已中断，请重新导出',error:null},outputs:[]}));
+    return original(url, options);
+  }));
+  mount();
+  await screen.findByText('字幕导出已中断，请重新导出');
+  expect(screen.getByRole('button',{name:'开始处理'})).toBeEnabled();
+  expect(screen.getByLabelText('原文字体')).toBeEnabled();
+  const retry = screen.getByRole('button',{name:'导出 ASS'});
+  expect(retry).toBeEnabled();
+  fireEvent.click(retry);
+  await waitFor(()=>expect(posts).toContain('/companion-api/jobs/aabbccddeeff/subtitle-export'));
 });
