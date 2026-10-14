@@ -2,6 +2,11 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, Check, Film, Plus, Scissors, X } from "lucide-react";
 
+import { SubtitleEditor } from "./SubtitleEditor";
+import { SubtitlePreview } from "./SubtitlePreview";
+import { SubtitleExports, useSubtitleExports } from "./SubtitleExports";
+import { defaultStyle, subtitleApi, type SubtitleStyle, type SubtitleSettings } from "./subtitleStyle";
+
 interface Clip {
   video: string;
   subtitles: string;
@@ -14,6 +19,7 @@ interface Segment { id: string; start_seconds: number; end_seconds: number; text
 interface Job {
   id: string;
   state: string;
+  subtitle_export_busy?: boolean;
   phase: string;
   message: string;
   error: string | null;
@@ -54,7 +60,7 @@ function parseTime(value: string): number {
   if (!Number.isFinite(result)) throw new Error("时间必须为有限数值");
   return result;
 }
-const running = (job?: Job) => !!job && (! ["completed", "failed", "interrupted"].includes(job.state) || job.translation?.state === "translating");
+const running = (job?: Job) => !!job && (! ["completed", "failed", "interrupted"].includes(job.state) || job.translation?.state === "translating" || job.subtitle_export_busy);
 const statusLabel = (job: Job) => ({ completed: "已完成", failed: "失败", interrupted: "已中断", preparing: "检查环境", downloading: "下载中", downloaded: "下载完成", transcribing: "识别中", subtitles_ready: "字幕已生成", exporting: "导出中" }[job.state] ?? "处理中");
 const fileUrl = (id: string, name: string, download = false) => `/companion-api/jobs/${id}/files/${encodeURIComponent(name)}${download ? "?download=true" : ""}`;
 
@@ -77,9 +83,15 @@ export function Companion() {
   const history = useQuery({ queryKey: ["companion", "jobs"], queryFn: () => api<Job[]>("/jobs"), refetchInterval: 3000 });
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
+  const settings = useQuery({queryKey:["companion","subtitle-settings"],queryFn:()=>subtitleApi<SubtitleSettings>("/subtitle-settings")});
+  const [styleDraft,setStyleDraft] = useState<SubtitleStyle | null>(null);
+  const [project,setProject] = useState<string | null>(null);
+  const style = styleDraft ?? settings.data?.style ?? defaultStyle;
+  const exports = useSubtitleExports(selectedId);
+  const exportBusy = exports.data?.active?.state === "exporting";
   const job = detail.data;
   const visibleJobs = history.data?.map(item => item.id === job?.id ? job : item);
-  const busy = visibleJobs?.some(running) || running(job);
+  const busy = visibleJobs?.some(running) || running(job) || exportBusy;
   const create = useMutation({ mutationFn: (payload: JobInput) => api<{ id: string }>("/jobs", payload),
     onSuccess: result => { setSelectedId(result.id); setPreview("source.mp4"); void queryClient.invalidateQueries({ queryKey: ["companion", "jobs"] }); },
     onError: err => setError(err.message) });
@@ -202,20 +214,22 @@ export function Companion() {
           {job?.has_source ? <>
             <div className="companion-preview-tabs"><button className="ny-button" aria-pressed={!clip} onClick={() => setPreview("source.mp4")}>完整视频</button>{job.clips.map((item, index) => <button className="ny-button" key={item.video} aria-label={`预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}>切片 {index + 1}</button>)}</div>
             {hasBilingual && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
-            <video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
+            <SubtitlePreview video={video} source={`${job.id}/${preview}`} segments={job.segments} bilingual={showBilingual ? job.bilingual_segments : []} offset={clip?.start ?? 0} style={style}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
               {(clip || job.segments.length > 0) && <track key={subtitleFile} kind="subtitles" src={fileUrl(job.id, subtitleFile)} srcLang={showBilingual ? "zh" : job.language === "auto" ? "und" : job.language} label={showBilingual ? "中日双语" : "识别字幕"} default />}
-            </video>
+            </video></SubtitlePreview>
             <div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
             <div className="companion-timeline" aria-label="切片时间轴">{job.clips.map((item, index) => <button key={item.video} aria-label={`在时间轴预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}><span className="companion-timeline-fill" style={{ left: `${item.start / (job.duration ?? 1) * 100}%`, width: `${(item.end - item.start) / (job.duration ?? 1) * 100}%` }} /><span>切片 {index + 1} · {time(item.start)} — {time(item.end)}</span></button>)}</div>
           </> : <div className="companion-empty-preview"><Film size={42} strokeWidth={1} /><strong>你的下一段精彩，从这里开始</strong><p>下载完成后可以预览视频<br />字幕和切片会随处理进度出现</p></div>}
           {job && visibleSegments.length > 0 && <details className="companion-transcript" open><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击时间跳转原视频</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} onClick={() => { setPreview("source.mp4"); setSeek(segment.start_seconds); }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
         </section>
+        <SubtitleEditor settings={settings.data} error={settings.error} style={style} onStyle={setStyleDraft} project={project} onProject={setProject} busy={!!busy} />
         <section className="companion-panel companion-results" aria-label="导出结果">
           <div className="companion-section-heading"><div className="companion-panel-title"><span className="companion-number">04</span><h2>导出结果</h2></div><span className="companion-muted">{job?.clips.length ?? 0} 个切片</span></div>
           {job?.segments.length ? <div className="companion-downloads"><a className="ny-button" href={fileUrl(job.id, "subtitles.srt", true)}><ArrowDownToLine size={16} />完整字幕 SRT</a><a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a></div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
           {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.ja-zh.srt", true)}>完整双语字幕 SRT</a>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
           {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>切片 {String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p></div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{hasBilingual && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.subtitles.replace(/\.srt$/, ".ja-zh.srt"), true)}>双语 SRT</a>}</div></div>)}
+          {job && job.segments.length > 0 && <SubtitleExports id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} busy={!!busy || !settings.data?.style} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时，下载视频与同名 SRT 即可继续编辑。</p>}
         </section>
       </div>

@@ -175,3 +175,7 @@ The strategy is **mixed, ruled paper**: a small-radius ivory plane, a 1 px warm-
 | Item | Location | Why accepted | Owner / exit |
 | --- | --- | --- | --- |
 | OS-dependent CJK glyph rendering differences | System font stacks across supported desktop OSes | The product deliberately avoids runtime font downloads; exact glyph shapes and metrics vary by installed OS fonts while the declared fallback stacks preserve legibility. | Re-check screenshot/CJK QA on each supported operator OS before workstation cutover; no other accessibility debt is accepted. |
+
+### Companion subtitle editing and preview
+
+The existing companion panels, native labelled fields, quiet buttons and semantic error/status text also serve subtitle style editing. A collapsed details panel holds two language fieldsets, stacking at narrow mobile widths. Template deletion and replacement use an inline confirmation with explicit Confirm/Cancel actions. Persisted defaults and import failures remain visible. Export controls name language and full-video/clip scope; unsupported burn-in and busy operations are disabled with explanatory text. Subtitle colors and reference-canvas dimensions are user content, not interface theme tokens. A video-image-aligned overlay remains inside the fullscreen wrapper; native captions are available by switching off styled preview. Installed font rendering can differ slightly from libass.
