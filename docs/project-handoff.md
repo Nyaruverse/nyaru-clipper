@@ -1,64 +1,190 @@
 # Browser companion handoff
 
-**Git submission scope (2026-10-14):** This update submits the bilingual translation, persistent Key/model settings, App 0.1.4 packaging and paired technical acceptance records to the three existing development branches. Earlier uncommitted/unpushed statements describe their dated snapshots. Use `git log -1` and `git ls-remote origin` for exact current source and remote heads; private configuration, media, models, build bundles and `.omo` evidence remain local.
+Verified: **2026-10-15, Asia/Shanghai**. This checkout owns the shared CLI/browser companion, without native App packaging.
 
-**Bilingual update (2026-10-14):** The shared companion now supports DeepSeek Japanese-to-Chinese bilingual subtitles, private persistent Key/model configuration, Flash/V4 Pro selection, resumable batches and full/clip preview/export. Installed App 0.1.4 completed 658 and 1448 existing cues, preserving all 86 originals; original timestamps, six clip offsets, eight download/preview files and native full/clip playback and SRT exports were verified. See [real acceptance](deepseek-real-translation-acceptance-2026-10-14.md) and [guide](deepseek-bilingual.md). Historical pending-provider statements in earlier records retain their observation scope; full semantic proofreading is incomplete.
+The current handoff replaces accumulated snapshots; the exact prior text is retained in the [historical attachment](project-handoff-history-2026-10-14.md). Old versions, hashes, unpushed states and pending-Key statements apply only to their recorded observations. The exact pre-update handoff for this checkout is also retained in the [15October pre-update snapshot](project-handoff-history-2026-10-15.md); earlier attachments are unchanged.
 
-**Remote synchronization addendum (2026-10-14)**: Current source and documentation were committed and pushed to three `origin` development branches: `feat/arctime-pro-plugin` (original workstation edits and complete development history), `codex/local-companion-web`, and `codex/local-companion-macos`. Verified remote feature commits were `d4f28f9`, `5baf166`, and `1366686`; use `git log -1` / `git ls-remote origin` for the latest subsequent handoff commit. Uncommitted/unpushed statements, older HEADs and dirty-original-checkout notes below describe earlier snapshots; this addendum supersedes their current Git status. The app retains shared browser fixes; `master` was unchanged.
+## Current outcome
 
-Before synchronization, the original checkout passed 143 selected backend tests, 137 frontend tests, seven browser E2E tests and the frontend build. Browser passed 95 backend tests; app passed 99. Strict signing of the 0.1.1 package and legacy adapter Swift compilation passed. Original executable permissions were restored on 16 scripts and shell syntax checks passed. Models, media, app builds, private configuration and temporary automation evidence stay local. Real media/native-button acceptance was not repeated; notarization and a public release remain incomplete.
+The product is a standalone local companion and **macOS App 0.1.5 build 9**: URL download, local subtitle text/sentence timestamps, explicit-range or subtitle-rule highlight clips, progress, preview, export and interrupted-task recovery. It includes DeepSeek Japanese-to-Chinese full/clip bilingual subtitles, persistent Key/model settings and model selection.
 
-Updated: 2026-10-14. Development is split into two local branches:
+The current entry does not invoke paid ArcTime alignment/cloud services; `arctime` remains a code directory name. The older WhisperX/GPU workstation and desktop adapters retain separate historical scope.
 
-| Branch | Scope |
+| Capability | Status and boundary |
 | --- | --- |
-| `codex/local-companion-web` | Local CLI and browser interface; URL download, offline text/sentence timestamps, range/highlight clipping, progress, preview, export and recovery |
-| `codex/local-companion-macos` | Inherits the browser core; adds AppKit/WKWebView, native save, process cleanup, bundled tools/model and self-contained app build |
+| Download, local ASR, range/highlight clips | Implemented; two long-video recovery/export workflows accepted historically |
+| Bilingual translation | Implemented; real Flash technical acceptance on two existing tasks |
+| Key/model configuration | Atomic 0600 saves, updates, invalid-configuration repair and restart loading verified |
+| Native bilingual preview/export | Full/clip playback observed; two representative native SRT exports verified |
+| V4 Pro | Selection, persistence, mocked requests and checkpoint binding verified; real translation unaccepted |
+| Styles/two template types/ASS/burn/handoff | Implemented and exercised; see evidence below. User trial feedback pending |
+| Distribution | Subtitle source committed and atomically pushed to browser/App development branches; not merged into primary/master. Build9 installed locally, ad-hoc signed, unnotarized and not publicly released |
 
-Both start from the original `0bcd8d5` base; the app branch inherits the browser commit. Fix shared behavior on the browser branch first, then synchronize it into the app branch. No paid ArcTime calls are made. The original `feat/arctime-pro-plugin` checkout and its earlier workstation edits are preserved. Models, media, tasks, configuration and builds are not committed. This is a local Git split; nothing has been pushed.
+## 15October2026 subtitle delivery and local installation
 
-## Run and source map
+**Implementation and exercised workflows are accepted; user trial feedback is pending.** The current version is **0.1.5 build9**. Feature acceptance, installation checks and historical evidence remain distinct.
 
-Install the independent Python environment, FFmpeg, yt-dlp, whisper.cpp and multilingual small model using the [local guide](local-companion.md). From this branch's root:
+| Feature | Observed behavior |
+| --- | --- |
+| Custom subtitle styles | Separate original/translation font, size, color, outline, background opacity, position and margins; bilingual browser/App preview and subtitle fullscreen/exit exercised |
+| Style JSON templates | Built-in/user templates, save/copy/update/delete, import/download and defaults; native App Open-panel import passed |
+| ArcTime ATPJ templates | Opaque native bytes preserved for storage/download, optional style-template association and ZIP inclusion; native upload, saved association and byte integrity passed |
+| ASS, burn and handoff | Actual-video-resolution ASS; burned clips only; ZIP includes video, ASS, SRT, style.json, instructions and checksum manifest, with optional ATPJ |
+| Native ArcTime refinement | Synthetic6s media/nine ASS events imported; text/timing edited and saved, ten styles reused in a fresh project; native bilingual/style playback and timeline seek passed |
+
+Representative App exports covered original size64/background0.4, a48.033s bilingual burn and1280×720 ASS. Seventeen original task-file hashes stayed unchanged. Build9 adds WKWebView native Open-panel wiring while retaining the shared code exercised in build8 exports. Packaging now includes dynamically loaded SDL3 and checks FFmpeg libass. Interrupted exports can retry while preserving older outputs.
+
+The14October native-player acceptance gap was closed by15October verification. ArcTime's Java main window and separate mpv video window have different owners; Java-only capture omits the video plane. Player and actual-display captures show white Japanese with black background, green Chinese and two-line translation. Native Play/Pause, playing captures at3.12/5.52s and a timeline seek to3.04s passed. The same fixture check fails two Java-only captures and passes seven player/display captures. Earlier full-region black evidence is preserved but did not reproduce; ArcTime/system settings were not changed.
+
+**Installation:** the verified package is installed at `~/Applications/Nyaru Clipper.app`. Previous0.1.4 build5 is backed up at `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`. All1498 copied file SHA256 values match; installed/backup strict signatures pass. Installation and this read-only documentation check load seven historical tasks, three style templates and one ArcTime template, with backend readiness, burn and native handoff available. Models, tasks, settings and original exports are retained. The App is running for user trial; feedback is not yet available.
+
+**Build/evidence:** App checkout `dist/subtitle-style-0.1.5-upload-verified/Nyaru Clipper.app`; archive `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`, SHA256 `bfb5ee2004afec196644c3114ee1826168879d481ad6f8e33d44d2190c97162e`. Previously recorded checks passed187 selected backend tests,16 API cases after final instruction edits,22 final frontend tests and TypeScript/Vite build. Do not add overlapping selections or call them whole-repository acceptance. This documentation update reruns no tests or exports.
+
+- [Subtitle usage guide](subtitle-styles.md)
+- [Feature delivery and acceptance](subtitle-styles-acceptance-2026-10-14.md)
+- [Native ArcTime preview follow-up](arctime-native-preview-2026-10-15.md)
+- [Local installation receipt](/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper/.omo/evidence/local-install-build9-2026-10-15.json)
+- [Final code review](/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper/.omo/evidence/subtitle-final-review.md) (APPROVE, no blockers; its historical preview gap is covered by the follow-up)
+
+**Refinement order and limits:** import video → optionally import ATPJ styles through “从其它工程文件导入样式” → import ASS including styles → inspect resolution/fonts/groups/bilingual layout → save your own ATPJ. This is file handoff, not automatic population of a native project or a paid/cloud integration. Dimensions scale from a1080 reference height; ASS/ZIP use actual video canvas, while burns use reference canvas. ArcTime rounds font sizes, inserts fades and changes layers. Same-name template styles can overwrite dimensions. Native project bytes may include old media paths/account markers; private fixtures/raw captures remain local and require review before sharing. No lossless visual roundtrip, all-font or other-machine/platform acceptance is claimed.
+
+## Publication and validation
+
+Feature source is pushed; the documentation commit adds guides and pre-update snapshots. Native template fixtures, media, screenshots and `.omo` receipts remain local. User trial feedback is still pending.
+
+## Branches and ownership
+
+| Branch | Verified feature HEAD before documentation commits | Checkout |
+| --- | --- | --- |
+| `feat/arctime-pro-plugin` | `e8ea71085cf5c6ff6f671499872f5c166d31f89b` | `/Users/drm/project/nyaru-clipper` |
+| `codex/local-companion-web` | `16a0b60595ca63bf7363df26141bcf4be1905550` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `6b5c3363a7eca0aa1a0d495bdb277fbc0b37b1db` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+
+Repository: [damin93381/nyaru-clipper](https://github.com/damin93381/nyaru-clipper). User-authorized15October source publication used `git push --atomic` for both development branches. Remote read-back confirmed browser feature `16a0b60595ca63bf7363df26141bcf4be1905550`, App shared feature `2454a557c00f5583ae644cbd09ca8d32bd9d5f6f` and native/packaging fix `6b5c3363a7eca0aa1a0d495bdb277fbc0b37b1db`. Table HEADs are the verified feature commits before documentation commits; final publication refs belong to remote Git/push receipts. Primary's documentation changes remain local and its branch has not merged the feature; master stays `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`.
+
+Start shared pipeline/UI changes in the browser worktree, then merge into App. Keep native packaging/lifecycle work in App. Do not replace App `media.py` wholesale with the browser version: frozen tool/downloader dispatch must remain.
+
+## Real translation acceptance
+
+| Existing task | Full bilingual cues | Clip bilingual SRTs | Model/state |
+| --- | ---: | ---: | --- |
+| `40c0c9a8e93e` | 658 | 2 | Flash/completed, no error |
+| `7fe886d15999` | 1448 | 4 | Flash/completed, no error |
+
+Real API processing produced 2106 translations in 54 validated batches without downloading, recognizing or encoding media again. Every cue retains Japanese text, nonempty Chinese and original timestamps; all six clip files match original selections with zero-based offsets. Eight SRT output/download checksums and VTT previews passed. Native full/clip bilingual playback and two SRT save-panel exports passed.
+
+Historical translation acceptance confirmed86 original media/subtitle/manifest/ASR-cache files unchanged; this documentation update did not recheck that86-file list. Only 24 cues were semantically sampled; ambiguous recognition and names can yield awkward or inferred translations. Full sentence-by-sentence proofreading remains incomplete.
+
+Historical14October commit validation (new subtitle checks are recorded above): selected original-backend **121**, browser-backend **117**, shared Companion UI **7** tests and frontend build passed. Selections differ and must not be summed or called a whole-repository pass. No regressions, media stages or provider calls reran during this documentation update.
+
+- [Real translation acceptance](deepseek-real-translation-acceptance-2026-10-14.md)
+- [Bilingual guide](deepseek-bilingual.md)
+- [Model selection acceptance](model-selection-acceptance-2026-10-14.md)
+- [Persistent Key acceptance](persistent-key-acceptance-2026-10-14.md)
+- [Implementation checkpoint](deepseek-bilingual-acceptance-2026-10-14.md)
+- [macOS use/build guide](https://github.com/damin93381/nyaru-clipper/blob/codex/local-companion-macos/docs/macos-app.md)
+
+Earlier short samples, test selections and automation failures remain in the historical attachment and dated records.
+
+## Runtime, settings and protected data
+
+Read-only15October documentation checks: installed0.1.5 build9 passes strict signature verification; backend online/ready, seven tasks, three style templates and one ArcTime template readable, burn/native handoff available. App loopback ports are random: obtain the current URL from startup state or the native page after restart. Do not hard-code old ports or launch a second writer against the same data root.
+
+| Data/artifact | Location |
+| --- | --- |
+| Installed App | `~/Applications/Nyaru Clipper.app`,0.1.5 build9; previous-version backup above |
+| Templates | App `runs/templates/styles/`, `runs/templates/projects/`, defaults in `runs/templates/defaults.json`; no manual editing |
+| Models/tasks/log | `~/Library/Application Support/Nyaru Clipper/`: `models/`, `runs/`, `app.log` |
+| Private settings | App `runs/config.json`, fields `deepseek_api_key` and `deepseek_model` |
+| Bilingual outputs | Task `subtitles.ja-zh.srt` and `clip-NNN.ja-zh.srt` |
+| Browser/CLI history | Each checkout's `data/local-runs/`, not automatically imported into App |
+| Current App/ZIP | App checkout `dist/subtitle-style-0.1.5-upload-verified/Nyaru Clipper.app`, `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`; older builds retained |
+| Python/default model | `~/.cache/nyaru-clipper/companion-venv/bin/python`; `~/.cache/nyaru-clipper/models/ggml-small.bin` |
+| Private QA evidence | Original `.omo/evidence/`, excluded from Git |
+
+Key and model save independently without clearing each other; legacy Key-only settings default to Flash. Saves are atomic with 0600 and never return the Key through the API. Manual edits require private permissions and restart; an empty Key disables translation. Settings contain plaintext credentials and must not be displayed, shared or committed.
+
+New defaults apply to translations not yet started. Retries retain the task's recorded model and validated batches. Changing defaults does not retranslate completed bilingual outputs. MP4 pixels and burned-in subtitles remain unchanged.
+
+## Flow and source map
+
+Companion source entries below refer to browser/App worktrees: new Python modules are under `backend/app/arctime/` and UI under `web/src/companion/`. Primary has not merged these features.
+
+```mermaid
+flowchart LR
+    U[URL and clip mode] --> D[yt-dlp download]
+    D --> A[whisper.cpp local ASR]
+    A --> T[Original subtitles and timestamps]
+    T --> S[Ranges or rule highlights]
+    S --> E[FFmpeg MP4 and original SRT]
+    E --> P[Preview and export]
+    P -->|User starts translation| L[DeepSeek Japanese to Chinese]
+    T -.Existing subtitle text.-> L
+    L --> B[Full and clip bilingual SRT]
+    B --> P
+    P --> C[Custom styles and both templates]
+    C --> X[ASS or burned clip or ArcTime ZIP]
+```
+
+ASR uses verified five-minute caches; bounded terminal overruns and contiguous zero-duration fragments were fixed. Ordinary subtitle parsing stays strict. Highlights score subtitle density, laughter/excitement and related rules; results may be below the requested limit or empty. There is no visual/LLM semantic scoring.
+
+| Entry | Responsibility |
+| --- | --- |
+| `scripts/local_companion.py`, `backend/app/arctime/cli.py` | doctor/run/resume/gui |
+| `workflow.py`, `media.py`, `local_asr.py` | Download, ASR caches, manifests, clips/recovery |
+| `backend/app/arctime/translation.py` | API, 40-cue batches, validation, checkpoints, bilingual outputs |
+| Worktree `gui.py`, `companion_manager.py`, `companion_models.py` | GUI routes/execution/models split; configuration/translation/file boundaries retained |
+| Worktree `subtitle_style.py`, `subtitle_templates.py` | Styles, ASS rendering, template storage/validation |
+| Worktree `subtitle_api.py`, `subtitle_inputs.py`, `subtitle_exports.py`, `subtitle_encoding.py` | Template/export APIs, input validation, serialized exports/receipts, canvas conversion/burn |
+| `web/src/companion/` | Shared UI, subtitle-track selection, preview/export |
+| `desktop/macos/App.swift`, `backend/app/arctime/macos.py` | Native window/save panel, backend and parent lifecycle |
+| App worktree `scripts/build_macos_app.py` | 0.1.5 packaging, SDL3, frozen FFmpeg/libass checks/local signing |
+
+Original `backend/app/main.py`/`worker.py` belong to the older workstation. Browser checkout has no native App sources/build script.
+
+## Continue and verify
+
+Open the installed App to reuse existing tasks. Start the separate browser service only when needed; this documentation run did not start or stop services:
 
 ```bash
-cd web
-corepack pnpm install --frozen-lockfile
-corepack pnpm build
-cd ..
+cd /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper
 ~/.cache/nyaru-clipper/companion-venv/bin/python scripts/local_companion.py doctor
 ~/.cache/nyaru-clipper/companion-venv/bin/python scripts/local_companion.py gui
 ```
 
-Open `http://127.0.0.1:8787/`. The local service serves the separate `companion.html` build; the old workstation need not run. Default history is this checkout's `data/local-runs/`; existing checkout/app history is not automatically migrated. Use `gui --output-dir /existing/run/root` to select existing history; do not run two services writing the same job.
+GUI defaults to 8787 and supports `--output-dir`, `--port`, `--model`, `--threads`. Explicitly select history to reuse it; never run two writers against one task root.
 
-```mermaid
-flowchart LR
-    U[Video URL] --> D[yt-dlp download]
-    D --> A[FFmpeg audio preparation]
-    A --> W[whisper.cpp recognition]
-    W --> T[Full transcript and sentence timestamps]
-    T --> R[Ranges or subtitle-rule highlights]
-    R --> E[MP4 and rebased SRT]
-    E --> P[Browser preview and download]
+Run frontend commands from `web` to respect the pinned pnpm version:
+
+```bash
+cd web
+corepack pnpm test --run src/companion/Companion.test.tsx \
+  src/companion/SubtitleEditor.test.tsx src/companion/SubtitlePreview.test.tsx \
+  src/companion/subtitleStyle.test.ts
+corepack pnpm build
 ```
 
-The entrypoint is `scripts/local_companion.py`; the core is `backend/app/arctime/{cli,workflow,local_asr,media,gui}.py`; the UI is `web/src/companion/`. `arctime` is a retained directory name. Early desktop adapters are excluded. Existing subtitle/highlight/CPU export services are reused; new workstation edits and app-specific sources are excluded.
-
-## Validation and limits
-
-On 2026-10-14 in this branch's independent checkout: **84 selected backend tests passed**, **154 frontend tests passed (21 files)**, TypeScript/dual-entry Vite build succeeded and CLI `doctor` returned ready. The frontend count differs from historical reports because earlier dirty workstation edits were excluded. A Starlette/httpx deprecation warning did not fail tests. Reproduce with:
+Run App backend regressions in the App worktree; browser checkout omits `test_macos_companion.py` and `test_macos_subtitle_build.py`. These are future verification commands, not executions in this documentation update:
 
 ```bash
 PYTHONPATH=backend ~/.cache/nyaru-clipper/companion-venv/bin/python -m pytest \
   backend/tests/test_arctime_media.py backend/tests/test_arctime_workflow.py \
   backend/tests/test_local_asr.py backend/tests/test_local_companion_cli.py \
-  backend/tests/test_companion_gui.py -q
-cd web
-corepack pnpm test --run
-corepack pnpm build
+  backend/tests/test_companion_gui.py backend/tests/test_companion_translation.py \
+  backend/tests/test_macos_companion.py backend/tests/test_macos_subtitle_build.py \
+  backend/tests/test_subtitle_style.py backend/tests/test_subtitle_templates.py \
+  backend/tests/test_subtitle_api.py backend/tests/test_subtitle_renderer.py -q
 ```
 
-[CLI acceptance](local-companion-acceptance-2026-10-12.md) and [GUI acceptance](local-companion-gui-acceptance-2026-10-13.md) retain historical branches, test selections and observation dates. They do not establish fresh real-media acceptance on this branch. Historical `.omo/evidence/`, models and jobs live in the original development checkout and are not distributed through Git.
+Rebuild using App worktree `scripts/build_macos_app.py`. Preserve existing builds first: the builder refuses overwrite. Updating the App keeps user data. Current target is arm64/macOS 27.0 minimum; changing Info.plist alone cannot establish older-system compatibility.
 
-Resubmit the URL after download failure; later ASR/export interruption is resumable. Preserve models, manifests, outputs and failed-run logs. Highlights use subtitle rules and ASR provides sentence timestamps. Word alignment, diarization, visual/LLM highlights, restricted public-site access, real long videos, Linux and cross-machine performance remain unaccepted. Do not restore paid ArcTime calls, edit runtime data or expose the service publicly.
+## Remaining work and boundaries
+
+1. Collect user0.1.5 style/template/ArcTime trial feedback. Broader font/roundtrip/speaker/clean-host acceptance remains pending, along with sentence-level translation review, real V4 Pro and broader platform access.
+2. The primary14October record reports [Issue #1](https://github.com/damin93381/nyaru-clipper/issues/1) closed at19:20:50 Asia/Shanghai. GitHub was not queried in this update; the stale OPEN action is superseded. Preserve failed-download task `18e794` and original failure logs.
+3. Intel/older macOS, Developer ID, notarization and public package distribution are incomplete.
+4. Semantic/visual highlights, word alignment, diarization and Nyaru's internal subtitle text/timeline proofreading UI are unimplemented; ArcTime editing uses the file handoff above.
+
+Do not restore paid ArcTime calls, delete models/history/failure evidence, hand-edit task/translation manifests, replace differing outputs without an explicit choice, publish Key/media/private QA, hand-edit generated requirements/API types, expose the service publicly or introduce multiple workers. Further commits/pushes must match user-authorized scope.
+
+This user-authorized publication commits/pushes verified subtitle features and macOS changes, with usage/handoff records in the accompanying documentation commit. Fresh pre-push checks passed180 selected browser backend tests,187 App backend tests,22 frontend tests, TypeScript/Vite build and Swift typecheck; existing Starlette/httpx deprecation warnings remain. The only source difference from the exercised package removes three trailing blank lines in each extracted module; behavior is unchanged and installed App was not rebuilt/replaced. No paid translation/media processing reran or media/native-template fixtures/credentials/private evidence were uploaded. Historical attachments remain unchanged; primary/master have not merged the feature.
