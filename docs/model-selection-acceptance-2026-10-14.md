@@ -1,0 +1,9 @@
+# DeepSeek model selection acceptance
+
+App 0.1.4 build 5 was installed and started. The bilingual panel adds a Translation model selector and separate save button for `deepseek-flash` (default) or `deepseek-v4-pro`. Selection is persisted as `deepseek_model` in the existing `runs/config.json`, alongside the Key. IDs were checked against [official documentation](https://api-docs.deepseek.com/quick_start/pricing/) on 2026-10-14.
+
+Model-only saves preserve the Key, and Key-only saves preserve the model; legacy Key-only files remain compatible. Started translations retain their recorded model for retries, preventing mixed cached batches; new tasks use the new selection. Repairing an invalid manually configured model preserves the validated Key. Translation is blocked until configuration errors are repaired.
+
+Verification: 121 selected App backend tests, seven UI tests, TypeScript/Vite build, independent review and strict signing passed. The frozen backend in isolated temporary data verified model saving, Key preservation, restart loading, 0600 and API isolation using a non-real Key without translation requests. The browser connected to the installed backend verified selecting Pro, saving, refreshing and App restart loading; the final selection was restored to default Flash. Screenshot: `.omo/evidence/2026-10-14-model-selection/model-selection.png`. All 86 original files across the two existing tasks retain their checksums.
+
+Original-checkout App/ZIP artifacts were updated with older packages retained; ZIP integrity passed. Native observation remains affected by screen capture, so native model-button interaction is not claimed as accepted. No real Key has been configured; real translation and model quality remain unaccepted. Source was synchronized to original, browser and App checkouts without commit or push.
