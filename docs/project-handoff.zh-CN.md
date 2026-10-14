@@ -1,164 +1,190 @@
-# Nyaru-Clipper 项目交接
+# Nyaru-Clipper App 版交接
 
-**本轮 Git 提交范围（2026-10-14）**：本次将双语翻译、Key／模型持久配置、App 0.1.4 打包及配对技术验收记录提交到三个既有开发分支。较早段落的未提交／未推送保留其观察日期；准确当前源码及远程 HEAD 以 `git log -1`、`git ls-remote origin` 为准。私密配置、媒体、模型、构建包及 `.omo` 证据留在本机。
+核验日期：**2026-10-15，Asia/Shanghai**。本目录负责 macOS App，继承网页版核心并保留冻结工具定位与下载器分派。
 
-**真实翻译验收补充（2026-10-14）**：用户设置 Key 后，App 0.1.4 使用 Flash 完成既有 40c0c9 的 658 条及 7fe886 的 1448 条翻译，生成 2 份完整和 6 份切片双语 SRT。全部时间轴、偏移、输出校验和及 86 个原文件保持不变；八份下载／预览接口、原生完整视频／切片双语播放及两次系统 SRT 导出通过。未重新下载、识别或编码。24 条语义抽查不能替代逐句校对，识别误字与含混句仍需人工复核。见[真实翻译验收](deepseek-real-translation-acceptance-2026-10-14.zh-CN.md)。下文尚未输入 Key／真实翻译待验收为历史状态。
+本次整理当前入口，原交接原文完整保存在[历史快照](project-handoff-history-2026-10-14.zh-CN.md)。旧版本、旧哈希、未提交／未推送和待设置 Key 等描述仅适用于历史观察，不作为当前状态。 更新前的本目录交接另完整保存在[2026-10-15更新前快照](project-handoff-history-2026-10-15.zh-CN.md)，历史附件不改写。
 
-**模型选择补充（2026-10-14）**：App 0.1.4 build 5 新增 Flash／V4 Pro 翻译模型选择，保存到现有配置并在重启加载，保留 Key。已开始的任务恢复时沿用原模型。121 项相关后端、7 项界面测试、冻结后台保存／重启、安装版浏览器实测、签名及 ZIP 通过，86 个原任务文件保持不变。真实翻译仍待 Key，源码未提交／推送。见[模型选择验收](model-selection-acceptance-2026-10-14.zh-CN.md)。
+## 当前结论
 
-**Key 持久配置补充（2026-10-14）**：按用户新要求，App 0.1.3 build 4 将 Key 保存到 `runs/config.json` 并在重启时加载，替代下文的会话方案。117 项相关后端、6 项界面测试、构建和隔离冻结后台重启验证通过；真实 Key 尚未输入。详见[持久配置验收](persistent-key-acceptance-2026-10-14.zh-CN.md)。源码仍未提交／推送。
+交付方向是独立本地配套工具与 **macOS App 0.1.5 build 9**：输入视频链接，本地下载并识别字幕文字和句子时间轴，按指定时间段或字幕规则高光切片，查看进度、预览、导出及恢复中断任务。已加入 DeepSeek 日译中、完整／切片中日双语字幕、持久 Key 和模型选择。
 
-**双语字幕补充（2026-10-14）**：App 已升级安装为 0.1.2 build 3，新增 DeepSeek 日译中、完整／切片双语 SRT、预览选择、进度和续传；仅使用现有字幕，Key 仅用于本次会话。111 项 App 后端、155 项共享前端测试及构建／签名／ZIP 通过，86 个原任务文件保持不变。用户稍后设置 Key，真实 API 翻译及原生双语播放／保存尚待验收。本轮修改尚未提交／推送。详见[阶段记录](deepseek-bilingual-acceptance-2026-10-14.zh-CN.md)和[使用指南](deepseek-bilingual.zh-CN.md)；下文首版范围及远程同步为较早快照。
+当前入口不调用 ArcTime 付费自动打轴或云服务；`arctime` 是代码目录名。旧 WhisperX/GPU 工作站与早期桌面适配器保留各自历史范围，不属于当前 App 的运行入口。
 
-**本轮 Git 提交范围（2026-10-14）**：本次将双语翻译、Key／模型持久配置、App 0.1.4 打包及配对技术验收记录提交到三个既有开发分支。较早段落的未提交／未推送保留其观察日期；准确当前源码及远程 HEAD 以 `git log -1`、`git ls-remote origin` 为准。私密配置、媒体、模型、构建包及 `.omo` 证据留在本机。
-
-**双语字幕补充（2026-10-14）**：共享配套工具已支持 DeepSeek 日译中双语字幕、Key／模型私密持久配置、Flash／V4 Pro 选择、批次续传及完整／切片预览导出。安装版 App 0.1.4 已翻译既有 658 和 1448 条字幕，86 个原文件保持不变；原时间轴、6 个切片偏移、8 份下载／预览、原生完整视频／切片播放及 SRT 导出通过。见[真实验收](deepseek-real-translation-acceptance-2026-10-14.zh-CN.md)和[指南](deepseek-bilingual.zh-CN.md)。较早记录中的真实翻译待验收保留其历史范围；全部译文仍未逐句校对。
-
-**远程同步补充（2026-10-14）**：当前源码及文档已提交并推送至 `origin` 的三个开发分支：`feat/arctime-pro-plugin`（包含原目录工作站改动及完整开发记录）、`codex/local-companion-web`、`codex/local-companion-macos`。本次功能提交已远程核验为 `d4f28f9`、`5baf166`、`1366686`；后续交接文档提交的最新 HEAD 以 `git log -1`／`git ls-remote origin` 为准。下文“未提交／未推送”、旧分支 HEAD 与原目录脏工作区说明均为较早快照，以本段为当前 Git 状态。App 保留网页版的共享修复；`master` 未修改。
-
-本次同步前复核：原目录 143 项所选后台、137 项前端测试和 7 项浏览器端到端测试通过，前端构建通过；网页版 95 项、App 版 99 项后台回归通过，0.1.1 包严格签名及旧适配器 Swift 编译通过。16 个脚本的原有可执行权限已恢复，Shell 语法检查通过。模型、媒体、构建包、私密配置和自动化临时证据留在本机。未重跑真实媒体／原生按钮验收，也不代表已完成公证或正式发布。
-
-更新：**2026-10-14，Asia/Shanghai**。本次整理网页版／App 两个本地分支；原生媒体操作和运行状态快照属于 2026-10-13 的历史验收，未重新操作已安装 App。
-
-## 当前结论与授权范围
-
-后续实际修复（2026-10-14）：当前已下载任务因 2.040 秒末尾越界失败，修复为有界末尾窗口裁剪。从本工作目录构建并安装 0.1.1（build 2），原任务恢复完成，生成 658 条字幕和 2 个切片；App 版 99 项所选回归及原生完成／播放验证通过。详见[Issue #1 复测记录](macos-app-issue1-retest-2026-10-14.zh-CN.md)。源码修改未提交／推送；下方早期分支及运行快照保留其历史范围。
-
-当前交付方向是独立本地配套工具及 macOS App：**只提供视频链接，自动下载、识别字幕文字和句子时间轴，再按指定时间段或字幕规则高光导出切片**。已经提供进度、预览、导出和中断恢复。
-
-用户已选择本地开源路线。当前处理不启动 ArcTime，不调用其付费自动打轴或云服务；`arctime` 仍是代码目录名。macOS 首版只封装当前配套工具，旧 GPU 工作站的翻译、校对、任务库及队列不在本次 App 范围内。后续不能把目录名理解为需要重新接入付费服务。
-
-| 项目 | 状态 | 证据与边界 |
-| --- | --- | --- |
-| 本地 CLI 流水线 | 已完成，短样例已验收 | 2026-10-12 真实下载／ASR／导出及恢复；80 项所选回归 |
-| 浏览器 GUI | 已完成，短样例已验收 | 2026-10-13 两种模式、预览、字幕跳转、下载、历史和窄屏；99 项所选后端、137 项前端回归 |
-| macOS App 0.1.0 | 已完成，本机原生流程已验收 | 88 项相关回归；真实原生表单、播放、保存／替换／取消、中断恢复；arm64，最低 macOS 27.0 |
-| 旧 GPU 工作站 | 原有代码保留，本轮未重验收 | FastAPI/SQLModel、React、WhisperX、翻译／校对、队列；部署见旧手册 |
-| 对外正式发布 | 未完成 | 仅本地 ad-hoc 签名，无 Developer ID、公证或跨机器验收；本次仅整理本地提交，未推送 |
-
-以上测试数字属于对应阶段的历史验收，所选文件不同，不能相加或视作全仓库通过。本次分支划分在独立目录重新运行 App 所选后台回归，**88 passed**；网页版基线重跑 **84 个后台、154 个前端测试（21 files）**及双入口构建通过。后台有 Starlette/httpx 弃用提示，未导致失败。当前构建及冻结运行检查结果记录在下文，不代表重跑真实下载／识别／原生保存验收。
-
-## Git 与当前运行状态
-
-- 原始仓库：`/Users/drm/project/nyaru-clipper`，仍在 `feat/arctime-pro-plugin`／`0bcd8d5`；其未提交快照及旧工作站改动保留。
-- 网页版：`codex/local-companion-web`，提交 `74e600b`，工作目录 `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper`。
-- App 版：`codex/local-companion-macos`，继承网页版提交，仅增加 App 专用源码、打包及对应文档。工作目录 `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper`。共享功能修改先在网页版提交，再合入 App 分支；用 `git log -1 --oneline` 查看当前 App 提交。
-- `origin` 已配置为 `https://github.com/damin93381/nyaru-clipper.git`。本次未 fetch，远端最新状态和领先／落后关系未核验。
-- 工作区有大量未提交修改和未跟踪文件，包含更早的原工作站改动。不能将这些修改全部归为本地工具或 App，也不能直接 `git add .`、重置或清理。
-- 历史 2026-10-13 快照：已安装 App 后台 `ready=true`，四个任务为 `completed`；开发浏览器端口 8787 不可达。本次未核验该已安装 App 的在线状态。
-- 本次网页版在隔离端口启动，真实 HTTP 首页、配置（ready）和空历史响应通过，检查后已退出，不占用原用户服务端口。App 使用随机回环端口，不能将开发地址当作 App 地址。
-
-这些运行状态是本次快照；继续任务时需重新检查，不保证服务一直运行。
-
-## 交付物与数据保护
-
-| 内容 | 位置 |
+| 项目 | 当前状态与边界 |
 | --- | --- |
-| 已安装 App | `/Users/drm/Applications/Nyaru Clipper.app` |
-| App 构建 | 项目 `dist/Nyaru Clipper.app` |
-| ZIP 构建 | 项目 `dist/Nyaru-Clipper-macOS-arm64.zip`，496480853 字节 |
-| App 模型／任务／日志 | `~/Library/Application Support/Nyaru Clipper/` 下的 `models/`、`runs/`、`app.log` |
-| CLI／浏览器版任务 | 项目 `data/local-runs/`，不自动迁入 App |
-| 独立开发 Python | `~/.cache/nyaru-clipper/companion-venv/bin/python` |
-| CLI 默认模型 | `~/.cache/nyaru-clipper/models/ggml-small.bin` |
+| 链接下载、本地识别、指定／高光切片 | 已实现；两段长视频的历史恢复与导出已验收 |
+| 日译中双语字幕 | 已实现，Flash 已在两个既有任务完成真实 API 技术验收 |
+| Key／模型配置 | 已实现；保存、更新、无效配置修复、权限 0600、重启加载已验证 |
+| 原生双语预览／导出 | 完整视频及切片播放已观察；两个代表性 SRT 系统导出校验通过 |
+| V4 Pro | 选择、持久化、模拟请求和缓存模型绑定已验证；真实翻译未验收 |
+| 字幕样式／两类模板／ASS／烧录／精修交接 | 已实现并通过实际验证，详情与证据见下一节；用户试用反馈待收集 |
+| 发布 | 字幕功能源码已提交并原子推送网页版及App两个开发分支；未合入主目录或master。0.1.5 build9已本机安装，仍为ad-hoc签名，未公证或正式发布 |
 
-App 内置 Python、yt-dlp、FFmpeg/ffprobe、whisper.cpp、GGML 动态后端和多语种 small 模型，运行时无需终端或 Homebrew。首次启动将校验过的模型复制到用户数据目录；现有模型校验失败会报错并保留文件，不静默覆盖。
+## 2026-10-15 字幕样式交付与本机安装
 
-模型 SHA-256：`1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b`。上述已安装 App 与 ZIP 属于原目录历史产物；本次从 App 分支重新构建的包位于该工作目录的 `dist/Nyaru Clipper.app`，不覆盖已安装 App／原 ZIP，不提交构建或模型。
+**实现及实际流程已验收，用户试用反馈待收集。** 当前版本为 **0.1.5 build 9**；以下记录区分功能验收、安装检查与历史证据。
 
-保留用户模型、任务清单、转写、已导出视频／字幕和失败日志；不要手改 `data/` 或 App 任务清单，未经明确选择替换，不要覆盖不同内容的导出文件。构建器遇到现有 `dist/Nyaru Clipper.app` 会拒绝覆盖，重建前先移走旧构建。移动 App 不删除数据，但未完成 ASR 的恢复会比较识别配置，当前须保持原 App 安装路径和模型；未完成下载需重新提交链接。
+| 功能 | 已验证行为 |
+| --- | --- |
+| 自定义字幕样式 | 原文／译文分别设置字体、字号、颜色、描边、背景透明度、位置和边距；浏览器及 App 双语预览、字幕全屏和退出已实际操作 |
+| 样式 JSON 模板 | 内置与用户模板、保存／复制／更新／删除、导入／下载及默认样式；App 系统文件面板实际导入成功 |
+| ArcTime ATPJ 模板 | 原生文件按字节保存与下载，可关联样式模板并随精修包交付；App 导入、关联保存及包内字节一致性通过 |
+| ASS、烧录、精修包 | ASS 使用视频实际尺寸；烧录仅支持切片；ZIP 包含视频、ASS、SRT、style.json、交接说明和校验清单，可附带 ATPJ |
+| ArcTime 原生精修 | 合成6秒视频与9个ASS事件实际导入，文字／时间编辑保存、第二新工程复用10个样式通过；双语样式原生播放及时间轴跳转通过 |
 
-## 处理流程与源码入口
+代表性 App 导出验证覆盖原文64号、背景0.4、48.033秒双语烧录及1280×720 ASS；17个原任务文件SHA256保持不变。build9补齐 WKWebView 系统文件选择面板；与实测导出 build8 的共享代码一致。打包补齐 FFmpeg 动态加载的 SDL3，并检查 libass 滤镜。中断导出可重试，旧产物保留。
+
+10月14日记录的 ArcTime 黑屏验收项已由10月15日复查关闭：ArcTime 的 Java 主窗口与独立 mpv 播放器分属不同窗口，单独截取主窗口会遗漏视频层。同一时刻播放器／实际屏幕可看到白色日文黑底、绿色中文及两行换行；原生 Play/Pause、3.12／5.52秒播放截图、3.04秒时间轴跳转通过。两张 Java 单窗图在同一像素检查中失败，七张播放器／实际屏幕图通过。旧区域黑图仍保留为历史观察，本次未重现；未修改 ArcTime 播放器或系统配置。
+
+**安装：** 已验证原包安装到 `~/Applications/Nyaru Clipper.app`；旧0.1.4 build5备份到 `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`。1498个复制文件SHA256一致，安装版和备份严格签名校验通过。安装及本次交接只读接口核验均读取7个历史任务、3个样式模板和1个ArcTime模板，后台就绪，烧录与原生交接可用。模型、任务、配置与原导出保留；App已启动供用户试用，尚无试用反馈。
+
+**构建与证据：** App工作目录 `dist/subtitle-style-0.1.5-upload-verified/Nyaru Clipper.app`；ZIP `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`，SHA256为 `bfb5ee2004afec196644c3114ee1826168879d481ad6f8e33d44d2190c97162e`。所选后端187项、最后包说明变更后的API16项、前端最终22项及TypeScript/Vite构建通过，属于此前功能验证记录，不相加为全仓库测试；本次文档更新未重跑测试或导出。
+
+- [字幕样式使用指南](subtitle-styles.zh-CN.md)
+- [功能交付与验收记录](subtitle-styles-acceptance-2026-10-14.zh-CN.md)
+- [ArcTime 原生预览复查](arctime-native-preview-2026-10-15.zh-CN.md)
+- [本机安装回执](/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper/.omo/evidence/local-install-build9-2026-10-15.json)
+- [最终代码审阅](/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper/.omo/evidence/subtitle-final-review.md)（APPROVE，无阻断；其中原生预览的旧状态由上述复查补齐）
+
+**精修顺序和边界：** 导入视频 → 如需ATPJ，先用「从其它工程文件导入样式」导入工程样式 → 导入带样式的ASS → 检查分辨率、字体、分组与双语排列 → 保存自己的ATPJ。交接采用文件流程，不自动生成填好媒体与时间轴的原生工程，不调用付费／云服务。样式尺寸按1080参考高度换算，ASS／ZIP使用实际视频画布，烧录沿用参考画布。ArcTime会取整字号、添加淡入淡出、重排层；旧模板同名样式可能覆盖尺寸。原生模板可能带旧媒体路径和账户标记，私密测试工程和原始截图仅保留本地，分享前检查。未承诺无损视觉往返、所有字体或其他机器／平台通过。
+
+## 本轮提交与验证
+
+源码功能已推送；文档提交补齐使用指南与更新前快照。原生模板、媒体、截图和`.omo`验证回执保留本地，不随Git分发。用户试用反馈仍待收集。
+
+## 分支与接手入口
+
+| 分支 | 已核验功能HEAD（后续文档提交前） | 工作目录 |
+| --- | --- | --- |
+| `feat/arctime-pro-plugin` | `e8ea71085cf5c6ff6f671499872f5c166d31f89b` | `/Users/drm/project/nyaru-clipper` |
+| `codex/local-companion-web` | `16a0b60595ca63bf7363df26141bcf4be1905550` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `6b5c3363a7eca0aa1a0d495bdb277fbc0b37b1db` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+
+仓库为 [damin93381/nyaru-clipper](https://github.com/damin93381/nyaru-clipper)。2026-10-15按用户授权提交功能并使用 `git push --atomic` 推送两个开发分支；回读远程确认网页版功能提交 `16a0b60595ca63bf7363df26141bcf4be1905550`，App共享功能提交 `2454a557c00f5583ae644cbd09ca8d32bd9d5f6f`、原生与打包提交 `6b5c3363a7eca0aa1a0d495bdb277fbc0b37b1db`。下表HEAD属于文档提交前的功能核验，后续说明提交的最终HEAD以Git远程和推送回执为准。主目录文档改动保留，功能尚未合入该分支；master保持 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`。
+
+共享处理和 UI 先进入网页版，再合入 App；App 专属打包与进程生命周期修改在 App 目录完成。不要用网页版 `media.py` 整文件覆盖 App 的冻结工具定位代码。
+
+## 真实翻译与验收证据
+
+| 既有任务 | 完整双语条数 | 切片双语 SRT | 模型／状态 |
+| --- | ---: | ---: | --- |
+| `40c0c9a8e93e` | 658 | 2 | Flash／completed，无错误 |
+| `7fe886d15999` | 1448 | 4 | Flash／completed，无错误 |
+
+共 2106 条，54 个有效批次。翻译只复用既有字幕，不重新下载、识别或编码视频。逐条确认日语保留、中文非空、完整时间轴一致；六个切片的零起点偏移与选区一致，八份输出／下载校验和及 VTT 预览通过。原生完整视频／切片双语播放与两次 SRT 系统导出通过。
+
+历史翻译验收记录确认86个媒体、字幕、清单及ASR缓存文件保持不变；本次文档更新未重新核验这86项。译文只抽查 24 条；含混识别词和专名可能产生生硬或猜译，不能视作全部逐句校对完成。
+
+2026-10-14旧提交核验记录（本次字幕功能测试另见上节）：原目录所选后端 **121 项**、网页版 **117 项**、共享 Companion UI **7 项**及前端构建通过。测试选择不同，不能相加或称为全仓库通过。本次更新文档未重跑回归、媒体处理或 API 翻译。
+
+- [真实翻译验收](deepseek-real-translation-acceptance-2026-10-14.zh-CN.md)
+- [双语使用指南](deepseek-bilingual.zh-CN.md)
+- [模型选择验收](model-selection-acceptance-2026-10-14.zh-CN.md)
+- [Key 持久配置验收](persistent-key-acceptance-2026-10-14.zh-CN.md)
+- [双语实现阶段记录](deepseek-bilingual-acceptance-2026-10-14.zh-CN.md)
+- [macOS 使用／构建说明](macos-app.zh-CN.md)
+
+原文保留的短样例、旧测试数量及自动化故障见历史快照和对应阶段记录，均不扩大本轮验收范围。
+
+## 配置、运行状态与受保护数据
+
+2026-10-15文档更新时只读核验：已安装0.1.5 build9严格签名通过，后台在线且ready=true，读取7个任务、3个样式模板和1个ArcTime模板；烧录及原生交接可用。App使用随机回环端口，重启后从当前startup记录或原生页面重新取得；不保存或写死旧端口，不因读取记录而启动另一个同数据根目录实例。
+
+| 数据／产物 | 位置 |
+| --- | --- |
+| 已安装 App | `~/Applications/Nyaru Clipper.app`，0.1.5 build9；旧版见上节备份 |
+| 两类模板 | App的 `runs/templates/styles/`、`runs/templates/projects/`；默认样式在 `runs/templates/defaults.json`，不要手改 |
+| 模型、任务、日志 | `~/Library/Application Support/Nyaru Clipper/` 下的 `models/`、`runs/`、`app.log` |
+| 私密配置 | App 的 `runs/config.json`；字段 `deepseek_api_key`、`deepseek_model` |
+| 双语输出 | 各任务目录的 `subtitles.ja-zh.srt` 和 `clip-NNN.ja-zh.srt` |
+| 浏览器／CLI 历史 | 各工作目录的 `data/local-runs/`，不自动迁入 App |
+| 当前 App／ZIP | App工作目录的 `dist/subtitle-style-0.1.5-upload-verified/Nyaru Clipper.app`、`dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`；其他旧构建保留 |
+| 独立 Python／默认模型 | `~/.cache/nyaru-clipper/companion-venv/bin/python`；`~/.cache/nyaru-clipper/models/ggml-small.bin` |
+| 私密验收证据 | 原目录 `.omo/evidence/`；不随 Git 分发 |
+
+Key 与模型可分别保存，互不清空；旧的仅 Key 配置默认使用 Flash。保存配置采用原子替换及 0600 权限，不通过 API 返回 Key。手工修改需维持权限并重启；Key 空字符串表示禁用。配置含明文凭据，不要展示、分享或提交。
+
+模型选择影响尚未开始翻译的任务；已开始的任务恢复时沿用原模型及已校验批次。已完成双语结果不会因切换默认模型自动重译。原 MP4 不改变，也不移除已有烧录字幕。
+
+## 处理流程与源码
+
+下表配套工具源码以网页版及App工作目录为准；新增Python模块位于 `backend/app/arctime/`，UI位于 `web/src/companion/`，主目录尚未合入这些新功能。
 
 ```mermaid
 flowchart LR
-    U[输入视频链接与切片模式] --> D[yt-dlp 下载]
-    D --> A[FFmpeg 提取单声道 16 kHz 音频]
-    A --> W[whisper.cpp 本地识别]
-    W --> T[完整 SRT / TXT / JSON 与句子时间轴]
-    T --> S{切片选择}
-    S --> R[指定多个时间段]
-    S --> H[字幕规则高光评分]
-    R --> E[FFmpeg 导出 MP4 与从零计时 SRT]
-    H --> E
-    E --> P[预览与下载 / 原生保存面板]
+    U[视频链接与切片方式] --> D[yt-dlp 下载]
+    D --> A[whisper.cpp 本地识别]
+    A --> T[原文字幕与句子时间轴]
+    T --> S[指定时间段或规则高光]
+    S --> E[FFmpeg 导出 MP4 与原文 SRT]
+    E --> P[预览与导出]
+    P -->|用户触发翻译| L[DeepSeek 日译中]
+    T -.已有字幕文字.-> L
+    L --> B[完整与切片双语 SRT]
+    B --> P
+    P --> C[自定义样式与两类模板]
+    C --> X[ASS或切片烧录或ArcTime ZIP]
 ```
 
-ASR 按五分钟音频块处理，有源文件与配置校验、缓存和时间偏移。高光使用字幕密度、笑声、兴奋词和重复表达，选择达到阈值的非重叠片段；上限不保证一定导出该数量，也可能零片段。没有词级强制对齐、说话人分离、画面理解或大模型语义评分。
+ASR 按五分钟块缓存并校验源文件与配置；末尾有界越界和连续零时长片段已修复。普通字幕解析仍严格校验。高光是字幕密度、笑声、兴奋词等规则评分，可能少于上限或零片段，不是画面理解或大模型语义高光。
 
-| 文件／目录 | 责任 |
+| 入口 | 责任 |
 | --- | --- |
-| `scripts/local_companion.py`、`backend/app/arctime/cli.py` | CLI 的 doctor/run/resume/gui |
-| `backend/app/arctime/workflow.py` | 清单、锁、下载与阶段恢复、校验、导出检查点 |
-| `backend/app/arctime/local_asr.py` | 本地 whisper.cpp、五分钟块缓存与时间轴 |
-| `backend/app/arctime/media.py` | 工具定位、下载、探测、字幕解析／重定位及切片选择 |
-| `backend/app/arctime/gui.py` | 独立 FastAPI `/companion-api`、单任务执行、历史、文件白名单、视频 Range 与 WebVTT |
-| `web/companion.html`、`web/src/companion/` | 独立 React 图形界面，复用设计令牌／组件 |
-| `desktop/macos/App.swift` | AppKit/WebKit 窗口、启动状态、原生下载／保存、进程组退出清理 |
-| `scripts/macos_companion.py`、`backend/app/arctime/macos.py` | 冻结后台入口、yt-dlp 自调用、模型校验、随机端口、父进程监控 |
-| `scripts/build_macos_app.py`、`desktop/macos/requirements-build.txt` | PyInstaller 打包、原生依赖、Swift 编译、许可证、签名 |
-| `backend/app/services/export_encoding.py` | 复用的 CPU H.264/AAC 编码；不要为 App 另造导出器 |
-| `backend/app/main.py`、`worker.py`、`web/src/workstation/` | 旧工作站入口；本轮 App 不从这里启动 |
+| `scripts/local_companion.py`、`backend/app/arctime/cli.py` | doctor／run／resume／gui |
+| `workflow.py`、`media.py`、`local_asr.py` | 下载、识别缓存、清单、切片与恢复 |
+| `backend/app/arctime/translation.py` | API、40 条批次、响应校验、翻译检查点、双语输出 |
+| 工作目录 `gui.py`、`companion_manager.py`、`companion_models.py` | GUI路由、执行管理与模型拆分，保留配置／翻译／文件边界 |
+| 工作目录 `subtitle_style.py`、`subtitle_templates.py` | 样式、ASS生成、两类模板存储与校验 |
+| 工作目录 `subtitle_api.py`、`subtitle_inputs.py`、`subtitle_exports.py`、`subtitle_encoding.py` | 模板／导出API、输入校验、串行导出与校验回执、实际画布／烧录 |
+| `web/src/companion/` | 共享图形界面、字幕轨切换、预览与导出 |
+| `desktop/macos/App.swift`、`backend/app/arctime/macos.py` | App 窗口、系统保存面板、后台与父进程清理 |
+| App工作目录 `scripts/build_macos_app.py` | 0.1.5打包、SDL3依赖、冻结FFmpeg/libass检查与本地签名 |
 
-早期 `desktop.py`／`bridge.swift` 仍保留在原目录，没有纳入两个新分支。原工作站代码保持原始基线；原目录的未跟踪 AGENTS 知识库也没有作为产品改动提交。
+原目录 `backend/app/main.py`／`worker.py` 是旧工作站入口。网页版不含原生 App 源码和构建脚本。
 
-## 接手运行与验证
+## 继续开发与验证
 
-2026-10-14 分支整理验证：本工作目录完成前端构建、PyInstaller 冻结、Swift 编译及 `codesign --verify --deep --strict`；新包自调用 yt-dlp 返回 `2026.08.19`。冻结后台在 `PATH=/usr/bin:/bin` 和临时隔离数据目录下实际启动，环境检查返回 `ready=true`，包内首页及空历史响应正常；检查后后台已停止。未替换已安装 App，未重复真实视频流水线或原生按钮验收。
-
-以下从仓库根目录执行。App 可直接双击启动；浏览器 GUI 需要独立环境与已构建前端。
+打开已安装 App 可复用既有任务。独立浏览器服务按以下入口运行；本次没有启动或停止服务：
 
 ```bash
+cd /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper
 ~/.cache/nyaru-clipper/companion-venv/bin/python scripts/local_companion.py doctor
 ~/.cache/nyaru-clipper/companion-venv/bin/python scripts/local_companion.py gui
 ```
 
-GUI 默认监听 8787，支持 `--port`、`--output-dir`、`--model`、`--threads`。关闭浏览器页面不停止服务；App 关闭窗口或 Cmd-Q 则停止后台及子进程。
+GUI 默认 8787，支持 `--output-dir`、`--port`、`--model`、`--threads`。需复用旧 CLI 历史时明确指定目录；不要让两个服务同时写同一个任务根目录。
 
-前端修改后的构建及回归必须在 `web` 目录执行，以匹配锁定的 pnpm 版本：
+前端命令在 `web` 目录运行，避免锁定 pnpm 版本的 `--dir` 问题：
 
 ```bash
 cd web
+corepack pnpm test --run src/companion/Companion.test.tsx \
+  src/companion/SubtitleEditor.test.tsx src/companion/SubtitlePreview.test.tsx \
+  src/companion/subtitleStyle.test.ts
 corepack pnpm build
-corepack pnpm test --run
 ```
 
-本轮 App 相关 88 项回归对应命令如下；当前独立环境已安装测试依赖，但 `requirements-build.txt` 不负责安装 pytest/httpx。旧验收中的 `/tmp/nyaru-arctime-tests/bin/python` 已不存在，不要继续依赖。
+App相关后端回归在App工作目录运行；网页版去掉 `test_macos_companion.py` 和 `test_macos_subtitle_build.py`。以下是继续验证入口，不表示本次已执行：
 
 ```bash
 PYTHONPATH=backend ~/.cache/nyaru-clipper/companion-venv/bin/python -m pytest \
-  backend/tests/test_macos_companion.py backend/tests/test_arctime_media.py \
-  backend/tests/test_arctime_workflow.py backend/tests/test_local_asr.py \
-  backend/tests/test_local_companion_cli.py backend/tests/test_companion_gui.py -q
+  backend/tests/test_arctime_media.py backend/tests/test_arctime_workflow.py \
+  backend/tests/test_local_asr.py backend/tests/test_local_companion_cli.py \
+  backend/tests/test_companion_gui.py backend/tests/test_companion_translation.py \
+  backend/tests/test_macos_companion.py backend/tests/test_macos_subtitle_build.py \
+  backend/tests/test_subtitle_style.py backend/tests/test_subtitle_templates.py \
+  backend/tests/test_subtitle_api.py backend/tests/test_subtitle_renderer.py -q
 ```
 
-App 重建前保留旧产物，然后使用含 PyInstaller 的独立构建环境执行：
+重建 App 使用 App 工作目录的 `scripts/build_macos_app.py`。构建器拒绝覆盖已有包，先保留旧产物；更新包不删除用户数据。最低 macOS 27.0、arm64；不应仅改 Info.plist 来宣称支持旧系统。
 
-```bash
-~/.cache/nyaru-clipper/companion-venv/bin/python scripts/build_macos_app.py
-```
+## 待办、失败证据与操作边界
 
-从零准备构建环境及模型参数见 [macOS 使用／构建说明](macos-app.zh-CN.md)。当前编译目标和原生依赖都要求 macOS 27；兼容旧系统须重新选择或构建依赖，不能仅修改 Info.plist。不要将完整 GPU 后端依赖塞入 App。
+1. 收集用户对0.1.5的样式、模板及ArcTime精修试用反馈；字体替换、样式往返、扬声器输出和干净主机仍待更广验收。逐句翻译校对、真实V4 Pro及更多平台访问条件仍待验收。
+2. 主目录2026-10-14记录 [Issue #1](https://github.com/damin93381/nyaru-clipper/issues/1) 已于19:20:50关闭；本次未查询GitHub，不再沿用旧OPEN待办。保留历史下载失败任务 `18e794` 及原失败日志。
+3. Intel／旧 macOS 与 Developer ID、公证、正式安装包分发尚未完成。
+4. 语义／画面高光、词级对齐、说话人分离及Nyaru内置的字幕文字／时间轴校对界面尚未实现；ArcTime内的精修另按上节文件交接完成。
 
-## 验收证据与已修复问题
+不恢复 ArcTime 付费调用，不删除模型、历史或失败日志，不手改任务／翻译清单或不同内容的导出，不提交 Key、媒体或本地证据，不改生成的 requirements／API 类型，不暴露公网或增加多 worker。继续提交和推送应对应用户授权的范围。
 
-- [CLI 验收](local-companion-acceptance-2026-10-12.md)、[浏览器 GUI 验收](local-companion-gui-acceptance-2026-10-13.md)、[macOS 原生验收](macos-app-acceptance-2026-10-13.md)。
-- `.omo/evidence/macos-runtime-qa.json`：42 个 Mach-O 无开发机绝对依赖、包内媒体解码、强杀父应用后清理识别组及端口、模型／导出保留。
-- `.omo/evidence/macos-native-qa.json` 及 `macos-export.mp4`／`.srt`：原生播放器、保存、同名替换、取消、高光表单、中断恢复。
-- `.omo/evidence/macos-app-review.md`：独立审阅 WATCH / APPROVE，阻断项为空。审阅者验证代码／证据，不等于其亲自点击所有原生流程。
-
-已修复首次启动重复 setsid 的 EPERM、WKDownload 不能写入已存在目标（改为同目录临时下载后安全替换）、helper 先退出导致遗漏进程组 SIGKILL、不同模型文件名导致首启缺文件。保留这些失败及修复记录，避免回退。
-
-桌面自动化曾出现 ScreenCaptureKit -3811，重启后恢复并完成主要原生验收；额外退出复查遇到 -3812，未执行退出。不要把工具失败记为成功操作，健康响应也不等于重新验收功能。
-
-## 待办与禁止动作
-
-下面是未实施的后续工作，不是已承诺交付或当前阻塞：
-
-1. 用用户授权的真实平台短视频核验下载访问条件，再覆盖长视频、识别质量、资源使用及实际扬声器输出。合成短样例不能代替这些验收。
-2. 确定要支持的最低 macOS 版本，准备对应原生工具和干净机器验收；Intel 支持需独立构建与验证。
-3. 如需对外分发，再处理 Developer ID、公证、依赖／模型许可证和源码交付要求；当前包只完成本地签名。
-4. 在用户进一步要求语义或画面高光时扩展评分；当前规则筛选的能力边界必须继续说明。
-5. 两个版本现已独立提交；共享修复先进入网页版，再同步 App 分支。后续推送按用户指令执行，避免混入原目录旧工作站修改。
-
-不要恢复调用 ArcTime 付费能力，不要删除模型／历史／失败证据，不要改生成的 requirements/API 类型或运行时目录，不要把服务直接暴露公网，不要为此增加 Redis/Celery 或多 worker。历史 `.omo/evidence/` 位于原开发目录，不随 Git 分发；本次不修改用户已安装 App 或其任务数据。
+本次按授权提交并推送已验证的字幕功能及macOS专属改动，相关使用说明与交接记录随本轮文档提交补齐。推送前重新验证：网页版所选后端180项、App所选后端187项、前端22项、TypeScript/Vite构建及Swift类型检查通过；保留既有Starlette/httpx弃用提示。只清理两份抽取模块各3个文件末尾空行，原实测构建与源码行为一致，未重建或替换已安装App。没有重跑付费翻译或媒体任务，没有上传媒体、原生模板样例、凭据或私密证据；历史附件不改写，主目录／master未合并新功能。

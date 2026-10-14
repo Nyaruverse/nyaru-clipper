@@ -1,6 +1,6 @@
 # 本地视频配套工具
 
-输入一个视频链接，自动下载、在本机生成字幕文字和时间轴，再按指定时间段或高光评分导出切片。提供本地浏览器图形界面和命令行，支持 macOS/Linux；不启动 ArcTime，不调用其云服务，也不调用翻译或 DeepSeek 校对。生成的 SRT 可以交给字幕编辑器继续校对。
+输入一个视频链接，自动下载、在本机生成字幕文字和时间轴，再按指定时间段或高光评分导出切片。提供本地浏览器图形界面和命令行；GUI 另支持可选 DeepSeek 双语翻译、[字幕样式、两类模板、ASS、烧录与 ArcTime 精修交接](subtitle-styles.zh-CN.md)。识别和切片在本机进行；ArcTime 采用文件交接，不调用其云转写。
 
 ## 图形界面
 
@@ -68,7 +68,7 @@ Linux 安装 FFmpeg，并按 [whisper.cpp 官方说明](https://github.com/ggml-
 - `source.mp4`：下载的视频。
 - `subtitles.srt`：完整字幕文字和句级时间轴。
 - `transcript.txt`、`transcript.json`：全文，以及含时间戳的结构化字幕。
-- `clip-001.mp4`、`clip-001.srt`：切片和从零开始的外挂字幕；本轮不把字幕烧录到画面中。
+- `clip-001.mp4`、`clip-001.srt`：切片和从零开始的外挂字幕；GUI 可另导出 `styled-*.mp4` 烧录版本，保留原切片。
 - `job.json`：选择方式、处理状态和产物校验和。
 - `gui.json`：图形界面的处理消息和失败信息，不存储原链接。
 - `clip-001.log`：FFmpeg 导出诊断，失败后仍保留。

@@ -1,8 +1,9 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.4** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.5** includes URL download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
-Python, yt-dlp, FFmpeg, whisper.cpp and the multilingual small model are bundled.
+It also adds [custom subtitle styles, both template types, ASS, burned clips and ArcTime handoff](subtitle-styles.md).
+Python, yt-dlp, libass-capable FFmpeg, whisper.cpp and the multilingual small model are bundled.
 Runtime use requires no terminal, Homebrew or paid ArcTime service.
 
 DeepSeek Japanese-to-Chinese translation reuses completed tasks and their existing
@@ -18,8 +19,10 @@ retains strict validation.
 
 ## Use
 
-Double-click `~/Applications/Nyaru Clipper.app`. The local archive is
-`dist/Nyaru-Clipper-macOS-arm64.zip`.
+On15October2026, verified0.1.5 build9 was installed and launched at `~/Applications/Nyaru Clipper.app`.
+Previous0.1.4 build5 is preserved at `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`; task data and models remain intact.
+All1498 copied file SHA256 hashes match the verified build, and strict signature verification passed. The running app loads seven historical tasks, three style templates and one ArcTime template.
+The archive remains `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`. See the [feature verification record](subtitle-styles-acceptance-2026-10-14.md).
 
 1. Enter an accessible URL and select a language or automatic detection.
 2. Choose explicit ranges or highlights and the maximum clip count.
@@ -54,8 +57,10 @@ uv pip install --python dist/build-venv/bin/python -r desktop/macos/requirements
 cd web
 corepack pnpm install --frozen-lockfile
 cd ..
-dist/build-venv/bin/python scripts/build_macos_app.py
+dist/build-venv/bin/python scripts/build_macos_app.py --output-dir dist/new-build
 ```
+
+FFmpeg defaults to Homebrew `ffmpeg@7`; SDL3 is explicitly bundled when SDL2 compatibility loads it dynamically. Both host and frozen subtitle filters are checked; an unrunnable frozen tool fails the build.
 
 The default model is `~/.cache/nyaru-clipper/models/ggml-small.bin`; override with
 `--model /path/to/model`. Move an existing `dist/Nyaru Clipper.app` aside before

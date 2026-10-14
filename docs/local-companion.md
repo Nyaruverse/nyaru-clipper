@@ -1,6 +1,6 @@
 # Local video companion
 
-The standalone browser GUI and CLI download one video URL, generate original-language text and sentence timestamps locally, and export explicit ranges or automatically ranked highlights. macOS/Linux are supported first. They do not launch ArcTime or call its cloud services, translation, or DeepSeek proofreading. The SRT can be opened in a subtitle editor for review.
+The standalone browser GUI and CLI download one video URL, generate original-language text and sentence timestamps locally, and export explicit ranges or automatically ranked highlights. The GUI also supports optional DeepSeek bilingual translation and [subtitle styles, both template types, ASS, burning and ArcTime handoff](subtitle-styles.md). Recognition/clipping remain local; ArcTime integration uses files without cloud transcription.
 
 ## Browser GUI
 
@@ -60,7 +60,7 @@ On Linux, install FFmpeg and install/build `whisper-cli` following the [upstream
 
 ## Artifacts and recovery
 
-Every job gets `data/local-runs/<id>/` containing `source.mp4`, full `subtitles.srt`, `transcript.txt`, structured `transcript.json`, MP4/SRT clip pairs, persistent `clip-*.log` export diagnostics, `job.json`, and `asr/chunk-*.json`/logs. The GUI adds `gui.json` for messages/errors without persisting the source URL. Clip subtitle timestamps start at zero. Subtitles are sidecars, not burned into video in this iteration.
+Every job gets `data/local-runs/<id>/` containing `source.mp4`, full `subtitles.srt`, `transcript.txt`, structured `transcript.json`, MP4/SRT clip pairs, persistent `clip-*.log` export diagnostics, `job.json`, and `asr/chunk-*.json`/logs. The GUI adds `gui.json` for messages/errors without persisting the source URL. Clip subtitle timestamps start at zero. The GUI can additionally export `styled-*.mp4` burned copies while preserving the original clip.
 
 After download, failures or Ctrl+C can be recovered with `resume`. Valid ASR chunks and completed clip pairs are reused. Changed source/model settings or modified outputs are rejected. Resuming a completed job verifies artifacts without retranscription. Failed downloads require a new run with the original URL, which is not persisted. Legacy ArcTime cloud jobs are rejected.
 

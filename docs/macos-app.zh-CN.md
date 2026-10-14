@@ -1,6 +1,6 @@
 # macOS App
 
-**Nyaru Clipper.app 0.1.4** 已包含链接下载、本地字幕文字和句子时间轴、指定时间段／高光切片、进度、预览及导出，并支持 DeepSeek 日译中双语字幕。Python、yt-dlp、FFmpeg、whisper.cpp 和多语种 small 模型均内置，运行时无需终端、Homebrew 或 ArcTime 付费服务。
+**Nyaru Clipper.app 0.1.5** 已包含链接下载、本地字幕文字和句子时间轴、指定时间段／高光切片、进度、预览及导出，并支持 DeepSeek 日译中双语字幕和[自定义字幕样式、两类模板、ASS、切片烧录及 ArcTime 精修交接](subtitle-styles.zh-CN.md)。Python、yt-dlp、含 libass 的 FFmpeg、whisper.cpp 和多语种 small 模型均内置，运行时无需终端、Homebrew 或 ArcTime 付费服务。
 
 双语字幕复用已完成任务的字幕与时间轴。API Key 可通过界面保存到 `runs/config.json`，重启自动加载；之后可生成完整视频及各切片的双语 SRT，查看翻译进度、切换预览和导出。DeepSeek API 需要网络和账户额度。详见[双语字幕指南](deepseek-bilingual.zh-CN.md)。
 
@@ -8,7 +8,7 @@
 
 ## 打开和使用
 
-本机已安装到 `~/Applications/Nyaru Clipper.app`，双击打开即可。项目 `dist/Nyaru-Clipper-macOS-arm64.zip` 是可解压的本地构建。
+2026-10-15 已将验证通过的 0.1.5 build 9 安装到 `~/Applications/Nyaru Clipper.app` 并启动。旧版 0.1.4 build 5 保存在 `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`；任务数据和模型保留。安装副本1498个文件的SHA256与验证构建一致，严格签名验证通过；实际界面读取7个历史任务、3个样式模板和1个ArcTime模板。新包为 `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`。见[本次功能验证记录](subtitle-styles-acceptance-2026-10-14.zh-CN.md)。
 
 1. 输入可访问的视频链接，选择语种或自动识别。
 2. 选择指定起止时间，或高光模式及最多导出数量。
@@ -23,7 +23,7 @@
 
 当前为 **Apple Silicon / arm64，最低 macOS 27.0**，已在 macOS 27.0.1 验证。版本下限来自本次打包的原生工具。本地 ad-hoc 签名已验证；尚未做 Developer ID 签名或 Apple 公证。
 
-开发构建才需要 Python 3.11、uv、Corepack、前端依赖、FFmpeg/ffprobe、whisper.cpp 和校验正确的模型。
+开发构建才需要 Python 3.11、uv、Corepack、前端依赖、含 libass 的 FFmpeg/ffprobe、whisper.cpp 和校验正确的模型。默认选择 Homebrew `ffmpeg@7`；SDL2 compatibility 的 SDL3 动态依赖会显式打包。构建器同时验证宿主和冻结后的字幕滤镜，冻结工具不可运行时构建失败。
 
 ```bash
 uv venv --python 3.11 dist/build-venv
@@ -31,7 +31,7 @@ uv pip install --python dist/build-venv/bin/python -r desktop/macos/requirements
 cd web
 corepack pnpm install --frozen-lockfile
 cd ..
-dist/build-venv/bin/python scripts/build_macos_app.py
+dist/build-venv/bin/python scripts/build_macos_app.py --output-dir dist/new-build
 ```
 
 默认模型为 `~/.cache/nyaru-clipper/models/ggml-small.bin`，可用 `--model /路径/模型文件` 指定。构建器保留已存在的 `dist/Nyaru Clipper.app`，重建前先移走旧构建。产物含依赖许可证和 `Contents/Resources/build-info.json`。
