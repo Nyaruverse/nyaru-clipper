@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKDownloadDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKDownloadDelegate, WKUIDelegate {
     var window: NSWindow!
     var web: WKWebView!
     var helper: Process?
@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         web = WKWebView(frame: window.contentView!.bounds)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
+        web.uiDelegate = self
         window.contentView = web
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -139,6 +140,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        guard let origin, let port = origin.port, frame.securityOrigin.host == origin.host,
+              frame.securityOrigin.port == port else { completionHandler(nil); return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.beginSheetModal(for: window) { result in
+            completionHandler(result == .OK ? panel.urls : nil)
+        }
+    }
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let panel = NSSavePanel()
