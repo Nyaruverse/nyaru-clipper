@@ -10,7 +10,7 @@ interface Clip {
   score: number | null;
   reasons: string[];
 }
-interface Segment { segment_id: string; start_seconds: number; end_seconds: number; text: string }
+interface Segment { id: string; start_seconds: number; end_seconds: number; text: string }
 interface Job {
   id: string;
   state: string;
@@ -24,10 +24,13 @@ interface Job {
   segments: Segment[];
   has_source: boolean;
   can_resume: boolean;
+  language: string;
+  bilingual_segments: Segment[];
+  translation: { state: string; error: string | null; done: number; total: number; message: string | null; model?: string };
 }
 interface JobInput { url: string; ranges: [string, string][]; highlights: number | null; language: string }
 
-async function api<T>(path: string, body?: JobInput): Promise<T> {
+async function api<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(`/companion-api${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
   const result: unknown = await response.json();
   if (!response.ok) {
@@ -51,7 +54,7 @@ function parseTime(value: string): number {
   if (!Number.isFinite(result)) throw new Error("时间必须为有限数值");
   return result;
 }
-const running = (job?: Job) => !!job && !["completed", "failed", "interrupted"].includes(job.state);
+const running = (job?: Job) => !!job && (! ["completed", "failed", "interrupted"].includes(job.state) || job.translation?.state === "translating");
 const statusLabel = (job: Job) => ({ completed: "已完成", failed: "失败", interrupted: "已中断", preparing: "检查环境", downloading: "下载中", downloaded: "下载完成", transcribing: "识别中", subtitles_ready: "字幕已生成", exporting: "导出中" }[job.state] ?? "处理中");
 const fileUrl = (id: string, name: string, download = false) => `/companion-api/jobs/${id}/files/${encodeURIComponent(name)}${download ? "?download=true" : ""}`;
 
@@ -66,8 +69,11 @@ export function Companion() {
   const [preview, setPreview] = useState<string>("source.mp4");
   const [seek, setSeek] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [modelDraft, setModelDraft] = useState<string | null>(null);
+  const [subtitleMode, setSubtitleMode] = useState("bilingual");
   const video = useRef<HTMLVideoElement>(null);
-  const config = useQuery({ queryKey: ["companion", "config"], queryFn: () => api<{ ready: boolean; missing: string[] }>("/config"), refetchInterval: 15000 });
+  const config = useQuery({ queryKey: ["companion", "config"], queryFn: () => api<{ ready: boolean; missing: string[]; translation_configured: boolean; translation_model: string; translation_models?: string[]; translation_config_error?: string | null }>("/config"), refetchInterval: 15000 });
   const history = useQuery({ queryKey: ["companion", "jobs"], queryFn: () => api<Job[]>("/jobs"), refetchInterval: 3000 });
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
@@ -81,6 +87,14 @@ export function Companion() {
     const response = await fetch(`/companion-api/jobs/${id}/resume`, { method: "POST" });
     if (!response.ok) throw new Error("恢复失败，请检查是否已有任务运行");
   }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
+  const saveKey = useMutation({ mutationFn: () => api("/translation-config", { api_key: apiKey.trim() }),
+    onSuccess: () => { setApiKey(""); void queryClient.invalidateQueries({ queryKey: ["companion", "config"] }); },
+    onError: err => setError(err.message) });
+  const translate = useMutation({ mutationFn: (id: string) => api(`/jobs/${id}/translate`, {}),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
+  const saveModel = useMutation({ mutationFn: () => api("/translation-config", { model: modelDraft }),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["companion", "config"] }); setModelDraft(null); },
+    onError: err => setError(err.message) });
 
   useEffect(() => { if (!selectedId && history.data?.length) setSelectedId(history.data[0].id); }, [selectedId, history.data]);
   useEffect(() => { setPreview("source.mp4"); setSeek(null); }, [selectedId]);
@@ -100,6 +114,10 @@ export function Companion() {
   const clip = job?.clips.find(item => item.video === preview);
   const stage = job?.state === "completed" ? 4 : ({ preparing: 0, downloading: 1, download_failed: 1, downloaded: 2, transcribing: 2, subtitles_ready: 3, exporting: 3 }[job?.phase ?? ""] ?? 0);
   const unavailable = config.isError || history.isError || detail.isError;
+  const hasBilingual = job?.translation?.state === "completed";
+  const showBilingual = hasBilingual && subtitleMode === "bilingual";
+  const subtitleFile = (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, showBilingual ? ".ja-zh.vtt" : ".vtt");
+  const visibleSegments = (showBilingual ? job?.bilingual_segments : job?.segments) ?? [];
 
   return <div className="ny-companion">
     <header className="companion-header">
@@ -139,6 +157,30 @@ export function Companion() {
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
+        <section className="companion-panel" aria-label="中日双语字幕">
+          <h2>日语 → 中文 · 双语字幕</h2>
+          <p className="companion-muted">DeepSeek 翻译只发送字幕文字，会使用你的 API 额度。视频和识别在本机完成。</p>
+          <form onSubmit={event => { event.preventDefault(); setError(null); saveKey.mutate(); }}>
+            <label className="ny-field">DeepSeek API Key<input className="ny-input" type="password" autoComplete="off" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="保存后重启自动加载" /></label>
+            <button className="ny-button" type="submit" disabled={!apiKey.trim() || saveKey.isPending || saveModel.isPending}>保存 Key 到配置文件</button>
+          </form>
+          <p className="companion-footnote">{config.data?.translation_configured ? "Key 已保存 · 重启自动加载" : "Key 尚未设置 · 保存到 runs/config.json"} · {config.data?.translation_model ?? "deepseek-flash"}</p>
+          <form onSubmit={event => { event.preventDefault(); setError(null); saveModel.mutate(); }}>
+            <label className="ny-field">翻译模型<select className="ny-input" value={modelDraft ?? config.data?.translation_model ?? "deepseek-flash"} onChange={event => setModelDraft(event.target.value)}>
+              {(config.data?.translation_models ?? ["deepseek-flash", "deepseek-v4-pro"]).map(model => <option key={model} value={model}>{model === "deepseek-flash" ? "DeepSeek Flash（默认）" : "DeepSeek V4 Pro"}</option>)}
+            </select></label>
+            <button className="ny-button" type="submit" disabled={!modelDraft || modelDraft === config.data?.translation_model || saveModel.isPending || saveKey.isPending}>保存模型</button>
+          </form>
+          <p className="companion-footnote">模型选择重启后保留；已开始的翻译继续使用原模型。</p>
+          {job?.translation?.model && job.translation.state !== "not_started" && <p className="companion-footnote">当前任务模型：{job.translation.model}</p>}
+          {config.data?.translation_config_error && <p role="alert">{config.data.translation_config_error}</p>}
+          {job?.state === "completed" && <>
+            <button className="ny-button ny-button--primary" disabled={!config.data?.translation_configured || !!busy || translate.isPending || !!hasBilingual || unavailable} onClick={() => { setError(null); translate.mutate(job.id); }}>{hasBilingual ? "中日双语字幕已生成" : ["failed", "interrupted"].includes(job.translation?.state) ? "继续生成中日双语字幕" : "生成中日双语字幕"}</button>
+            <p className="companion-footnote">复用当前任务的字幕与时间轴，保留原视频和原字幕。</p>
+            {job.translation && job.translation.state !== "not_started" && <p role="status">{job.translation.message ?? `翻译 ${job.translation.done}/${job.translation.total} 条`}{hasBilingual ? " · 已完成" : job.translation.state === "interrupted" ? " · 已中断，可继续" : ""}</p>}
+            {job.translation?.error && <p className="companion-error" role="alert">{job.translation.error}</p>}
+          </>}
+        </section>
         <section className="companion-panel companion-history" aria-label="任务记录">
           <h2>任务记录 <span>{history.data?.length ?? 0}</span></h2>
           {!history.data?.length && <p className="companion-muted">开始第一个任务后，结果会保存在这里。</p>}
@@ -159,19 +201,21 @@ export function Companion() {
           <div className="companion-section-heading"><div className="companion-panel-title"><span className="companion-number">03</span><h2>预览与时间轴</h2></div><span className="companion-muted">{job?.duration ? `原视频 ${time(job.duration)}` : ""}</span></div>
           {job?.has_source ? <>
             <div className="companion-preview-tabs"><button className="ny-button" aria-pressed={!clip} onClick={() => setPreview("source.mp4")}>完整视频</button>{job.clips.map((item, index) => <button className="ny-button" key={item.video} aria-label={`预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}>切片 {index + 1}</button>)}</div>
+            {hasBilingual && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
             <video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
-              {(clip || job.segments.length > 0) && <track kind="subtitles" src={fileUrl(job.id, (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, ".vtt"))} srcLang={language === "auto" ? "zh" : language} label="识别字幕" default />}
+              {(clip || job.segments.length > 0) && <track key={subtitleFile} kind="subtitles" src={fileUrl(job.id, subtitleFile)} srcLang={showBilingual ? "zh" : job.language === "auto" ? "und" : job.language} label={showBilingual ? "中日双语" : "识别字幕"} default />}
             </video>
             <div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
             <div className="companion-timeline" aria-label="切片时间轴">{job.clips.map((item, index) => <button key={item.video} aria-label={`在时间轴预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}><span className="companion-timeline-fill" style={{ left: `${item.start / (job.duration ?? 1) * 100}%`, width: `${(item.end - item.start) / (job.duration ?? 1) * 100}%` }} /><span>切片 {index + 1} · {time(item.start)} — {time(item.end)}</span></button>)}</div>
           </> : <div className="companion-empty-preview"><Film size={42} strokeWidth={1} /><strong>你的下一段精彩，从这里开始</strong><p>下载完成后可以预览视频<br />字幕和切片会随处理进度出现</p></div>}
-          {job && job.segments.length > 0 && <details className="companion-transcript" open><summary>完整字幕 <span>{job.segments.length} 条 · 点击时间跳转原视频</span></summary><div>{job.segments.map((segment, index) => <button key={`${segment.segment_id}/${index}`} onClick={() => { setPreview("source.mp4"); setSeek(segment.start_seconds); }}><time>{time(segment.start_seconds)}</time><span>{segment.text}</span></button>)}</div></details>}
+          {job && visibleSegments.length > 0 && <details className="companion-transcript" open><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击时间跳转原视频</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} onClick={() => { setPreview("source.mp4"); setSeek(segment.start_seconds); }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
         </section>
         <section className="companion-panel companion-results" aria-label="导出结果">
           <div className="companion-section-heading"><div className="companion-panel-title"><span className="companion-number">04</span><h2>导出结果</h2></div><span className="companion-muted">{job?.clips.length ?? 0} 个切片</span></div>
           {job?.segments.length ? <div className="companion-downloads"><a className="ny-button" href={fileUrl(job.id, "subtitles.srt", true)}><ArrowDownToLine size={16} />完整字幕 SRT</a><a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a></div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
+          {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.ja-zh.srt", true)}>完整双语字幕 SRT</a>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
-          {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>切片 {String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p></div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a></div></div>)}
+          {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>切片 {String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p></div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{hasBilingual && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.subtitles.replace(/\.srt$/, ".ja-zh.srt"), true)}>双语 SRT</a>}</div></div>)}
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时，下载视频与同名 SRT 即可继续编辑。</p>}
         </section>
       </div>
