@@ -1,9 +1,14 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.1** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.4** includes URL download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
 Python, yt-dlp, FFmpeg, whisper.cpp and the multilingual small model are bundled.
 Runtime use requires no terminal, Homebrew or paid ArcTime service.
+
+DeepSeek Japanese-to-Chinese translation reuses completed tasks and their existing
+timelines, with bilingual full/clip SRT files, progress, preview and export. The
+API Key is saved through the GUI to `runs/config.json` and loaded on restart; translation requires network/API credit.
+See the [bilingual subtitle guide](deepseek-bilingual.md).
 
 0.1.1 handles terminal ASR overruns and contiguous zero-duration text fragments.
 Terminal cues are clipped to actual audio bounds; the accepted tail window is at
