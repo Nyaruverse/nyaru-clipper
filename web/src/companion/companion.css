@@ -32,6 +32,7 @@ body { margin: 0; }
 .companion-mode label { display: flex; align-items: center; gap: var(--ny-space-1); min-height: var(--ny-target-min); border: 1px solid var(--ny-border); padding: var(--ny-space-2); border-radius: var(--ny-radius-2); cursor: pointer; font-size: var(--ny-font-caption); }
 .companion-mode input { accent-color: var(--ny-accent); }
 .companion-mode .is-selected { border-color: var(--ny-accent); background: var(--ny-surface-muted); }
+.companion-mode label:last-child { grid-column: 1 / -1; }
 .companion-ranges, .companion-highlights { display: grid; gap: var(--ny-space-3); }
 .companion-range { display: grid; grid-template-columns: 20px 1fr 1fr 36px; gap: var(--ny-space-2); align-items: end; }
 .companion-range > span { align-self: center; padding-top: 20px; }
@@ -120,3 +121,7 @@ body { margin: 0; }
 .subtitle-text { display: inline-block; vertical-align: bottom; }
 
 .subtitle-fullscreen-exit { position: absolute; top: var(--ny-space-4); right: var(--ny-space-4); z-index: 1; }
+.companion-llm-settings, .companion-chatgpt { display: grid; gap: var(--ny-space-3); margin-top: var(--ny-space-4); min-width: 0; overflow-wrap: anywhere; }
+.companion-llm-settings form { display: grid; gap: var(--ny-space-3); margin-top: var(--ny-space-3); }
+.companion-llm-settings .companion-downloads { margin-top: 0; }
+.companion-llm-settings .ny-button { white-space: normal; }

@@ -14,6 +14,8 @@ Available documents:
 
 - `local-companion.md`: Local URL download, offline ASR, range/highlight clipping and recovery
 - `local-companion.zh-CN.md`: Chinese local companion guide
+- [openai-subscription.md](openai-subscription.md): ChatGPT subscription authorization and provider selection
+- [openai-subscription-acceptance-2026-10-15.md](openai-subscription-acceptance-2026-10-15.md): Actual subscription and bilingual acceptance
 
 - `user-manual.md`: English user manual
 - `operator-manual.md`: English operator manual

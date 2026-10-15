@@ -3,9 +3,67 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 
 import { Companion } from "./Companion";
+
+it("previews and downloads available bilingual live clips before recording ends", async () => {
+  const job = {id:"aabbccddeeff",state:"recording",mode:"saozi",live:true,has_source:false,
+    message:"录制中",duration:160,started_at:0,can_stop:true,
+    clips:[{video:"clip-001.mp4",subtitles:"clip-001.srt",bilingual_subtitles:"clip-001.ja-zh.srt",start:0,end:80,reasons:[],score:null},
+      {video:"clip-002.mp4",subtitles:"clip-002.srt",start:80,end:160,reasons:[],score:null}],
+    segments:[{id:"1",start_seconds:0,end_seconds:1,text:"こんにちは"}],
+    bilingual_segments:[{id:"1",start_seconds:0,end_seconds:1,text:"こんにちは\n你好"}],
+    bilingual_files:["subtitles.ja-zh.srt","clip-001.ja-zh.srt"],
+    translation:{state:"partial",done:1,total:2,error:null}};
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+    url.endsWith("/config") ? {ready:true,missing:[],translation_configured:true} : url.endsWith("/jobs") ? [job] : job))));
+  mount();
+  expect(await screen.findByRole("link", {name:"下载切片 1 双语字幕"})).toHaveAttribute("href", "/companion-api/jobs/aabbccddeeff/files/clip-001.ja-zh.srt?download=true");
+  expect(screen.queryByRole("link", {name:"下载切片 2 双语字幕"})).toBeNull();
+  await waitFor(() => expect(document.querySelector("track")).toHaveAttribute("src", "/companion-api/jobs/aabbccddeeff/files/clip-001.ja-zh.vtt"));
+});
 import { defaultStyle } from "./subtitleStyle";
 
 afterEach(() => vi.unstubAllGlobals());
+
+function saoziApi() {
+  const posts: {url: string; body: BodyInit | null | undefined}[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") {
+      posts.push({url, body: options.body});
+      return new Response(JSON.stringify({id:"aabbccddeeff"}), {status:202});
+    }
+    return new Response(JSON.stringify(url.endsWith("/config") ? {ready:true,missing:[],translation_configured:true} : url.endsWith("/jobs") ? [] : {
+      id:"aabbccddeeff",state:"recording",mode:"saozi",live:true,can_stop:true,message:"正在录制",clips:[],segments:[],translation:{state:"not_started"}
+    }));
+  }));
+  return posts;
+}
+
+it("starts Bilibili live saozi and stops capture while preserving results", async () => {
+  const posts = saoziApi();
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", {name:"开始处理"})).toBeEnabled());
+  fireEvent.click(screen.getByRole("radio", {name:"臊子"}));
+  fireEvent.change(screen.getByLabelText("臊子输入"), {target:{value:"live"}});
+  fireEvent.change(screen.getByLabelText("视频链接"), {target:{value:"https://live.bilibili.com/12345"}});
+  fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
+  expect(await screen.findByRole("button", {name:"停止直播并导出剩余内容"})).toBeEnabled();
+  expect(JSON.parse(String(posts[0]?.body))).toEqual({url:"https://live.bilibili.com/12345",ranges:[],highlights:null,language:"auto",saozi:true,live:true});
+  fireEvent.click(screen.getByRole("button", {name:"停止直播并导出剩余内容"}));
+  await waitFor(() => expect(posts[1]?.url).toBe("/companion-api/jobs/aabbccddeeff/stop"));
+});
+
+it("uploads a local recording as raw file bytes for saozi", async () => {
+  const posts = saoziApi();
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", {name:"开始处理"})).toBeEnabled());
+  fireEvent.click(screen.getByRole("radio", {name:"臊子"}));
+  fireEvent.change(screen.getByLabelText("臊子输入"), {target:{value:"file"}});
+  const file = new File(["recording"], "my-video.mp4", {type:"video/mp4"});
+  fireEvent.change(screen.getByLabelText("本地录像"), {target:{files:[file]}});
+  fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
+  await waitFor(() => expect(posts[0]?.body).toBe(file));
+  expect(posts[0]?.url).toBe("/companion-api/saozi/upload?language=auto");
+});
 
 it("saves a persistent key and translates an existing task without creating or resuming one", async () => {
   const posts: string[] = [];
@@ -52,26 +110,24 @@ function mount() {
   return render(<QueryClientProvider client={client}><Companion /></QueryClientProvider>);
 }
 
-it("loads and saves the translation model without submitting a key", async () => {
-  let model = "deepseek-v4-pro";
+it("offers only Flash and replaces a prohibited legacy default", async () => {
   const posts: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") {
-      const payload = JSON.parse(String(options.body));
-      posts.push(payload);
-      model = payload.model;
-      return new Response(JSON.stringify({ translation_model: model }));
+      posts.push({url, body: JSON.parse(String(options.body))});
+      return new Response(JSON.stringify({}));
     }
     return new Response(JSON.stringify(url.endsWith("/config") ? { ready: true, missing: [],
-      translation_configured: true, translation_model: model, translation_models: ["deepseek-flash", "deepseek-v4-pro"] } : []));
+      translation_configured: true, translation_model: "deepseek-v4-pro", translation_models: ["deepseek-flash", "deepseek-v4-pro"] } : []));
   }));
   mount();
   const select = await screen.findByLabelText("翻译模型");
-  await waitFor(() => expect(select).toHaveValue("deepseek-v4-pro"));
-  fireEvent.change(select, { target: { value: "deepseek-flash" } });
-  fireEvent.click(screen.getByRole("button", { name: "保存模型" }));
-  await waitFor(() => expect(posts).toEqual([{ model: "deepseek-flash" }]));
-  expect(screen.getByLabelText("DeepSeek API Key")).toHaveValue("");
+  expect(within(select).getAllByRole("option")).toHaveLength(1);
+  expect(select).toHaveValue("deepseek-flash");
+  expect(screen.queryByText(/DeepSeek V4 Pro/)).toBeNull();
+  await waitFor(() => expect(screen.getByRole("button", { name: "保存供应商与模型" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "保存供应商与模型" }));
+  await waitFor(() => expect(posts).toEqual([{url:"/companion-api/llm-config",body:{provider:"deepseek",model:"deepseek-flash"}}]));
 });
 
 function fakeApi() {
