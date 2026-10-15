@@ -4,6 +4,8 @@
 
 ## 图形界面
 
+顶部「新建任务／切片方式／字幕样式／AI 设置／任务记录／导出」点击后在右侧展开，再点同一入口收起；也可点击关闭按钮或按 Escape。切换入口保留已填写内容和本地文件选择。进度与直播停止按钮始终位于主工作区。见[本次界面验证](toolbar-drawer-acceptance-2026-10-16.zh-CN.md)。
+
 双击启动且内置工具及模型的版本见 [macOS App](macos-app.zh-CN.md)。
 
 在项目根目录执行。首次构建界面需要 Node.js 20 以上和项目指定的 pnpm；Corepack 会使用 `web/package.json` 指定的版本。
