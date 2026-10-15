@@ -1,10 +1,12 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.8 build14** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.8 build15** includes URL download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
 It also adds [custom subtitle styles, both template types, ASS, burned clips and ArcTime handoff](subtitle-styles.md).
 Python, yt-dlp, libass-capable FFmpeg, whisper.cpp and the multilingual small model are bundled.
 Runtime use requires no terminal, Homebrew or paid ArcTime service.
+
+The 16 October build15 update adds a compact top toolbar with a right drawer: click to open, click the same entry to close. Drafts survive switching, with progress and stop controls kept visible. It reuses build14's runtime and updates only frontend resources and the build number before local signing. See [UI acceptance and rollback](toolbar-drawer-acceptance-2026-10-16.md).
 
 The installed build also includes [Saozi](saozi.md) for replay/local recordings and
 Bilibili live slicing, automatic bilingual subtitles and the
@@ -25,7 +27,7 @@ retains strict validation.
 
 ## Use
 
-Current installation: verified0.1.8 build14 at `~/Applications/Nyaru Clipper.app`;
+Current installation: verified0.1.8 build15 at `~/Applications/Nyaru Clipper.app`;
 see the [subscription acceptance](openai-subscription-acceptance-2026-10-15.md).
 The following0.1.5 installation receipt is historical:
 On15October2026, verified0.1.5 build9 was installed and launched at `~/Applications/Nyaru Clipper.app`.

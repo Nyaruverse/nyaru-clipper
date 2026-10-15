@@ -123,7 +123,7 @@ def main() -> int:
     with (app / "Contents/Info.plist").open("wb") as handle:
         plistlib.dump({"CFBundleExecutable": NAME, "CFBundleIdentifier": "local.nyaru.clipper", "CFBundleName": NAME,
                       "CFBundleDisplayName": NAME, "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.8",
-                      "CFBundleVersion": "14", "LSMinimumSystemVersion": "27.0", "LSArchitecturePriority": ["arm64"],
+                      "CFBundleVersion": "15", "LSMinimumSystemVersion": "27.0", "LSArchitecturePriority": ["arm64"],
                       "NSHighResolutionCapable": True, "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True}}, handle)
 
     licenses = resources / "Licenses"

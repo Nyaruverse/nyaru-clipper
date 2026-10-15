@@ -1,6 +1,8 @@
 # macOS App
 
-当前安装版为 **0.1.8 build14**，已加入[臊子](saozi.zh-CN.md)回放／本地录像／Bilibili实时切片、自动双语字幕和[ChatGPT订阅供应商](openai-subscription.zh-CN.md)。可在AI供应商中选择DeepSeek Flash或ChatGPT；DeepSeek Pro已禁用。见[订阅验收](openai-subscription-acceptance-2026-10-15.zh-CN.md)和[Web端复测](web-app-acceptance-2026-10-15.zh-CN.md)。下文0.1.5版本及安装收据为历史记录，其基础操作仍适用。
+当前安装版为 **0.1.8 build15**，已加入[臊子](saozi.zh-CN.md)回放／本地录像／Bilibili实时切片、自动双语字幕和[ChatGPT订阅供应商](openai-subscription.zh-CN.md)。可在AI供应商中选择DeepSeek Flash或ChatGPT；DeepSeek Pro已禁用。见[订阅验收](openai-subscription-acceptance-2026-10-15.zh-CN.md)和[Web端复测](web-app-acceptance-2026-10-15.zh-CN.md)。下文0.1.5版本及安装收据为历史记录，其基础操作仍适用。
+
+2026-10-16 的 build15 将功能入口收为顶部选项与右侧抽屉：点击展开，再点同一项收起。草稿保留，进度与停止操作保持可见。此次复用 build14 运行时，仅更新前端及构建号并重新本地签名；原生开合验证与旧版备份见[界面验收](toolbar-drawer-acceptance-2026-10-16.zh-CN.md)。
 
 **Nyaru Clipper.app 0.1.5** 已包含链接下载、本地字幕文字和句子时间轴、指定时间段／高光切片、进度、预览及导出，并支持 DeepSeek 日译中双语字幕和[自定义字幕样式、两类模板、ASS、切片烧录及 ArcTime 精修交接](subtitle-styles.zh-CN.md)。Python、yt-dlp、含 libass 的 FFmpeg、whisper.cpp 和多语种 small 模型均内置，运行时无需终端、Homebrew 或 ArcTime 付费服务。
 

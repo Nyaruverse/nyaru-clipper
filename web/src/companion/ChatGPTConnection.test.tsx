@@ -36,6 +36,7 @@ function setup(options: {status?: typeof disconnected | typeof connected; loginE
   }));
   const client = new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});
   render(<QueryClientProvider client={client}><Companion /></QueryClientProvider>);
+  fireEvent.click(screen.getByRole("button", {name:"AI 设置"}));
   return {posts,statusReads:()=>statusReads,unrelatedError:()=>{status={...status,error:"回调未匹配，当前授权仍待完成"};},connect:(replaceModels=false)=>{
     status=connected;
     if (replaceModels) catalog=[{slug:"new-model",display_name:"New Model"}];
@@ -62,7 +63,9 @@ it("shows missing plan sharing and disables account model saving", async () => {
   expect(await screen.findByText(/尚未授权共享订阅额度/)).toBeVisible();
   expect(screen.getByRole("button",{name:"保存供应商与模型"})).toBeDisabled();
   expect(screen.queryByRole("option",{name:"Account Model"})).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name:"切片方式"}));
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
+  fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
   fireEvent.change(screen.getByLabelText("视频链接"),{target:{value:"https://example.org/video.mp4"}});
   fireEvent.click(screen.getByRole("button",{name:"开始处理"}));
   expect(await screen.findByText("臊子需要先连接 ChatGPT、授权订阅额度并保存可用模型")).toBeVisible();
@@ -99,8 +102,10 @@ it("shows expired session recovery and keeps logout disabled during a busy task"
 it("uses ChatGPT readiness for Saozi even when no DeepSeek key exists", async () => {
   setup({status:connected});
   await screen.findByRole("option",{name:"Account Model"});
+  fireEvent.click(screen.getByRole("button", {name:"切片方式"}));
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
   expect(screen.getByText(/ChatGPT 根据字幕段落选择切点/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
   fireEvent.change(screen.getByLabelText("视频链接"),{target:{value:"https://example.org/video.mp4"}});
   fireEvent.click(screen.getByRole("button",{name:"开始处理"}));
   await waitFor(()=>expect(globalThis.fetch).toHaveBeenCalledWith("/companion-api/jobs",expect.objectContaining({method:"POST"})));

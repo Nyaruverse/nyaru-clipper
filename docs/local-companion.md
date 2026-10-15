@@ -4,6 +4,8 @@ The standalone browser GUI and CLI download one video URL, generate original-lan
 
 ## Browser GUI
 
+The top New task / Slicing / Subtitle style / AI settings / Task history / Export entries open a right drawer. Click the active entry again, use its close button, or press Escape to dismiss it. Drafts and local-file selections survive switches; progress and live stop remain in the workspace. See the [UI verification](toolbar-drawer-acceptance-2026-10-16.md).
+
 For the double-click package with bundled tools and model, see [macOS app](macos-app.md).
 
 From the repository root, build the frontend once with Node.js 20+ and the project's pinned pnpm. Corepack uses the version in `web/package.json`.
