@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { defaultStyle, subtitleApi, type SubtitleSettings, type SubtitleStyle, type TextStyle, type StyleTemplate } from './subtitleStyle';
-interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean }
-export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy}: Props) {
+interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean; readonly embedded?: boolean }
+export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy,embedded = false}: Props) {
   const client = useQueryClient();
   const [selected,setSelected] = useState('');
   const [name,setName] = useState('我的字幕样式');
@@ -23,7 +23,8 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
   const save = (id?: string) => mutation.mutate({path:'/style-templates',body:{...(id ? {id}:{}),name,style,arctime_template_id:project}});
   const disabled = busy || mutation.isPending || !settings?.style;
   const update = (key:'original'|'translation',patch:Partial<TextStyle>) => onStyle({...style,[key]:{...style[key],...patch}});
-  return <details className="companion-panel subtitle-editor"><summary>字幕样式与模板</summary>
+  const Container = embedded ? 'section' : 'details';
+  return <Container className={embedded ? 'subtitle-editor' : 'companion-panel subtitle-editor'}>{!embedded && <summary>字幕样式与模板</summary>}
     {(error || mutation.error) && <p role="alert" className="companion-error">{(mutation.error ?? error)?.message}</p>}
     {notice && <p role="status">{notice}</p>}
     <fieldset disabled={disabled}>
@@ -45,5 +46,5 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
       {project && <div className="companion-downloads"><a className="ny-button" href={`/companion-api/arctime-templates/${project}/download`}>下载工程模板</a><button className="ny-button" onClick={() => setConfirmation('project')}>删除工程模板</button></div>}
       {confirmation && <div role="group" aria-label="确认模板操作" className="companion-error"><p>{confirmation === 'rename' ? `更新模板为“${name}”并保存当前样式与绑定？` : '确认删除此模板？已导出的文件不受影响。'}</p><button className="ny-button" onClick={() => {if(confirmation === 'rename') save(selected);else if(confirmation === 'delete') mutation.mutate({path:`/style-templates/${selected}/delete`,body:{}});else mutation.mutate({path:`/arctime-templates/${project}/delete`,body:{}},{onSuccess:()=>onProject(null)});}}>确认</button><button className="ny-button" onClick={() => setConfirmation(null)}>取消</button></div>}
     </fieldset>
-  </details>;
+  </Container>;
 }
