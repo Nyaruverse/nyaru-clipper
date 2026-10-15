@@ -178,4 +178,10 @@ The strategy is **mixed, ruled paper**: a small-radius ivory plane, a 1 px warm-
 
 ### Companion subtitle editing and preview
 
+Companion slicing includes the native radio option 臊子. Its labelled input selector switches replay URL, local video file and Bilibili live URL while preserving drafts. Live stop remains outside the disabled creation fieldset; published clips can be previewed before the complete recording exists. Analysis failures use the existing error treatment. Cut titles and reasons appear beside the time interval, with the same body and muted text tokens.
+
 The existing companion panels, native labelled fields, quiet buttons and semantic error/status text also serve subtitle style editing. A collapsed details panel holds two language fieldsets, stacking at narrow mobile widths. Template deletion and replacement use an inline confirmation with explicit Confirm/Cancel actions. Persisted defaults and import failures remain visible. Export controls name language and full-video/clip scope; unsupported burn-in and busy operations are disabled with explanatory text. Subtitle colors and reference-canvas dimensions are user content, not interface theme tokens. A video-image-aligned overlay remains inside the fullscreen wrapper; native captions are available by switching off styled preview. Installed font rendering can differ slightly from libass.
+
+### Companion provider and ChatGPT connection settings
+
+The existing labelled selects, quiet buttons, footnotes and error/status text serve provider defaults and account connection. DeepSeek exposes Flash only. ChatGPT uses a user-clicked external login link after authorization preparation; pending status polls update in place while the workbench remains open. Connected identity, missing subscription permission, session errors, unavailable/empty model catalogs and logout are text-led states. Logout is disabled with a reason during active tasks. Models come from the account catalog; provider defaults and the current task model are labelled separately. Existing spacing, focus and typography tokens apply; no credential-entry fields are added for ChatGPT.

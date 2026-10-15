@@ -9,12 +9,14 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.arctime import media, translation, workflow
+from app.arctime import companion_llm, media, translation, workflow
+from app.arctime.chatgpt_api import chatgpt_router
 from app.arctime.companion_models import JobInput, TranslationConfig, validated_api_key
 from app.arctime.companion_manager import JobManager
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
 from app.arctime.subtitle_api import subtitle_router
 from app.arctime.subtitle_exports import SubtitleExports
+from app.arctime.saozi_api import saozi_router
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
@@ -28,10 +30,14 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         manager.root.mkdir(parents=True, exist_ok=True)
         with workflow.exclusive_lock(manager.root / ".gui.lock"):
             yield
+            manager.stop_event.set()
             manager.executor.shutdown(wait=True)
+            manager.chatgpt.close()
 
     app = FastAPI(title="Nyaru Local Companion", lifespan=lifespan)
     app.include_router(subtitle_router(manager, exports))
+    app.include_router(saozi_router(manager))
+    app.include_router(chatgpt_router(manager))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
 
     @app.middleware("http")
@@ -54,7 +60,10 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         return {"ready": not missing, "missing": missing, "translation_configured": manager.api_key is not None,
                 "subtitle_export_busy": bool(manager.active and manager.active.get("state") == "subtitle_export"),
                 "translation_model": manager.translation_model, "translation_models": translation.MODELS,
-                "translation_config_error": manager.config_error}
+                "translation_config_error": manager.config_error,
+                'llm_provider': manager.llm_provider,
+                'llm_model': manager.chatgpt_model if manager.llm_provider == 'chatgpt' else manager.translation_model,
+                'llm_configured': companion_llm.configured(manager), 'chatgpt': manager.chatgpt.status()}
 
     @app.post("/companion-api/translation-config")
     def translation_config(payload: TranslationConfig):
@@ -73,7 +82,9 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
                 key = new_key if new_key is not None else manager.api_key
                 selected_model = payload.model if payload.model is not None else manager.translation_model
                 media.write_json(manager.config_path, {"deepseek_api_key": key.get_secret_value() if key else "",
-                                                       "deepseek_model": selected_model})
+                                                       "deepseek_model": selected_model,
+                                                       'llm_provider': manager.llm_provider,
+                                                       'chatgpt_model': manager.chatgpt_model})
             except OSError:
                 raise HTTPException(500, "Key 配置保存失败，请检查数据目录权限后重试") from None
             manager.api_key = key

@@ -1,5 +1,38 @@
 # Browser companion handoff
 
+## 2026-10-15 Web branch delivery
+
+The user authorized committing/pushing the browser companion changes to `codex/local-companion-web`. The shared Saozi, automatic bilingual and ChatGPT provider implementation matches the verified App source in `fbb81ff`; native packaging remains on `codex/local-companion-macos`. Earlier uncommitted/unpushed statements below describe their original observation time.
+
+Real browser task `472c1adbd0d1` completed two clips and21/21 translations. Provider switching, network retry, bilingual playback, SRT download/hash comparison and reload persistence passed. Web backend375selected tests,41frontend tests and production build passed. See the [Web acceptance](web-app-acceptance-2026-10-15.md) for evidence and limits. No merge into master or public release is included.
+
+## 2026-10-15 ChatGPT subscription update (takes precedence)
+
+The **AI provider** setting now offers DeepSeek Flash/ChatGPT subscription. The user completed official authorization; GPT-6-Luna subscribed inference, a new local task and real Bilibili live automatic bilingual output passed. DeepSeek Pro is disabled. Installed0.1.8 build14 corrects active-live translation status; signature/hashes, retained login/model catalog, native playback and system saves are verified.
+
+- Local `73fbcd311737`:150.033333seconds,73/77.033333second clips,21translated cues.
+- Real live `68faca68e130`:181.105seconds,107.705/73.4second clips,40translated cues; first bilingual SRT downloadable before recording stopped.
+- Each has3pairedSRTs; downloads, cue counts and clip-local timing match.169protectedoriginal files and35existingpairedclip files retain their hashes.
+- 382related backend tests,41UI tests and production build passed. Native bilingual playback passed; finalbuild14saved local/live paired SRTs through the system panel into project evidence with matching hashes. The old Downloads request failed without a grant; project-folder saving passed.
+- Initial task35b20d's SSE shape failure was diagnosed/fixed and retained. Legacy jobs keep their original provider. No commit/push, notarization or public release.
+
+Guide: [ChatGPT subscription](openai-subscription.md). Evidence/limits: [acceptance](openai-subscription-acceptance-2026-10-15.md). Older versions and Flash failure states below are historical observations.
+
+## 2026-10-15 Saozi update (takes precedence)
+
+**The installed App is 0.1.7 build 11.** Saozi supports replay, local recordings and Bilibili live capture, with DeepSeek paragraph decisions and automatic bilingual SRT output, retained short tails/original subtitles, stop/recovery and preview. Shared source lives in the browser/App worktrees; the main checkout does not contain the complete current App source.
+
+- Bilingual completion: reused658 translations from40c0c9 for35 clips, producing36 bilingual SRTs with zero translation requests.56 original and113 existing target hashes stayed unchanged. Native bilingual preview/system SRT download passed.286 backend/25 frontend tests and build passed; code review APPROVE. New real-provider checks encountered503/timeouts; see the [bilingual acceptance record](saozi-bilingual-acceptance-2026-10-15.md) for the current boundary.
+
+- Full 40c0c9 validation created independent task `1bd089ad75b3`: 3275.299 seconds, 35 clips, 34 real Flash API calls and 56 original-file hashes unchanged.
+- Paced live simulation from40c0c9 created `1276274cd22d`: real whisper.cpp and DeepSeek, two outputs before capture stopped, four final clips and recording process exit.
+- The installed UI imported seconds300–450 from40c0c9 as `d8ad2ee92663`, completing real recognition, semantic analysis and two clips. Video/SRT are readable. Browser UI and native-window acceptance remain separate.
+- Selected backend257 tests, frontend24 tests and build passed; these are not whole-repository coverage. Offline silence handling is fixed; disconnect warnings are visible.
+- Previous0.1.5 build9 was backed up; 1498 installed files matched the build, with strict signature checks for the installation and backup. Signing remains ad-hoc; no notarization or publication.
+- Native-window acceptance is complete: playback advanced for the first Saozi clip derived from40c0c9, the user confirmed normal audio, and system-save MP4/SRT exports matched task hashes. The first save waited for Downloads permission and completed after the user allowed it.
+
+Guide: [Saozi](saozi.md). Details: [acceptance record](saozi-acceptance-2026-10-15.md). No commit/push; models, settings, history and older exports are preserved. Version0.1.5 statements below describe the pre-update state.
+
 Verified: **2026-10-15, Asia/Shanghai**. This checkout owns the shared CLI/browser companion, without native App packaging.
 
 The current handoff replaces accumulated snapshots; the exact prior text is retained in the [historical attachment](project-handoff-history-2026-10-14.md). Old versions, hashes, unpushed states and pending-Key statements apply only to their recorded observations. The exact pre-update handoff for this checkout is also retained in the [15October pre-update snapshot](project-handoff-history-2026-10-15.md); earlier attachments are unchanged.

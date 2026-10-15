@@ -14,6 +14,8 @@
 
 - `local-companion.zh-CN.md`：本地链接下载、字幕识别、时间轴、指定片段／高光切片及恢复
 - `local-companion.md`：对应英文说明
+- [openai-subscription.zh-CN.md](openai-subscription.zh-CN.md)：ChatGPT订阅授权与供应商选择
+- [openai-subscription-acceptance-2026-10-15.zh-CN.md](openai-subscription-acceptance-2026-10-15.zh-CN.md)：真实订阅与双语验收
 
 - `user-manual.zh-CN.md`：用户手册（中文）
 - `operator-manual.zh-CN.md`：运维/操作手册（中文）
