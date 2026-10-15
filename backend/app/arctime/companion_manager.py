@@ -7,15 +7,16 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import HTTPException
 from pydantic import SecretStr
-from app.arctime import media, translation, workflow
+from app.arctime import companion_llm, media, translation, workflow
+from app.arctime.chatgpt_auth import ChatGPTAuth
 from app.arctime.local_asr import LocalASR
 from app.arctime.companion_models import JobInput, validated_api_key
 from app.arctime.subtitle_exports import export_artifact
+from app.arctime.companion_projection import job_detail
 
 
 class JobManager:
@@ -27,8 +28,12 @@ class JobManager:
         self.lock = threading.Lock()
         self.active: dict | None = None
         self.last: dict | None = None
+        self.stop_event = threading.Event()
         self.api_key: SecretStr | None = None
         self.translation_model = translation.MODEL
+        self.llm_provider = 'deepseek'
+        self.chatgpt_model = ''
+        self.chatgpt = ChatGPTAuth(self.root)
         self.config_path = self.root / "config.json"
         self.config_error: str | None = None
         try:
@@ -46,6 +51,14 @@ class JobManager:
                 if selected_model not in translation.MODELS:
                     raise ValueError("翻译模型无效")
                 self.translation_model = selected_model
+                provider = config.get('llm_provider', 'deepseek')
+                if provider not in {'deepseek', 'chatgpt'}:
+                    raise ValueError('供应商配置无效')
+                self.llm_provider = provider
+                chatgpt_model = config.get('chatgpt_model', '')
+                if not isinstance(chatgpt_model, str) or (chatgpt_model and not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', chatgpt_model)):
+                    raise ValueError('订阅模型配置无效')
+                self.chatgpt_model = chatgpt_model
         except (OSError, ValueError, UnicodeError):
             self.config_error = "无法读取翻译配置；请检查 runs/config.json 或重新保存 Key／模型"
 
@@ -55,14 +68,34 @@ class JobManager:
             raise HTTPException(404, "任务不存在")
         return path
 
-    def submit(self, request: JobInput | None, job_id: str | None = None) -> str:
+    def submit(self, request: JobInput | None, job_id: str | None = None, *, deferred: bool = False) -> str:
         with self.lock:
             if self.active:
                 raise HTTPException(409, "已有任务正在处理，请等待完成后再开始")
             job_id = job_id or uuid.uuid4().hex[:12]
-            self.active = {"id": job_id, "state": "preparing", "message": "正在检查本地环境", "started_at": time.time(), "error": None}
-            self.executor.submit(self.run, job_id, request)
+            saved = self.read_json(self.directory(job_id) / "job.json")
+            saozi = bool(request.saozi if request else saved.get("saozi"))
+            model = saved.get('saozi_model') or saved.get('llm_model') or (
+                companion_llm.selected_model(self) if request is not None else translation.MODEL)
+            try:
+                key = companion_llm.require_key(self, model) if saozi else self.api_key
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+            self.stop_event.clear()
+            self.active = {"id": job_id, "state": "uploading" if deferred else "preparing",
+                           "message": "正在导入录像" if deferred else "正在检查本地环境", "started_at": time.time(),
+                           "error": None, "live": bool(request.live if request else False), "saozi": saozi,
+                           'model': model, 'llm_provider': 'chatgpt' if model.startswith('chatgpt:') else 'deepseek'}
+            if not deferred:
+                self.executor.submit(self.run, job_id, request, key, model)
         return job_id
+
+    def stop(self, job_id: str) -> None:
+        with self.lock:
+            if not self.active or self.active["id"] != job_id or not self.active.get("live"):
+                raise HTTPException(409, "没有正在录制的臊子直播任务")
+            self.stop_event.set()
+            self.active["message"] = "正在停止录制并处理剩余内容"
 
     def submit_translation(self, job_id: str) -> str:
         record = self.detail(job_id)
@@ -71,15 +104,17 @@ class JobManager:
         with self.lock:
             if self.active:
                 raise HTTPException(409, "已有任务正在处理，请等待完成")
-            if self.config_error:
-                raise HTTPException(409, "请先修复翻译配置，再生成双语字幕")
-            if not self.api_key:
-                raise HTTPException(409, "请先输入 DeepSeek API Key")
+            saved = self.read_json(self.directory(job_id) / 'job.json')
+            model = (record['translation']['model'] if record['translation']['state'] != 'not_started'
+                     else saved.get('saozi_model') or saved.get('llm_model') or translation.MODEL)
+            try:
+                key = companion_llm.require_key(self, model)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
             if self.last and self.last["id"] == job_id:
                 self.last = None
-            model = record["translation"]["model"] if record["translation"]["state"] != "not_started" else self.translation_model
             self.active = {"id": job_id, "state": "translating", "message": "准备日译中", "error": None, "model": model}
-            self.executor.submit(self.run_translation, job_id, self.api_key, model)
+            self.executor.submit(self.run_translation, job_id, key, model)
         return job_id
 
     def run_translation(self, job_id: str, key: SecretStr, model: str):
@@ -87,7 +122,14 @@ class JobManager:
             with self.lock:
                 self.active["message"] = message
         try:
-            translation.translate_run(self.directory(job_id), key, progress=progress, model=model)
+            directory = self.directory(job_id)
+            request_json = companion_llm.requester(self, model)
+            options = {'request_json': request_json} if request_json is not None else {}
+            if self.read_json(directory / "job.json").get("saozi"):
+                from app.arctime.saozi_translation import translate
+                translate(directory, key, progress=progress, model=model, **options)
+            else:
+                translation.translate_run(directory, key, progress=progress, model=model, **options)
         except Exception:
             with self.lock:
                 self.active["translation_error"] = "翻译未完成；检查字幕、API Key 或网络后重试，原结果已保留"
@@ -106,14 +148,59 @@ class JobManager:
         if directory.is_dir():
             media.write_json(directory / "gui.json", record)
 
-    def run(self, job_id: str, request: JobInput | None):
+    def run(self, job_id: str, request: JobInput | None, key: SecretStr | None = None,
+            model: str | None = None, local_source: Path | None = None):
         try:
             directory = self.directory(job_id)
+            saved = self.read_json(directory / "job.json")
+            is_saozi = bool(request.saozi if request else saved.get("saozi"))
+            selected = model or saved.get('saozi_model') or saved.get('llm_model') or (
+                companion_llm.selected_model(self) if request is not None else translation.MODEL)
+            request_json = companion_llm.requester(self, selected) if is_saozi else None
+            options = {'request_json': request_json} if request_json is not None else {}
+            selector = None
+            if is_saozi:
+                from app.arctime.saozi import SaoziSelector
+                if key is None:
+                    raise ValueError("臊子需要 DeepSeek API Key")
+                selector = SaoziSelector(key, selected, **options)
+            translation_failed = False
+            def bilingual(path: Path, final: bool, *, locked: bool = True):
+                nonlocal translation_failed
+                if translation_failed and not final:
+                    return
+                from app.arctime.saozi_translation import translate
+                def notify(message: str):
+                    with self.lock:
+                        self.active["message"] = message
+                try:
+                    translate(path, key, model=selector.model, final=final, locked=locked, progress=notify, **options)
+                    translation_failed = False
+                    with self.lock:
+                        self.active.pop("translation_error", None)
+                except (ValueError, OSError):
+                    translation_failed = True
+                    with self.lock:
+                        self.active["translation_error"] = "双语字幕未完成；原文切片已保留，可继续生成双语字幕"
+            if (request and request.live) or (not request and saved.get("live")):
+                from app.arctime.saozi_live import run_live
+                adapter = LocalASR(self.model, request.language if request else saved["asr"]["language"], self.threads)
+                directory.mkdir(mode=0o700, exist_ok=True)
+                job = run_live(directory, selector, adapter, self.stop_event,
+                               lambda message: self.update("recording", message), url=request.url if request else None,
+                               bilingual=bilingual)
+                self.update("completed", f"臊子已完成，导出 {len(job['completed_clips'])} 个切片" +
+                            ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕"))
+                return
             if request:
                 adapter = LocalASR(self.model, request.language, self.threads)
                 ranges = [(media.parse_time(start), media.parse_time(end)) for start, end in request.ranges]
                 directory = workflow.create_run(request.url, self.root, ranges, request.highlights, adapter, run_id=job_id,
-                                                progress=lambda message: self.update("downloading", message))
+                                                progress=lambda message: self.update("downloading", message),
+                                                saozi=request.saozi, local_source=local_source)
+                snapshot = self.read_json(directory / 'job.json')
+                snapshot.update(llm_provider='chatgpt' if selected.startswith('chatgpt:') else 'deepseek', llm_model=selected)
+                workflow.write_manifest(directory, snapshot)
             else:
                 adapter = None
 
@@ -121,8 +208,13 @@ class JobManager:
                 stage = json.loads((directory / "job.json").read_text())["state"]
                 self.update(stage, message)
 
-            job = workflow.resume_run(directory, adapter, progress=progress)
+            job = workflow.resume_run(directory, adapter, progress=progress, selector=selector)
+            if is_saozi:
+                self.update("translating", "正在自动生成中日双语字幕")
+                bilingual(directory, True, locked=False)
             message = f"处理完成，已导出 {len(job['completed_clips'])} 个切片"
+            if is_saozi:
+                message += "；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕"
             if not job["completed_clips"]:
                 message = "未发现达到阈值的高光；完整视频和字幕已保留"
             self.update("completed", message)
@@ -130,68 +222,14 @@ class JobManager:
             error = "外部工具执行超时，请重试；已完成结果会保留" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
             self.update("failed", "处理失败", error)
         finally:
+            if local_source and local_source.parent == self.root and local_source.name.startswith(".saozi-upload-"):
+                local_source.unlink(missing_ok=True)
             with self.lock:
                 self.last = self.active
                 self.active = None
 
     def detail(self, job_id: str, *, include_segments: bool = True) -> dict:
-        directory = self.directory(job_id)
-        with self.lock:
-            live = dict(self.active) if self.active and self.active["id"] == job_id else None
-            last = dict(self.last) if self.last and self.last["id"] == job_id else None
-        job_path = directory / "job.json"
-        job = self.read_json(job_path) if job_path.is_file() else {}
-        saved = self.read_json(directory / "gui.json")
-        translated = self.read_json(directory / "translation.json")
-        if not job and not live and not last and not saved:
-            raise HTTPException(404, "任务不存在")
-        record = live or last or saved
-        state = "completed" if job.get("state") == "completed" else record.get("state", "interrupted")
-        if not live and state not in {"completed", "failed"}:
-            state = "interrupted"
-        clips = []
-        for index, item in enumerate(job.get("completed_clips", [])):
-            selection = job.get("selection", [])[index]
-            clips.append({"video": item["video"], "subtitles": item["subtitles"], **selection})
-        transcript = directory / "subtitles.srt"
-        segments = [asdict(cue) for cue in media.read_subtitles(transcript)] if include_segments and transcript.is_file() and not transcript.is_symlink() else []
-        translation_state = translated.get("state", "not_started")
-        translation_error = translated.get("error")
-        if live and live.get("state") == "translating":
-            translation_state = "translating"
-        elif translation_state == "translating":
-            translation_state = "interrupted"
-        if last and last.get("translation_error"):
-            translation_state = "failed"
-            translation_error = translation_error or last["translation_error"]
-        if translation_state == "completed":
-            expected = {"subtitles.ja-zh.srt"} | {Path(c["video"]).stem + ".ja-zh.srt" for c in job.get("completed_clips", [])}
-            artifacts = translated.get("artifacts", {})
-            try:
-                valid = set(artifacts) == expected and all(
-                    media.fingerprint(workflow._path(directory, name)) == artifacts[name] for name in expected)
-            except (OSError, ValueError):
-                valid = False
-            if not valid:
-                translation_state = "failed"
-                translation_error = "双语字幕缺失或校验失败；原结果已保留，请检查任务"
-        bilingual_path = directory / "subtitles.ja-zh.srt"
-        bilingual_segments = ([asdict(cue) for cue in media.read_subtitles(bilingual_path)]
-                              if include_segments and translation_state == "completed" and bilingual_path.is_file() and not bilingual_path.is_symlink() else [])
-        default_message = "处理完成" if state == "completed" else "处理已中断，可恢复已下载任务"
-        if state == "completed" and record.get("state") != "completed":
-            record = {**record, "message": default_message, "error": None}
-        return {"id": job_id, "state": state, "phase": job.get("state", state), "message": record.get("message", default_message),
-                "error": record.get("error"), "started_at": record.get("started_at", directory.stat().st_mtime if directory.exists() else time.time()),
-                "duration": job.get("duration"), "mode": "highlights" if job.get("highlight_count") else "ranges",
-                "clips": clips, "segments": segments, "has_source": bool(job.get("video")),
-                "language": job.get("asr", {}).get("language", "auto"), "bilingual_segments": bilingual_segments,
-                "subtitle_export_busy": bool(live and live.get("state") == "subtitle_export"),
-                "translation": {"state": translation_state, "error": translation_error, "done": translated.get("done", 0),
-                                "total": translated.get("total", len(segments)),
-                                "model": translated.get("identity", {}).get("model") or (live or {}).get("model") or self.translation_model,
-                                "message": live.get("message") if live and live.get("state") == "translating" else None},
-                "can_resume": not live and state in {"failed", "interrupted"} and bool(job.get("video"))}
+        return job_detail(self, job_id, include_segments=include_segments)
 
     @staticmethod
     def read_json(path: Path) -> dict:
@@ -214,10 +252,12 @@ class JobManager:
         for clip in job.get("completed_clips", []):
             allowed.update((clip["video"], clip["subtitles"]))
         translated = self.read_json(directory / "translation.json")
-        if translated.get("state") == "completed":
+        if translated.get("state") in {"completed", "partial", "translating", "failed"}:
             bilingual_names = {"subtitles.ja-zh.srt"} | {Path(clip["video"]).stem + ".ja-zh.srt" for clip in job.get("completed_clips", [])}
             allowed.update(bilingual_names & set(translated.get("artifacts", {})))
         path = directory / name
         if name not in allowed or Path(name).name != name or path.is_symlink() or not path.is_file():
             raise HTTPException(404, "结果文件不存在")
+        if name.endswith(".ja-zh.srt") and media.fingerprint(path) != translated["artifacts"][name]:
+            raise HTTPException(409, "双语字幕校验失败，原文件已保留")
         return path

@@ -45,7 +45,7 @@ Use Python 3.11, uv, FFmpeg, yt-dlp and whisper.cpp's `whisper-cli`. No backend 
 
 ```bash
 uv venv --python 3.11 ~/.cache/nyaru-clipper/companion-venv
-uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
+uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' 'httpx>=0.28,<1' 'PyJWT[crypto]>=2.10,<3' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
 ```
 
 On macOS:

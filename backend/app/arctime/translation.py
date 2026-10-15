@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
@@ -10,10 +11,11 @@ import httpx
 from pydantic import SecretStr
 
 from app.arctime import media, workflow
+from app.arctime.chatgpt_provider import JsonRequest
 from app.services.subtitles import SubtitleSegment, render_bilingual_srt, render_srt
 
 MODEL = "deepseek-flash"
-MODELS = (MODEL, "deepseek-v4-pro")
+MODELS = (MODEL,)
 BATCH_SIZE = 40
 PROMPT = (
     "你是日语直播字幕译者。将输入 segments 中的日语逐条译为自然、简洁的简体中文，"
@@ -22,6 +24,13 @@ PROMPT = (
     '{"segments":[{"id":1,"zh":"中文译文"}]}。'
     "严格保留输入 id 的顺序、数量，不合并、不遗漏，不输出时间轴或解释。"
 )
+
+
+def validate_model(model: str, request_json: JsonRequest | None = None) -> None:
+    if model.startswith("chatgpt:") and model[len("chatgpt:"):].strip() and callable(request_json):
+        return
+    if model not in MODELS or request_json is not None:
+        raise ValueError("请选择支持的模型与供应商；保留已有缓存")
 
 
 def validate_rows(rows: object, ids: list[int]) -> list[dict]:
@@ -40,15 +49,24 @@ def _digest(rows: list[dict]) -> str:
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], start: int, model: str) -> list[dict]:
+def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], start: int, model: str, *, prompt: str = PROMPT,
+             request_json: JsonRequest | None = None) -> list[dict]:
+    validate_model(model, request_json)
     rows = [{"id": start + index + 1, "ja": cue.text} for index, cue in enumerate(cues)]
+    if request_json is not None:
+        text = request_json(prompt, json.dumps({"segments": rows}, ensure_ascii=False))
+        try:
+            payload = json.loads(text)
+            return validate_rows(payload["segments"], [row["id"] for row in rows])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("ChatGPT 返回的字幕格式、数量或顺序无效；请重试") from None
     for attempt in range(3):
         try:
             response = client.post("https://api.deepseek.com/chat/completions",
                 headers={"Authorization": f"Bearer {key.get_secret_value()}"},
                 json={"model": model, "thinking": {"type": "disabled"}, "temperature": .2,
                       "response_format": {"type": "json_object"}, "max_tokens": 8192,
-                      "messages": [{"role": "system", "content": PROMPT},
+                      "messages": [{"role": "system", "content": prompt},
                                    {"role": "user", "content": json.dumps({"segments": rows}, ensure_ascii=False)}]})
         except httpx.RequestError:
             if attempt == 2:
@@ -76,11 +94,11 @@ def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], 
 
 
 def translate_run(directory: Path, key: SecretStr, *, client: httpx.Client | None = None,
-                  progress: Callable[[str], None] | None = None, model: str = MODEL) -> dict:
-    if model not in MODELS:
-        raise ValueError("请选择支持的 DeepSeek 翻译模型")
+                  progress: Callable[[str], None] | None = None, model: str = MODEL, locked: bool = False,
+                  request_json: JsonRequest | None = None) -> dict:
+    validate_model(model, request_json)
     notify = progress or (lambda message: None)
-    with workflow.exclusive_lock(directory / ".lock"):
+    with nullcontext() if locked else workflow.exclusive_lock(directory / ".lock"):
         job = json.loads(workflow._path(directory, "job.json").read_text())
         if job.get("version") != 2 or job.get("state") != "completed":
             raise ValueError("请等待视频任务完成后再生成双语字幕")
@@ -120,7 +138,8 @@ def translate_run(directory: Path, key: SecretStr, *, client: httpx.Client | Non
         try:
             for start in range(len(translated), len(cues), BATCH_SIZE):
                 notify(f"正在日译中：{start}/{len(cues)} 条（{model}）")
-                rows = _request(client, key, cues[start:start + BATCH_SIZE], start, model)
+                rows = _request(client, key, cues[start:start + BATCH_SIZE], start, model,
+                                **({"request_json": request_json} if request_json is not None else {}))
                 translated.extend(row["zh"] for row in rows)
                 state["batches"].append({"rows": rows, "sha256": _digest(rows)})
                 state["done"] = len(translated)
