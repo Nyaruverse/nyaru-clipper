@@ -1,10 +1,16 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.5** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.8 build14** includes URL download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
 It also adds [custom subtitle styles, both template types, ASS, burned clips and ArcTime handoff](subtitle-styles.md).
 Python, yt-dlp, libass-capable FFmpeg, whisper.cpp and the multilingual small model are bundled.
 Runtime use requires no terminal, Homebrew or paid ArcTime service.
+
+The installed build also includes [Saozi](saozi.md) for replay/local recordings and
+Bilibili live slicing, automatic bilingual subtitles and the
+[ChatGPT subscription provider](openai-subscription.md). Select DeepSeek Flash or
+ChatGPT in AI provider settings; DeepSeek Pro is disabled. Browser verification
+and its network-retry boundary are recorded in the [Web acceptance](web-app-acceptance-2026-10-15.md).
 
 DeepSeek Japanese-to-Chinese translation reuses completed tasks and their existing
 timelines, with bilingual full/clip SRT files, progress, preview and export. The
@@ -19,6 +25,9 @@ retains strict validation.
 
 ## Use
 
+Current installation: verified0.1.8 build14 at `~/Applications/Nyaru Clipper.app`;
+see the [subscription acceptance](openai-subscription-acceptance-2026-10-15.md).
+The following0.1.5 installation receipt is historical:
 On15October2026, verified0.1.5 build9 was installed and launched at `~/Applications/Nyaru Clipper.app`.
 Previous0.1.4 build5 is preserved at `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`; task data and models remain intact.
 All1498 copied file SHA256 hashes match the verified build, and strict signature verification passed. The running app loads seven historical tasks, three style templates and one ArcTime template.
