@@ -12,6 +12,8 @@ Available documents:
 - [project-handoff.md](project-handoff.md): Current local companion/macOS handoff, evidence, runtime snapshot and next actions
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md): Chinese handoff
 
+- [task-sources-acceptance-2026-10-16.md](task-sources-acceptance-2026-10-16.md): Direct room/BV inputs, local video, build17 installation and data preservation
+
 - [subtitle-editor.md](subtitle-editor.md): Per-cue content, pixel positioning, styles, timing and export
 - [subtitle-editor-acceptance-2026-10-16.md](subtitle-editor-acceptance-2026-10-16.md): Web/macOS tests, preview/ASS/burn consistency and build16 installation
 

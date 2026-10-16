@@ -1,6 +1,8 @@
 # macOS app
 
-**Nyaru Clipper.app 0.1.8 build15** includes URL download, offline transcription with
+**Nyaru Clipper.app 0.1.9 build17** is installed and verified on 16 October 2026. New Task accepts a Bilibili room ID, BV ID or local video file directly. All 20 historical tasks and existing data/configuration are preserved; see the [current installation and rollback](project-handoff.md). Earlier version-specific records below remain historical.
+
+The app includes video download, offline transcription with
 sentence timestamps, range/highlight clipping, progress, preview and export.
 It also adds [custom subtitle styles, both template types, ASS, burned clips and ArcTime handoff](subtitle-styles.md).
 Python, yt-dlp, libass-capable FFmpeg, whisper.cpp and the multilingual small model are bundled.
@@ -27,7 +29,7 @@ retains strict validation.
 
 ## Use
 
-Current installation: verified0.1.8 build15 at `~/Applications/Nyaru Clipper.app`;
+Current installation: verified 0.1.9 build17 at `~/Applications/Nyaru Clipper.app`;
 see the [subscription acceptance](openai-subscription-acceptance-2026-10-15.md).
 The following0.1.5 installation receipt is historical:
 On15October2026, verified0.1.5 build9 was installed and launched at `~/Applications/Nyaru Clipper.app`.
@@ -35,7 +37,7 @@ Previous0.1.4 build5 is preserved at `~/Library/Application Support/Nyaru Clippe
 All1498 copied file SHA256 hashes match the verified build, and strict signature verification passed. The running app loads seven historical tasks, three style templates and one ArcTime template.
 The archive remains `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`. See the [feature verification record](subtitle-styles-acceptance-2026-10-14.md).
 
-1. Enter an accessible URL and select a language or automatic detection.
+1. Select live capture, download or local video; enter a room ID, BV ID or choose a file, then select the language.
 2. Choose explicit ranges or highlights and the maximum clip count.
 3. Start processing and follow actual stages; one task runs at a time.
 4. Preview video/clips, seek using transcript timestamps and save MP4/SRT pairs

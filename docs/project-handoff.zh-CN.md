@@ -2,7 +2,36 @@
 
 核验日期：**2026-10-16，Asia/Shanghai**。本页为当前交接入口；历史快照保留当时的状态，不代表当前 HEAD、安装版或服务状态。
 
-## 本次发布与分支边界
+## 本轮开发分支发布
+
+发布范围仅为以下两个开发分支；功能与测试、使用与验收文档分别提交。主目录 `feat/arctime-pro-plugin` 不提交、不推送、不合并；本地及远程 `master` 保持 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`。
+
+| 开发分支 | 功能提交（后续还有交接文档提交） | 工作目录 |
+| --- | --- | --- |
+| `codex/local-companion-web` | `edf3777636e0b9f231eb1734ee78dc2f55ec4eb4` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `069061bddc0ded8936932dbe6c12d0b786069a22` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+
+使用显式 refspec 原子推送这两个分支。最终 HEAD 包含后续文档提交，不等于上表功能提交；精确远程回执保留在 macOS 工作树 `.omo/evidence/task-sources-build17-2026-10-16/publish-receipt.json`。接手时核验：
+
+```bash
+git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master
+git -C /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper status --short
+git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --short
+```
+
+两端前端各 72 项及生产构建通过；本轮发布前后端复测 115 项通过（其中 3 项为 macOS 打包检查），另有一条 Starlette/httpx 依赖弃用警告。冻结后端、本地安装、原生输入和数据保留验收见[三来源与 build17 验收](task-sources-acceptance-2026-10-16.zh-CN.md)。下一步为用户真实房间／BV 使用反馈；更多平台、公开分发、公证和分支合并均未包含在本轮发布。
+
+## 最新本机安装：0.1.9 build17
+
+2026-10-16 已按用户授权重新打包并替换 `~/Applications/Nyaru Clipper.app`，启动验证通过。新建任务提供「实时录播／下载视频／本地视频」，分别直接填写数字直播间号、BV 号或选择文件；下载和本地视频共用切片选项。以下 build16 发布与安装记录保留为历史，不能视为当前安装版。
+
+旧 App 保存在 `~/Applications/Nyaru Clipper Backups/20261016-132441/Nyaru Clipper-build16.app`；完整数据备份在 `~/Library/Application Support/Nyaru Clipper Backups/20261016-132441/Nyaru Clipper/`，备份父目录 0700，含授权配置，仅保留在本机。
+
+替换前后 6,561 个文件、9,935,483,555 字节的内容哈希、权限和符号链接一致；启动及原生界面检查后，20 个历史任务 ID、供应商配置与授权状态一致，全部原有数据文件未变化，仅新增一个启动信息文件。严格签名、冻结后端的编号校验、本地导入／真实识别／3 秒切片导出和 ZIP 完整性通过。原生界面已观察三种来源，没有创建或重跑历史任务；真实 Bilibili 下载／录播和外部 AI 未重新验收。本地签名未公证，仍为 arm64、最低 macOS 27.0。
+
+安装包为 macOS 工作树 `.omo/evidence/task-sources-build17-2026-10-16/Nyaru-Clipper-0.1.9-build17-macOS-arm64.zip`，520,730,841 字节，SHA256 `be1154477eada169d384f61b8f4960bb507095dd48821dd574be38207e89ac11`。同目录的 `installation-receipt.json`、`frozen-smoke-receipt.json`、`package-receipt.json` 与 `installed-{bv,live,local}.jpg` 为本机证据；不提交 App、备份、模型或私密清单。
+
+## build16 发布与分支边界（历史）
 
 本轮交付 Web／macOS 逐条字幕编辑与一致的预览、ASS 和烧录导出。用户随后授权安装 build16，并将本次实现及交接提交、推送到以下两个开发分支，**master 不动**。功能与测试单独提交，使用／验收文档及当前交接在随后的文档提交中。
 

@@ -20,8 +20,8 @@ cd ..
 
 Open the [local video workstation](http://127.0.0.1:8787). Dependencies and the build are already prepared on this development machine. Rebuild after frontend source changes. The original database/GPU workstation does not need to run.
 
-1. Enter a video URL and language.
-2. Choose one or more explicit time ranges, or automatic highlights with a maximum clip count.
+1. Under New task, choose 实时录播 (live capture), 下载视频 (download), or 本地视频 (local video). Enter a Bilibili room number, BV identifier, or choose a local file respectively. Enter identifiers directly; the application generates their URLs. Each source retains its draft when switching.
+2. Downloads and local videos share explicit ranges, automatic highlights and saozi choices under Slicing. Live capture always uses saozi and requires AI configuration; switching back restores the previous video slicing choice. Local import creates a separate copy without modifying the original. Ranges and highlights do not require AI authorization.
 3. Start processing and follow environment checks, download, transcription and per-clip export. Progress reports actual stages, without estimated percentages. One task runs at a time.
 4. Preview the source after download and clips as they finish. The player supports recognized subtitles; click transcript timestamps to seek the original video or click the clip timeline to switch previews.
 5. Download full SRT/TXT or individual MP4/SRT pairs. History survives page refreshes and service restarts.
