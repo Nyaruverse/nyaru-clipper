@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.arctime import media, workflow
 from app.arctime.subtitle_style import SubtitleStyle
+from app.arctime.subtitle_document import SubtitleDocument, base_document, clip_document, validate_source
 from app.services.subtitles import SubtitleSegment
 
 
@@ -24,6 +27,13 @@ class ExportRequest(BaseModel):
     bilingual: bool = False
     style: SubtitleStyle
     arctime_template_id: str | None = None
+    document: SubtitleDocument | None = None
+
+    @model_validator(mode='after')
+    def matching_style(self) -> ExportRequest:
+        if self.document is not None and self.style != self.document.style:
+            raise ValueError('Export style must match the editing document style.')
+        return self
 
 
 class CompletedClip(BaseModel):
@@ -55,6 +65,7 @@ class ExportInputs:
     translated: list[SubtitleSegment] | None
     time_origin: float
     digests: dict[str, str]
+    document: SubtitleDocument | None = None
 
 
 def checked_artifact(directory: Path, name: str, digest: str) -> Path:
@@ -87,7 +98,7 @@ def load_inputs(directory: Path, request: ExportRequest) -> ExportInputs:
     subtitle = checked_artifact(directory, subtitle_name, digests[subtitle_name])
     original = media.read_subtitles(subtitle) if subtitle.read_text(encoding="utf-8").strip() else []
     translated = None
-    if request.bilingual:
+    if request.bilingual and request.document is None:
         translation_path = workflow._path(directory, "translation.json")
         if not translation_path.is_file():
             raise ExportError("请先完成中日双语字幕")
@@ -107,4 +118,19 @@ def load_inputs(directory: Path, request: ExportRequest) -> ExportInputs:
                     or not paired.text.startswith(prefix) or not paired.text[len(prefix):].strip()):
                 raise ExportError("双语字幕的文字或时间轴与原文不一致")
             translated.append(SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, paired.text[len(prefix):]))
-    return ExportInputs(source, original, translated, time_origin, digests)
+    document = request.document
+    if document is not None:
+        validate_source(document, base_document(directory, document.style))
+        if request.video != run.video:
+            job = json.loads(job_path.read_bytes())
+            index = int(request.video.removeprefix('clip-').removesuffix('.mp4')) - 1
+            selection = job.get('selection', [])
+            if index < 0 or index >= len(selection):
+                raise ExportError('切片源时间范围缺失，请检查原任务')
+            time_origin, end = selection[index]['start'], selection[index]['end']
+            if not 0 <= time_origin < end <= document.duration:
+                raise ExportError('切片源时间范围无效')
+            document = clip_document(document, time_origin, end)
+        original = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.text) for cue in document.cues]
+        translated = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.translation) for cue in document.cues] if request.bilingual else None
+    return ExportInputs(source, original, translated, time_origin, digests, document)

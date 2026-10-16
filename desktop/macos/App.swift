@@ -153,6 +153,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard let origin, frame.securityOrigin.host == origin.host, frame.securityOrigin.port == origin.port else { completionHandler(false); return }
+        let alert = NSAlert()
+        alert.messageText = "确认字幕操作"
+        alert.informativeText = message
+        alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { response in completionHandler(response == .alertFirstButtonReturn) }
+    }
+
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = (suggestedFilename as NSString).lastPathComponent

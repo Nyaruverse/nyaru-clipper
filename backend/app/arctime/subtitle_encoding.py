@@ -99,3 +99,18 @@ def burn_clip(source: Path, working: Path, duration: float, notify: Callable[[st
     if abs(actual - duration) > max(.5, duration * .05):
         raise ExportError("字幕视频时长校验失败；原结果已保留")
     return target
+
+
+def video_metadata(path: Path) -> tuple[int, int, float]:
+    from fractions import Fraction
+    result = subprocess.run([media.tool_path('ffprobe'), '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,avg_frame_rate', '-of', 'json', str(path)],
+        capture_output=True, text=True, timeout=60, check=False)
+    try:
+        stream = json.loads(result.stdout)['streams'][0]
+        width, height, fps = stream['width'], stream['height'], float(Fraction(stream['avg_frame_rate']))
+        if result.returncode or type(width) is not int or type(height) is not int or min(width, height, fps) <= 0:
+            raise ValueError('Invalid video metadata')
+    except (ValueError, KeyError, IndexError, ZeroDivisionError):
+        raise ExportError('无法读取视频尺寸或帧率') from None
+    return width, height, fps

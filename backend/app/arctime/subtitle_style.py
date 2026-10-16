@@ -22,6 +22,24 @@ class TextStyle(BaseModel):
     position: Literal['top', 'bottom'] = 'bottom'
     margin: float = Field(default=96, ge=0, le=1080)
 
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    opacity: float = Field(default=1, ge=0, le=1)
+    spacing: float = Field(default=0, ge=-10, le=100)
+    line_height: float = Field(default=1.2, ge=.5, le=3)
+    align: int = Field(default=2, ge=1, le=9)
+    x: float | None = Field(default=None, ge=0, le=32768)
+    y: float | None = Field(default=None, ge=0, le=32768)
+    rotation: float = Field(default=0, ge=-360, le=360)
+    scale_x: float = Field(default=100, ge=10, le=400)
+    scale_y: float = Field(default=100, ge=10, le=400)
+    shadow: float = Field(default=0, ge=0, le=20)
+    shadow_color: str = Field(default='#000000', pattern=r'^#[0-9A-Fa-f]{6}$')
+    padding: float = Field(default=0, ge=0, le=40)
+    max_width: float = Field(default=100, ge=10, le=100)
+    hidden: bool = False
+
     @field_validator('font')
     @classmethod
     def safe_font(cls, value: str) -> str:
@@ -48,8 +66,12 @@ def _color(value: str, opacity: float = 1) -> str:
     return f'&H{round(255 * (1 - opacity)):02X}{value[5:7]}{value[3:5]}{value[1:3]}'
 
 
+def centiseconds(seconds: float) -> int:
+    return int((Decimal(str(seconds)) * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+
 def _timestamp(seconds: float) -> str:
-    ticks = int((Decimal(str(seconds)) * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+    ticks = centiseconds(seconds)
     hours, rest = divmod(ticks, 360000)
     minutes, rest = divmod(rest, 6000)
     secs, centis = divmod(rest, 100)
@@ -107,6 +129,18 @@ def render_ass(original: Sequence[SubtitleSegment], translated: Sequence[Subtitl
         for a, b in zip(original, translated, strict=True)
     )):
         raise ValueError('Translation cue count and times must exactly match original cues.')
+    advanced = ('bold', 'italic', 'underline', 'opacity', 'spacing', 'line_height', 'align', 'x', 'y',
+                'rotation', 'scale_x', 'scale_y', 'shadow', 'shadow_color', 'padding', 'max_width', 'hidden')
+    defaults = TextStyle()
+    if any(getattr(item, key) != getattr(defaults, key) for item in (style.original, style.translation) for key in advanced):
+        from app.arctime.subtitle_document import Cue, SubtitleDocument
+        from app.arctime.subtitle_render import render_document_ass
+        cues = [Cue(id=f'cue-{index + 1:06d}', start_seconds=cue.start_seconds, end_seconds=cue.end_seconds,
+                    text=cue.text, translation=translated[index].text if translated is not None else '')
+                for index, cue in enumerate(original)]
+        document = SubtitleDocument(source_fingerprint='0' * 64, revision=0, style=style, cues=cues,
+                                    width=width, height=height, duration=max((c.end_seconds for c in cues), default=1), fps=25)
+        return render_document_ass(document, translated is not None)
     canvas_width = round(1080 * width / height)
     layouts = [layout_cues(cue.text, translated[index].text if translated is not None else None, style, canvas_width)
                for index, cue in enumerate(original)]

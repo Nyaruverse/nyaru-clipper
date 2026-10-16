@@ -4,6 +4,10 @@ import { ArrowDownToLine, Captions, Check, Film, History, Plus, Scissors, Slider
 
 import { LlmSettings } from "./LlmSettings";
 import { SubtitleEditor } from "./SubtitleEditor";
+import { CueEditor } from "./CueEditor";
+import { useSubtitleDocument } from "./useSubtitleDocument";
+import { documentProblem, nudgeCueStyle, patchCues, type Language } from "./subtitleDocument";
+import type { FontCatalog } from './TextStyleFields';
 import { SubtitlePreview } from "./SubtitlePreview";
 import { SubtitleExports, useSubtitleExports } from "./SubtitleExports";
 import { defaultStyle, subtitleApi, type SubtitleStyle, type SubtitleSettings } from "./subtitleStyle";
@@ -44,9 +48,26 @@ export function Companion() {
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
   const settings = useQuery({queryKey:["companion","subtitle-settings"],queryFn:()=>subtitleApi<SubtitleSettings>("/subtitle-settings")});
+  const fonts = useQuery({queryKey:['companion','subtitle-fonts'],queryFn:()=>subtitleApi<FontCatalog>('/subtitle-fonts'),staleTime:Infinity});
   const [styleDraft,setStyleDraft] = useState<SubtitleStyle | null>(null);
   const [project,setProject] = useState<string | null>(null);
-  const style = styleDraft ?? settings.data?.style ?? defaultStyle;
+  const editing = useSubtitleDocument(selectedId, detail.data?.state === 'completed', detail.data?.translation?.state);
+  const documentDraft = editing.document;
+  const style = documentDraft?.style ?? styleDraft ?? settings.data?.style ?? defaultStyle;
+  const [cueSelection,setCueSelection] = useState<string[]>([]);
+  const [cueLanguage,setCueLanguage] = useState<Language>('original');
+  const [linked,setLinked] = useState(false);
+  const [currentTime,setCurrentTime] = useState(0);
+  const [loopCue,setLoopCue] = useState(false);
+  const selectedCue = documentDraft?.cues.find(cue => cueSelection.includes(cue.id));
+  const loop = loopCue && selectedCue ? {start:selectedCue.start_seconds,end:selectedCue.end_seconds} : null;
+  useEffect(() => { setCueSelection([]); setLoopCue(false); },[selectedId]);
+  useEffect(() => { if (documentDraft?.cues.length && !cueSelection.some(id => documentDraft.cues.some(cue => cue.id === id))) setCueSelection([documentDraft.cues[0].id]); },[documentDraft,cueSelection]);
+  const updateStyle = (next: SubtitleStyle) => { if (documentDraft) editing.change(current => ({...current,style:next})); else setStyleDraft(next); };
+  const moveCues = (dx: number,dy: number) => editing.change(current => patchCues(current,cueSelection,cue => ({...cue,
+    [`${cueLanguage}_style`]:nudgeCueStyle(current,cue,cueLanguage,dx,dy,subtitleMode === 'bilingual'),
+    ...(linked ? {[`${cueLanguage === 'original' ? 'translation' : 'original'}_style`]:nudgeCueStyle(current,cue,cueLanguage === 'original' ? 'translation' : 'original',dx,dy,subtitleMode === 'bilingual')} : {}),
+  })));
   const exports = useSubtitleExports(selectedId);
   const exportBusy = exports.data?.active?.state === "exporting";
   const job = detail.data;
@@ -104,9 +125,13 @@ export function Companion() {
   const unavailable = config.isError || history.isError || detail.isError;
   const hasBilingual = job?.translation?.state === "completed";
   const hasPreviewBilingual = job?.bilingual_files?.includes((clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, ".ja-zh.srt")) ?? hasBilingual;
-  const showBilingual = hasPreviewBilingual && subtitleMode === "bilingual";
+  const showBilingual = (documentDraft ? documentDraft.cues.some(cue => !!cue.translation) : hasPreviewBilingual) && subtitleMode === "bilingual";
   const subtitleFile = (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, showBilingual ? ".ja-zh.vtt" : ".vtt");
-  const visibleSegments = (showBilingual ? job?.bilingual_segments : job?.segments) ?? [];
+  const visibleSegments = documentDraft ? documentDraft.cues.map(cue => ({...cue,text:showBilingual && cue.translation ? `${cue.text}\n${cue.translation}` : cue.text})) : (showBilingual ? job?.bilingual_segments : job?.segments) ?? [];
+  const seekSource = (at: number) => {
+    if (job?.has_source) { setPreview('source.mp4'); setSeek(at); }
+    else { const target = job?.clips.find(item => item.start <= at && at < item.end); if (target) {setPreview(target.video);setSeek(at-target.start);} }
+  };
 
   function closeDrawer() {
     const trigger = toolbar.current?.querySelector<HTMLButtonElement>('[aria-expanded="true"]');
@@ -177,7 +202,20 @@ export function Companion() {
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
-        <section className="companion-panel" hidden={tool !== "subtitle"}><SubtitleEditor embedded settings={settings.data} error={settings.error} style={style} onStyle={setStyleDraft} project={project} onProject={setProject} busy={!!busy} /></section>
+        <section className="companion-panel" hidden={tool !== "subtitle"}>
+          {job?.state === 'completed' && <div className="cue-session-status">
+            <p role="status">{editing.saving ? '正在保存字幕编辑稿…' : editing.dirty ? '有未保存修改，稍候自动保存' : documentDraft ? `字幕编辑稿已保存 · 第 ${documentDraft.revision} 版` : '载入字幕编辑稿…'}</p>
+            {editing.error && <p role="alert" className="companion-error">{editing.error}</p>}
+            {editing.error && documentDraft && <details><summary>保留当前编辑稿（JSON，可复制）</summary><textarea className="ny-input" aria-label="当前编辑稿 JSON" rows={8} readOnly value={JSON.stringify(documentDraft,null,2)} /></details>}
+            {documentDraft && documentProblem(documentDraft) && <p role="alert" className="companion-error">{documentProblem(documentDraft)}</p>}
+            {(editing.error || editing.dirty) && <button className="ny-button" disabled={editing.saving || !!busy} onClick={editing.retry}>重试保存／载入</button>}
+            {editing.error && <button className="ny-button" disabled={editing.saving || !!busy} onClick={() => {if (window.confirm('从当前源字幕重新开始编辑？原始字幕和旧导出会保留；旧编辑稿由服务备份。')) editing.resetSource();}}>从当前源字幕重新开始</button>}
+          </div>}
+          {documentDraft && <fieldset disabled={!!busy}><CueEditor document={documentDraft} selected={cueSelection} onSelect={setCueSelection} change={editing.change} language={cueLanguage} onLanguage={setCueLanguage} currentTime={currentTime} onSeek={seekSource} undo={editing.undo} redo={editing.redo} canUndo={editing.canUndo} canRedo={editing.canRedo} linked={linked} onLinked={setLinked} fonts={fonts.data} bilingual={!!showBilingual} />
+            <label className="cue-toggle"><input type="checkbox" checked={loopCue} onChange={event => {setLoopCue(event.target.checked); if (event.target.checked && selectedCue) seekSource(selectedCue.start_seconds);}} />循环播放当前字幕（点击视频播放）</label></fieldset>}
+          {!documentDraft && <p className="companion-footnote">任务完成后可逐条编辑字幕；原始识别、翻译和旧导出会保留。</p>}
+          <details className="cue-global-style" open={!documentDraft}><summary>全局默认样式与模板</summary><SubtitleEditor embedded settings={settings.data} error={settings.error} style={style} onStyle={updateStyle} project={project} onProject={setProject} busy={!!busy} fonts={fonts.data} /></details>
+        </section>
         <section className="companion-panel" aria-label="AI 设置" hidden={tool !== "ai"}>
           <LlmSettings config={config.data} busy={!!busy} />
           {taskModel && <p className="companion-footnote">当前任务模型：{taskModel}</p>}
@@ -193,7 +231,7 @@ export function Companion() {
           {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.ja-zh.srt", true)}>完整双语字幕 SRT</a>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
           {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{(item.bilingual_subtitles || (hasBilingual && !job.bilingual_files)) && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.bilingual_subtitles ?? item.subtitles.replace(/\.srt$/, ".ja-zh.srt"), true)}>双语 SRT</a>}</div></div>)}
-          {job && job.segments.length > 0 && <SubtitleExports id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} busy={!!busy || !settings.data?.style} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
+          {job && job.segments.length > 0 && <SubtitleExports id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} document={documentDraft} busy={!!busy || !settings.data?.style || editing.dirty || !!editing.error} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时，下载视频与同名 SRT 即可继续编辑。</p>}
         </section>
         </div>
@@ -223,14 +261,14 @@ export function Companion() {
           <div className="companion-section-heading"><div className="companion-panel-title"><h1>预览与时间轴</h1></div><span className="companion-muted">{job?.duration ? `原视频 ${time(job.duration)}` : ""}</span></div>
           {job && (job.has_source || job.clips.length > 0) ? <>
             <div className="companion-preview-tabs">{job.has_source && <button className="ny-button" aria-pressed={!clip} onClick={() => setPreview("source.mp4")}>完整视频</button>}{job.clips.map((item, index) => <button className="ny-button" key={item.video} aria-label={`预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}>切片 {index + 1}</button>)}</div>
-            {hasPreviewBilingual && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
-            <SubtitlePreview video={video} source={`${job.id}/${preview}`} segments={job.segments} bilingual={showBilingual ? job.bilingual_segments : []} offset={clip?.start ?? 0} style={style}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
+            {(hasPreviewBilingual || documentDraft?.cues.some(cue => cue.translation)) && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
+            <SubtitlePreview video={video} source={`${job.id}/${preview}`} segments={job.segments} bilingual={showBilingual ? job.bilingual_segments : []} offset={clip?.start ?? 0} style={style} document={documentDraft} jobId={job.id} selected={cueSelection} language={cueLanguage} editing={tool === 'subtitle' && !busy} showBilingual={subtitleMode === 'bilingual'} onMove={moveCues} onTime={setCurrentTime} loop={loop}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
               {(clip || job.segments.length > 0) && <track key={subtitleFile} kind="subtitles" src={fileUrl(job.id, subtitleFile)} srcLang={showBilingual ? "zh" : job.language === "auto" ? "und" : job.language} label={showBilingual ? "中日双语" : "识别字幕"} default />}
             </video></SubtitlePreview>
             <div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
             <div className="companion-timeline" aria-label="切片时间轴">{job.clips.map((item, index) => <button key={item.video} aria-label={`在时间轴预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}><span className="companion-timeline-fill" style={{ left: `${item.start / (job.duration ?? 1) * 100}%`, width: `${(item.end - item.start) / (job.duration ?? 1) * 100}%` }} /><span>切片 {index + 1} · {time(item.start)} — {time(item.end)}</span></button>)}</div>
           </> : <div className="companion-empty-preview"><Film size={42} strokeWidth={1} /><strong>你的下一段精彩，从这里开始</strong><p>下载完成后可以预览视频<br />字幕和切片会随处理进度出现</p></div>}
-          {job && visibleSegments.length > 0 && <details className="companion-transcript" open><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击时间跳转原视频</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} disabled={!job.has_source} onClick={() => { setPreview("source.mp4"); setSeek(segment.start_seconds); }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
+          {job && visibleSegments.length > 0 && <details className="companion-transcript" open><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击选择并跳转</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} onClick={() => { seekSource(segment.start_seconds); if (documentDraft) {setCueSelection([segment.id]);setTool('subtitle');} }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
         </section>
       </div>
     </main>
