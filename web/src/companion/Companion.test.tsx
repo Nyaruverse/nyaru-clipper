@@ -54,6 +54,41 @@ it("starts Bilibili live saozi and stops capture while preserving results", asyn
   await waitFor(() => expect(posts[1]?.url).toBe("/companion-api/jobs/aabbccddeeff/stop"));
 });
 
+it('submits the chosen saved subtitle template for live tasks only',async()=>{
+ const posts:{url:string;body:string}[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(url:string,options?:RequestInit)=>{
+   if(options?.method==='POST'){posts.push({url,body:String(options.body)});return new Response(JSON.stringify({id:'aabbccddeeff'}),{status:202});}
+   return new Response(JSON.stringify(url.endsWith('/config')?{ready:true,missing:[],translation_configured:true}:
+     url.endsWith('/subtitle-settings')?{style:defaultStyle,templates:[{id:'imported',name:'ArcTime 双语',style:defaultStyle}],arctime_templates:[],burn_available:true}:
+     url.endsWith('/jobs')?[]:{id:'aabbccddeeff',state:'recording',mode:'saozi',live:true,message:'录制中',clips:[],segments:[],translation:{state:'not_started'}}));
+ }));
+ mount();openTool('新建任务');fireEvent.click(screen.getByRole('button',{name:'实时录播'}));
+ await screen.findByRole('option',{name:'ArcTime 双语'});
+ fireEvent.change(screen.getByLabelText('实时切片字幕模板'),{target:{value:'imported'}});
+ fireEvent.change(screen.getByLabelText('直播间号'),{target:{value:'12345'}});
+ fireEvent.click(screen.getByRole('button',{name:'开始处理'}));
+ await waitFor(()=>expect(posts).toHaveLength(1));
+ expect(JSON.parse(posts[0].body)).toMatchObject({live:true,subtitle_template_id:'imported'});
+});
+
+it.each([false,true])('defaults live to builtin Nyaru and permits opt-out: %s',async(optOut)=>{
+ const posts:Record<string,unknown>[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(url:string,options?:RequestInit)=>{
+   if(options?.method==='POST'){posts.push(JSON.parse(String(options.body)));return new Response(JSON.stringify({id:'aabbccddeeff'}),{status:202});}
+   return new Response(JSON.stringify(url.endsWith('/config')?{ready:true,missing:[],translation_configured:true}:
+     url.endsWith('/subtitle-settings')?{style:defaultStyle,templates:[{id:'nyaru',name:'猫雷 Nyaru',style:defaultStyle,builtin:true}],arctime_templates:[],burn_available:true}:
+     url.endsWith('/jobs')?[]:{id:'aabbccddeeff',state:'recording',mode:'saozi',live:true,message:'录制中',clips:[],segments:[],translation:{state:'not_started'}}));
+ }));
+ mount();openTool('新建任务');fireEvent.click(screen.getByRole('button',{name:'实时录播'}));
+ await screen.findByRole('option',{name:'猫雷 Nyaru'});
+ expect(screen.getByLabelText('实时切片字幕模板')).toHaveValue('nyaru');
+ if(optOut)fireEvent.change(screen.getByLabelText('实时切片字幕模板'),{target:{value:''}});
+ fireEvent.change(screen.getByLabelText('直播间号'),{target:{value:'12345'}});
+ fireEvent.click(screen.getByRole('button',{name:'开始处理'}));
+ await waitFor(()=>expect(posts).toHaveLength(1));
+ expect(posts[0].subtitle_template_id).toBe(optOut?undefined:'nyaru');
+});
+
 it("uploads a local recording as raw file bytes for saozi", async () => {
   const posts = saoziApi();
   mount();

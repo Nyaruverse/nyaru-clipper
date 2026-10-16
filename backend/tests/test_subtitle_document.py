@@ -38,6 +38,18 @@ def test_document_get_save_cas_and_immutable_sources(document_job):
     assert all(media.fingerprint(directory / name) == digest for name, digest in before.items())
 
 
+def test_new_live_editing_document_inherits_frozen_template(document_job):
+    from app.arctime.subtitle_templates import StyleTemplate
+    from app.arctime.subtitle_style import SubtitleStyle
+    client, directory = document_job
+    job = json.loads((directory / 'job.json').read_text())
+    template = StyleTemplate(id='frozen', name='Imported', style=SubtitleStyle(original=TextStyle(size=68, margin_left=90)))
+    job.update(live=True, subtitle_template=template.model_dump())
+    media.write_json(directory / 'job.json', job)
+    assert client.get(URL).json()['style']['original']['size'] == 68
+    assert client.get(URL).json()['style']['original']['margin_left'] == 90
+
+
 def test_source_change_and_symlink_rejected(document_job):
     client, directory = document_job
     doc = client.get(URL).json()

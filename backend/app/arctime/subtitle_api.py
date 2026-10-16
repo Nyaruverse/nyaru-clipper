@@ -19,6 +19,7 @@ from app.arctime.subtitle_style import SubtitleStyle
 from app.arctime.subtitle_document import DocumentStore, SubtitleDocument, validate_source
 from app.arctime.subtitle_render import preview_png
 from app.arctime.subtitle_templates import ProjectTemplate, StyleTemplate
+from app.arctime.ass_import import AssInspection, inspect_ass
 
 if TYPE_CHECKING:
     from app.arctime.gui import JobManager
@@ -129,6 +130,11 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     async def import_template(request: Request) -> StyleTemplate:
         content = await _bounded_body(request, 64 * 1024)
         return _operation(lambda: store.import_style(content))
+
+    @router.post('/style-templates/inspect-ass')
+    async def inspect_styles(request: Request) -> AssInspection:
+        content = await _bounded_body(request, 1024 * 1024)
+        return _operation(lambda: inspect_ass(content))
 
     @router.post("/style-templates/{identity}/delete")
     def delete_template(identity: str) -> dict[str, bool]:

@@ -46,6 +46,8 @@ export interface Job {
   llm_provider?: LlmProvider;
   can_stop?: boolean;
   capture_warning?: string | null;
+  subtitle_template?: {name:string;style:import('./subtitleStyle').SubtitleStyle} | null;
+  subtitle_style_error?: string | null;
   discontinuities?: number[];
   clips: Clip[];
   segments: Segment[];
@@ -56,7 +58,7 @@ export interface Job {
   bilingual_files?: string[];
   translation: { state: string; error: string | null; done: number; total: number; message: string | null; model?: string };
 }
-export interface JobInput { url: string; ranges: [string, string][]; highlights: number | null; language: string; saozi?: boolean; live?: boolean }
+export interface JobInput { url: string; ranges: [string, string][]; highlights: number | null; language: string; saozi?: boolean; live?: boolean; subtitle_template_id?: string }
 
 export async function api<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(`/companion-api${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);

@@ -3,6 +3,13 @@ import { mergeCues, splitCue, patchCues, resolveStyle, nudgeStyle, cueWarnings, 
 import { documentFixture } from './subtitleDocument.fixture';
 
 describe('subtitle editing document', () => {
+  it('keeps imported ASS horizontal margins when nudging an automatic anchor',()=>{
+    const base=documentFixture();
+    const doc={...base,style:{...base.style,original:{...base.style.original,align:7,position:'top' as const,margin_left:90,margin_right:60}}};
+    const anchor=effectiveAnchor(doc,doc.cues[0],'original',false);
+    expect(anchor.x).toBe(90*doc.height/1080);
+    expect(nudgeCueStyle(doc,doc.cues[0],'original',1,0,false).x).toBeCloseTo(anchor.x+1);
+  });
   it('retains the effective top alignment when an automatic cue becomes explicit', () => {
     const doc = { ...documentFixture(), width: 640, height: 360 };
     doc.style = { ...doc.style, original: { ...doc.style.original, position: 'top', align: 2 }, translation: { ...doc.style.translation, position: 'top', align: 2 } };

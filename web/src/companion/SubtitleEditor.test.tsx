@@ -37,6 +37,28 @@ it('surfaces import errors and permits retry without clearing style',async()=>{
  fireEvent.change(screen.getByLabelText('导入样式 JSON'),{target:{files:[new File(['bad'],'bad.json')]}});
  expect(await screen.findByRole('alert')).toHaveTextContent('无效模板 JSON');expect(screen.getByLabelText('原文字号')).toHaveValue(48);expect(screen.getByLabelText('导入样式 JSON')).toBeEnabled();
 });
+it('inspects ASS and saves explicitly mapped original and translation styles',async()=>{
+ const original={...defaultStyle.original,size:62,color:'#123456'};
+ const translation={...defaultStyle.translation,size:38,color:'#ABCDEF'};
+ const posts:{url:string;body:unknown}[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(url:string,init:RequestInit)=>{
+   posts.push({url,body:typeof init.body==='string'?JSON.parse(init.body):init.body});
+   if(url.endsWith('/inspect-ass')) return new Response(JSON.stringify({styles:[{name:'日本語',style:original},{name:'中文',style:translation}],warnings:['逐句动画不会导入']}));
+   return new Response(JSON.stringify({id:'ass-template',name:'直播双语',style:{version:1,original,translation},builtin:false,arctime_template_id:null}));
+ }));
+ mount();fireEvent.click(screen.getByText('字幕样式与模板'));
+ const file=new File(['ASS fixture'],'ArcTime.ass');
+ fireEvent.change(screen.getByLabelText('导入 ArcTime ASS 样式'),{target:{files:[file]}});
+ expect(await screen.findByText('逐句动画不会导入')).toBeVisible();
+ fireEvent.change(screen.getByLabelText('ASS 模板名称'),{target:{value:'直播双语'}});
+ fireEvent.change(screen.getByLabelText('ASS 原文样式'),{target:{value:'日本語'}});
+ fireEvent.change(screen.getByLabelText('ASS 译文样式'),{target:{value:'中文'}});
+ fireEvent.click(screen.getByRole('button',{name:'保存 ASS 为样式模板'}));
+ await waitFor(()=>expect(screen.getByLabelText('样式模板')).toHaveValue('ass-template'));
+ expect(posts[0].body).toBe(file);
+ expect(posts[1]).toEqual({url:'/companion-api/style-templates',body:{name:'直播双语',style:{version:1,original,translation}}});
+ expect(screen.getByLabelText('原文字号')).toHaveValue(62);
+});
 it('exports explicit style, language and project; blocks full source burn and busy exports',async()=>{
  const fetch=vi.fn(async()=>new Response('{}'));vi.stubGlobal('fetch',fetch);
  mount(<SubtitleExports id="job1" video="source.mp4" bilingual style={defaultStyle} project="project1" busy={false} burnAvailable nativeAvailable={false} error={null}/>);

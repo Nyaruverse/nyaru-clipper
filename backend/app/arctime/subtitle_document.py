@@ -182,6 +182,9 @@ class DocumentStore:
         return document
 
     def load(self, directory: Path, style: SubtitleStyle, *, source: bool = False) -> SubtitleDocument:
+        job = json.loads(workflow._path(directory, 'job.json').read_bytes())
+        if job.get('live') and job.get('subtitle_template'):
+            style = SubtitleStyle.model_validate(job['subtitle_template']['style'])
         return load_document(directory, style, source=source, base=self.base(directory, style))
 
     def save(self, directory: Path, document: SubtitleDocument) -> SubtitleDocument:

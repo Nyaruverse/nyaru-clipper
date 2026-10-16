@@ -100,6 +100,22 @@ def test_live_invokes_bilingual_publication_before_capture_finishes(recording):
     assert observed[-1][1:] == (True, True)
 
 
+def test_style_snapshot_and_hook_survive_live_restart(recording):
+    from app.arctime.subtitle_style import SubtitleStyle, TextStyle
+    from app.arctime.subtitle_templates import StyleTemplate
+    directory, paths = recording
+    capture = Capture(paths[:8], directory)
+    template = StyleTemplate(id='test', name='Imported', style=SubtitleStyle(original=TextStyle(size=61)))
+    observations = []
+    def publish(path, job):
+        observations.append((job['subtitle_template'], len(job['completed_clips']), capture.closed))
+    run_live(directory, Selector(), Adapter(), threading.Event(), None, capture=capture,
+             style_template=template, styled=publish)
+    assert any(count and not closed for _, count, closed in observations)
+    run_live(directory, Selector(), Adapter(), threading.Event(), None, styled=publish)
+    assert observations[-1][0]['style']['original']['size'] == 61
+
+
 def test_failure_retains_chunks_and_recovery_never_reselects(recording):
     directory, paths = recording
     class Broken(Selector):

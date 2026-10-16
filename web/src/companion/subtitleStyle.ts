@@ -2,6 +2,7 @@ export interface TextStyle { font: string; size: number; color: string; outline_
   bold?: boolean; italic?: boolean; underline?: boolean; opacity?: number; spacing?: number; line_height?: number;
   align?: number; x?: number | null; y?: number | null; rotation?: number; scale_x?: number; scale_y?: number;
   shadow?: number; shadow_color?: string; padding?: number; max_width?: number; hidden?: boolean;
+  margin_left?: number; margin_right?: number;
 }
 export interface SubtitleStyle { version: 1; original: TextStyle; translation: TextStyle }
 export interface StyleTemplate { id: string; name: string; style: SubtitleStyle; arctime_template_id: string | null; builtin: boolean }

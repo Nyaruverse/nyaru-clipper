@@ -73,6 +73,7 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
             "saozi_model": job.get("saozi_model"),
             'llm_provider': job.get('llm_provider', 'chatgpt' if str(job.get('saozi_model', '')).startswith('chatgpt:') else 'deepseek'),
             "capture_warning": job.get("capture_warning"), "discontinuities": job.get("discontinuities", []),
+            "subtitle_template": job.get('subtitle_template'), "subtitle_style_error": job.get('subtitle_style_error'),
             "clips": clips, "segments": segments, "has_source": bool(job.get("video")),
             "language": job.get("asr", {}).get("language", "auto"), "bilingual_segments": bilingual_segments,
             "bilingual_files": bilingual_files,
@@ -81,4 +82,4 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
                             "total": translated.get("total", len(segments)),
                             "model": translated.get("identity", {}).get("model") or (live or {}).get("model") or job.get('saozi_model') or job.get('llm_model') or translation.MODEL,
                             "message": live.get("message") if live and translation_state == "translating" else None},
-            "can_resume": not live and state in {"failed", "interrupted"} and (bool(job.get("video")) or bool(job.get("live")))}
+            "can_resume": not live and (state in {"failed", "interrupted"} or bool(job.get('subtitle_style_error'))) and (bool(job.get("video")) or bool(job.get("live")))}
