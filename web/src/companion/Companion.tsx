@@ -40,6 +40,7 @@ export function Companion() {
   const [mode, setMode] = useState<"ranges" | "highlights" | "saozi">("ranges");
   const [source, setSource] = useState<Source>("replay");
   const [room, setRoom] = useState("");
+  const [liveTemplate,setLiveTemplate] = useState<string | null>(null);
   const processingMode = source === "live" ? "saozi" : mode;
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [ranges, setRanges] = useState<[string, string][]>([["00:00", "00:30"]]);
@@ -56,12 +57,13 @@ export function Companion() {
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
   const settings = useQuery({queryKey:["companion","subtitle-settings"],queryFn:()=>subtitleApi<SubtitleSettings>("/subtitle-settings")});
+  const liveTemplateId = liveTemplate ?? (settings.data?.templates?.some(item=>item.id==='nyaru') ? 'nyaru' : '');
   const fonts = useQuery({queryKey:['companion','subtitle-fonts'],queryFn:()=>subtitleApi<FontCatalog>('/subtitle-fonts'),staleTime:Infinity});
   const [styleDraft,setStyleDraft] = useState<SubtitleStyle | null>(null);
   const [project,setProject] = useState<string | null>(null);
   const editing = useSubtitleDocument(selectedId, detail.data?.state === 'completed', detail.data?.translation?.state);
   const documentDraft = editing.document;
-  const style = documentDraft?.style ?? styleDraft ?? settings.data?.style ?? defaultStyle;
+  const style = documentDraft?.style ?? detail.data?.subtitle_template?.style ?? styleDraft ?? settings.data?.style ?? defaultStyle;
   const [cueSelection,setCueSelection] = useState<string[]>([]);
   const [cueLanguage,setCueLanguage] = useState<Language>('original');
   const [linked,setLinked] = useState(false);
@@ -126,6 +128,7 @@ export function Companion() {
       create.mutate({url:source === "live" ? room.trim() : url.trim(),ranges:processingMode === "ranges" ? ranges : [],
         highlights:processingMode === "highlights" ? highlights : null,language,
         ...(processingMode === "saozi" ? {saozi:true,live:source === "live"} : {}),
+        ...(source === 'live' && liveTemplateId ? {subtitle_template_id:liveTemplateId} : {}),
         ...(source === "file" && localFile ? {file:localFile} : {})});
     } catch (err) { setError(err instanceof Error ? err.message : "请检查输入"); }
   }
@@ -189,6 +192,13 @@ export function Companion() {
               <label className="ny-field" hidden={source !== "replay"}>BV 号<input className="ny-input" type="text" disabled={source !== "replay"} required={source === "replay"} pattern="BV[A-Za-z0-9]{10}" title="只需输入 BV 开头的视频编号，例如 BV1xx411c7mD" placeholder="例如：BV1xx411c7mD" value={url} onChange={event => setUrl(event.target.value)} /></label>
               <label className="ny-field" hidden={source !== "file"}>本地视频文件<input className="ny-input" type="file" disabled={source !== "file"} accept="video/*,.mkv,.flv,.ts" onChange={event=>setLocalFile(event.target.files?.[0] ?? null)} /></label>
               {source === "live" && <p className="companion-muted">录制正在直播的房间，按约 1–2 分钟连续处理；需要先配置 AI。点击停止后处理剩余内容。</p>}
+              {source === 'live' && <>
+                <label className="ny-field">实时切片字幕模板<select className="ny-input" value={liveTemplateId} onChange={event=>setLiveTemplate(event.target.value)} disabled={!settings.data || settings.isError}>
+                  <option value="">不自动套用样式</option>{settings.data?.templates?.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
+                </select></label>
+                <p className="companion-footnote">选择后每段自动生成 ASS 和字幕视频；双语完成后补齐双语版本。样式固定为开播时的模板，烧录可能增加处理积压。</p>
+                <button className="ny-button" type="button" onClick={()=>setTool('subtitle')}>导入 ASS 或管理字幕模板</button>
+              </>}
               <label className="ny-field">视频语种<select className="ny-input" value={language} onChange={event => setLanguage(event.target.value)}><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
               <button className="ny-button" type="button" onClick={() => setTool("slice")}><Scissors size={16} />{processingMode === "ranges" ? `指定时间段 · ${ranges.length} 段` : processingMode === "saozi" ? "臊子" : `高光自动切片 · 最多 ${highlights} 段`}</button>
               </div>
@@ -214,7 +224,7 @@ export function Companion() {
               </div> : <p className="companion-muted">连续切为约 1–2 分钟，{chatgptSelected ? "ChatGPT" : "DeepSeek Flash"} 根据字幕段落选择切点，并自动生成中日双语字幕，会使用{chatgptSelected ? "订阅" : " API "}额度。短尾段完整保留。{source === "live" ? "实时结果会有缓冲与处理延迟；停止后导出剩余内容。" : "原视频保留，切片按顺序覆盖全部内容。"}</p>}
               </div>
             </fieldset>
-            <button className="ny-button ny-button--primary companion-start" type="submit" disabled={!config.data?.ready || !!busy || create.isPending || unavailable}><Scissors size={16} />{create.isPending ? "正在提交…" : busy ? "已有任务处理中" : "开始处理"}</button>
+            <button className="ny-button ny-button--primary companion-start" type="submit" disabled={!config.data?.ready || !!busy || create.isPending || unavailable || (source === 'live' && !settings.data)}><Scissors size={16} />{create.isPending ? "正在提交…" : busy ? "已有任务处理中" : "开始处理"}</button>
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
@@ -247,7 +257,7 @@ export function Companion() {
           {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.ja-zh.srt", true)}>完整双语字幕 SRT</a>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
           {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{(item.bilingual_subtitles || (hasBilingual && !job.bilingual_files)) && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.bilingual_subtitles ?? item.subtitles.replace(/\.srt$/, ".ja-zh.srt"), true)}>双语 SRT</a>}</div></div>)}
-          {job && job.segments.length > 0 && <SubtitleExports id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} document={documentDraft} busy={!!busy || !settings.data?.style || editing.dirty || !!editing.error} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
+          {job && (job.segments.length > 0 || (exports.data?.outputs?.length ?? 0) > 0) && <SubtitleExports id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} document={documentDraft} busy={!!busy || !settings.data?.style || editing.dirty || !!editing.error} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时，下载视频与同名 SRT 即可继续编辑。</p>}
         </section>
         </div>
@@ -263,6 +273,9 @@ export function Companion() {
           {job?.can_stop && <button className="ny-button" disabled={stop.isPending} onClick={()=>stop.mutate(job.id)}>停止直播并导出剩余内容</button>}
           {job?.error && <p className="companion-error" role="alert">{job.error}</p>}
           {job?.capture_warning && <p className="companion-error" role="alert">{job.capture_warning}</p>}
+          {job?.subtitle_template && <p className="companion-muted">实时字幕模板：{job.subtitle_template.name}（任务创建时的样式）</p>}
+          {job?.live && job.subtitle_template && job.state !== 'completed' && <p className="companion-footnote">录制中的播放器预览采用浏览器排版；精确样式以导出的 ASS 和字幕视频为准。</p>}
+          {job?.subtitle_style_error && <p className="companion-error" role="alert">{job.subtitle_style_error}</p>}
           {!!job?.discontinuities?.length && <p className="companion-muted">发生 {job.discontinuities.length} 次断流，缺失内容无法恢复；已分别保留断流前后片段。</p>}
           {job?.state === "failed" && !job.can_resume && <p className="companion-muted">下载未完成，请检查链接后重新创建任务。</p>}
           {job?.can_resume && <button className="ny-button" disabled={!!busy || resume.isPending} onClick={() => { setError(null); resume.mutate(job.id); }}>恢复处理</button>}

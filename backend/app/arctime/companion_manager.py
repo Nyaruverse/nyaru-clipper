@@ -15,7 +15,9 @@ from app.arctime import companion_llm, media, translation, workflow
 from app.arctime.chatgpt_auth import ChatGPTAuth
 from app.arctime.local_asr import LocalASR
 from app.arctime.companion_models import JobInput, validated_api_key
-from app.arctime.subtitle_exports import export_artifact
+from app.arctime.subtitle_exports import export_artifact, SubtitleExports
+from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
+from app.arctime.subtitle_encoding import burn_available
 from app.arctime.companion_projection import job_detail
 
 
@@ -81,13 +83,21 @@ class JobManager:
                 key = companion_llm.require_key(self, model) if saozi else self.api_key
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from None
+            template = None
+            if request and request.subtitle_template_id:
+                template = next((item for item in TemplateStore(self.root).list_styles()
+                                 if item.id == request.subtitle_template_id), None)
+                if template is None:
+                    raise HTTPException(409, '字幕模板不存在，请重新选择')
+                if not burn_available():
+                    raise HTTPException(409, '当前 FFmpeg 不支持字幕烧录，请取消模板或安装支持 libass 的版本')
             self.stop_event.clear()
             self.active = {"id": job_id, "state": "uploading" if deferred else "preparing",
                            "message": "正在导入录像" if deferred else "正在检查本地环境", "started_at": time.time(),
                            "error": None, "live": bool(request.live if request else False), "saozi": saozi,
                            'model': model, 'llm_provider': 'chatgpt' if model.startswith('chatgpt:') else 'deepseek'}
             if not deferred:
-                self.executor.submit(self.run, job_id, request, key, model)
+                self.executor.submit(self.run, job_id, request, key, model, style_template=template)
         return job_id
 
     def stop(self, job_id: str) -> None:
@@ -130,6 +140,10 @@ class JobManager:
                 translate(directory, key, progress=progress, model=model, **options)
             else:
                 translation.translate_run(directory, key, progress=progress, model=model, **options)
+            with workflow.exclusive_lock(directory / '.lock'):
+                saved = self.read_json(directory / 'job.json')
+                if saved.get('live') and saved.get('subtitle_template'):
+                    SubtitleExports(self).export_live(directory, saved)
         except Exception:
             with self.lock:
                 self.active["translation_error"] = "翻译未完成；检查字幕、API Key 或网络后重试，原结果已保留"
@@ -149,7 +163,7 @@ class JobManager:
             media.write_json(directory / "gui.json", record)
 
     def run(self, job_id: str, request: JobInput | None, key: SecretStr | None = None,
-            model: str | None = None, local_source: Path | None = None):
+            model: str | None = None, local_source: Path | None = None, *, style_template: StyleTemplate | None = None):
         try:
             directory = self.directory(job_id)
             saved = self.read_json(directory / "job.json")
@@ -188,9 +202,11 @@ class JobManager:
                 directory.mkdir(mode=0o700, exist_ok=True)
                 job = run_live(directory, selector, adapter, self.stop_event,
                                lambda message: self.update("recording", message), url=request.url if request else None,
-                               bilingual=bilingual)
+                               bilingual=bilingual, style_template=style_template,
+                               styled=SubtitleExports(self).export_live)
                 self.update("completed", f"臊子已完成，导出 {len(job['completed_clips'])} 个切片" +
-                            ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕"))
+                            ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕") +
+                            ('；自动样式导出未完成，可恢复处理重试' if job.get('subtitle_style_error') else ''))
                 return
             if request:
                 adapter = LocalASR(self.model, request.language, self.threads)

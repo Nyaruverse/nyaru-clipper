@@ -115,7 +115,8 @@ export function anchorPosition(style: TextStyle, width: number, height: number):
   const align = effectiveAlignment(style);
   const column = (align - 1) % 3, row = Math.floor((align - 1) / 3);
   const margin = style.margin * height / 1080;
-  return { x: style.x ?? (column === 0 ? 20 * height / 1080 : column === 1 ? width / 2 : width - 20 * height / 1080),
+  const left=(style.margin_left ?? 20)*height/1080, right=(style.margin_right ?? 20)*height/1080;
+  return { x: style.x ?? (column === 0 ? left : column === 1 ? (width+left-right)/2 : width-right),
     y: style.y ?? (row === 0 ? height - margin : row === 1 ? height / 2 : margin) };
 }
 
@@ -125,7 +126,7 @@ export function nudgeStyle(style: TextStyle, dx: number, dy: number, width: numb
 }
 
 function wrappedLineCount(text: string, style: TextStyle, width: number): number {
-  const available = Math.max(1, width * (style.max_width ?? 100) / 100 - 40 - 2 * (style.padding ?? 0));
+  const available = Math.max(1, width * (style.max_width ?? 100) / 100 - (style.margin_left ?? 20) - (style.margin_right ?? 20) - 2 * (style.padding ?? 0));
   let lines = 1, used = 0;
   for (const char of text.replace(/\r\n?/g, '\n')) {
     if (char === '\n') { lines++; used = 0; continue; }

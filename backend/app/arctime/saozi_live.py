@@ -11,12 +11,15 @@ from app.arctime.saozi import SaoziSelector
 from app.arctime import live_state, saozi
 from app.arctime.live_capture import LiveCapture
 from app.arctime.workflow import exclusive_lock
+from app.arctime.subtitle_templates import StyleTemplate
 
 
 def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: Event,
              progress: Callable[[str], None] | None, url: str | None = None,
              *, capture: LiveCapture | None = None,
-             bilingual: Callable[[Path, bool], None] | None = None) -> dict:
+             bilingual: Callable[[Path, bool], None] | None = None,
+             style_template: StyleTemplate | None = None,
+             styled: Callable[[Path, dict], None] | None = None) -> dict:
     directory = directory.resolve()
     notify = progress or (lambda message: None)
     with exclusive_lock(directory / '.lock'):
@@ -31,6 +34,8 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
             if job['state'] == 'completed':
                 if bilingual:
                     bilingual(directory, True)
+                if styled:
+                    styled(directory, job)
                 return job
         else:
             job = {'version': 2, 'saozi': True, 'live': True, 'state': 'recording',
@@ -40,8 +45,17 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                    'saozi_prompt_sha256': live_state.digest(saozi.PROMPT),
                    'ranges': [], 'highlight_count': None, 'selection': [], 'completed_clips': [],
                    'artifacts': {}, 'chunks': [], 'discontinuities': []}
+            if style_template:
+                job['subtitle_template'] = style_template.model_dump()
+                job['subtitle_template_sha256'] = live_state.digest(job['subtitle_template'])
             live_state.save(directory, job)
         recorder = capture or (LiveCapture(url, directory, stop) if url else None)
+
+        def publish(final: bool) -> None:
+            if bilingual:
+                bilingual(directory, final)
+            if styled:
+                styled(directory, job)
 
         def choose(final):
             start = job['selection'][-1]['end'] if job['selection'] else 0.
@@ -59,15 +73,14 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                 live_state.save(directory, job)
                 start = clip['end']
                 live_state.export_pending(directory, job, notify)
-                if bilingual:
-                    bilingual(directory, False)
+                publish(False)
 
         try:
             if job['chunks']:
                 live_state.publish_transcript(directory, job)
             live_state.export_pending(directory, job, notify)
-            if bilingual and job['completed_clips']:
-                bilingual(directory, False)
+            if job['completed_clips']:
+                publish(False)
             paths = recorder.chunks() if recorder else LiveCapture.recorded(directory)
             seen = {c['path'] for c in job['chunks']}
             for path in paths:
@@ -90,8 +103,7 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                     notify(recorder.error)
             choose(True)
             live_state.finalize(directory, job)
-            if bilingual:
-                bilingual(directory, True)
+            publish(True)
             return job
         except BaseException:
             job['state'] = 'live_failed'

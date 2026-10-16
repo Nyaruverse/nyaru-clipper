@@ -21,6 +21,8 @@ class TextStyle(BaseModel):
     background_opacity: float = Field(default=0, ge=0, le=1)
     position: Literal['top', 'bottom'] = 'bottom'
     margin: float = Field(default=96, ge=0, le=1080)
+    margin_left: float = Field(default=20, ge=0, le=32768)
+    margin_right: float = Field(default=20, ge=0, le=32768)
 
     bold: bool = False
     italic: bool = False
@@ -130,7 +132,7 @@ def render_ass(original: Sequence[SubtitleSegment], translated: Sequence[Subtitl
     )):
         raise ValueError('Translation cue count and times must exactly match original cues.')
     advanced = ('bold', 'italic', 'underline', 'opacity', 'spacing', 'line_height', 'align', 'x', 'y',
-                'rotation', 'scale_x', 'scale_y', 'shadow', 'shadow_color', 'padding', 'max_width', 'hidden')
+                'rotation', 'scale_x', 'scale_y', 'shadow', 'shadow_color', 'padding', 'max_width', 'hidden', 'margin_left', 'margin_right')
     defaults = TextStyle()
     if any(getattr(item, key) != getattr(defaults, key) for item in (style.original, style.translation) for key in advanced):
         from app.arctime.subtitle_document import Cue, SubtitleDocument

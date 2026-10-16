@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { defaultStyle, subtitleApi, type SubtitleSettings, type SubtitleStyle, type TextStyle, type StyleTemplate } from './subtitleStyle';
+import { defaultStyle as basicStyle, subtitleApi, type SubtitleSettings, type SubtitleStyle, type TextStyle, type StyleTemplate } from './subtitleStyle';
 import { TextStyleFields, type FontCatalog } from './TextStyleFields';
+import { AssStyleImport } from './AssStyleImport';
 interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean; readonly embedded?: boolean; readonly fonts?: FontCatalog }
 export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy,embedded = false,fonts}: Props) {
   const client = useQueryClient();
@@ -12,6 +13,7 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
   const [projectName,setProjectName] = useState('');
   const [savedTemplate,setSavedTemplate] = useState<StyleTemplate | null>(null);
   const templates = settings?.templates ?? [];
+  const defaultStyle = templates.find(item=>item.id==='nyaru')?.style ?? basicStyle;
   const choices = savedTemplate && !templates.some(item => item.id === savedTemplate.id) ? [...templates,savedTemplate] : templates;
   const template = choices.find(item => item.id === selected);
   const mutation = useMutation({mutationFn: ({path,body}: {path:string;body:object | File}) => subtitleApi<Partial<StyleTemplate>>(path,body),onSuccess: async (result,request) => {
@@ -42,6 +44,10 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
       {template && <p className="companion-muted">已选模板：{template.name}。名称和样式修改后需更新或另存；JSON 下载为已保存版本。</p>}
       <div className="companion-downloads"><button className="ny-button" onClick={() => onStyle(defaultStyle)}>恢复基础样式</button><button className="ny-button" disabled={!name.trim()} onClick={() => save()}>另存为新模板</button><button className="ny-button" disabled={!template} onClick={() => {mutation.mutate({path:'/style-templates',body:{name:`${name} 副本`,style,arctime_template_id:project}});}}>复制模板</button><button className="ny-button" disabled={!template || template.builtin || !name.trim()} onClick={() => setConfirmation('rename')}>更新 / 重命名模板</button><button className="ny-button" disabled={!template || template.builtin} onClick={() => setConfirmation('delete')}>删除样式模板</button>{template && <a className="ny-button" href={`/companion-api/style-templates/${template.id}/download`}>导出样式 JSON</a>}<button className="ny-button" onClick={() => mutation.mutate({path:'/subtitle-settings',body:{style}})}>设为默认样式</button></div>
       <label className="ny-field">导入样式 JSON<input type="file" accept=".json,application/json" onChange={event => {const file=event.target.files?.[0];if(file) mutation.mutate({path:'/style-templates/import',body:file});event.target.value='';}} /></label>
+      <AssStyleImport disabled={disabled} onImported={saved=>{
+        setSavedTemplate(saved);setSelected(saved.id);setName(saved.name);onProject(saved.arctime_template_id);onStyle(saved.style);setNotice('ASS 样式模板已保存，可在新建实时录播任务中选择');
+        void client.invalidateQueries({queryKey:['companion','subtitle-settings']});
+      }}/>
       <label className="ny-field">绑定 ArcTime 工程模板<select className="ny-input" value={project ?? ''} onChange={event => onProject(event.target.value || null)}><option value="">不附带工程模板</option>{settings?.arctime_templates?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label className="ny-field">工程模板名称（留空使用文件名）<input className="ny-input" maxLength={100} value={projectName} onChange={event => setProjectName(event.target.value)} /></label>
       <label className="ny-field">导入 ArcTime ATPJ<input type="file" accept=".atpj" onChange={event => {const file=event.target.files?.[0];if(file) mutation.mutate({path:`/arctime-templates?name=${encodeURIComponent(projectName.trim() || file.name.replace(/\.atpj$/i,''))}&filename=${encodeURIComponent(file.name)}`,body:file});event.target.value='';}} /></label>
