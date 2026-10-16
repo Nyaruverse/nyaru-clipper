@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { defaultStyle, subtitleApi, type SubtitleSettings, type SubtitleStyle, type TextStyle, type StyleTemplate } from './subtitleStyle';
-interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean; readonly embedded?: boolean }
-export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy,embedded = false}: Props) {
+import { TextStyleFields, type FontCatalog } from './TextStyleFields';
+interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean; readonly embedded?: boolean; readonly fonts?: FontCatalog }
+export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy,embedded = false,fonts}: Props) {
   const client = useQueryClient();
   const [selected,setSelected] = useState('');
   const [name,setName] = useState('我的字幕样式');
@@ -33,7 +34,8 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
         <label className="ny-field">{key === 'original' ? '原文' : '译文'}字体<input className="ny-input" maxLength={100} value={style[key].font} onChange={event => { if (!/[,{}\\\x00-\x1f\x7f-\x9f]/.test(event.target.value)) update(key,{font:event.target.value}); }} /></label>
         {([{key:'size',label:'字号',min:8,max:200,step:1},{key:'outline',label:'描边',min:0,max:20,step:1},{key:'background_opacity',label:'背景不透明度',min:0,max:1,step:0.05},{key:'margin',label:'垂直边距',min:0,max:1080,step:1}] as const).map(field => <label className="ny-field" key={field.key}>{key === 'original' ? '原文' : '译文'}{field.label}<input className="ny-input" type="number" min={field.min} max={field.max} step={field.step} value={style[key][field.key]} onChange={event => { const value = event.target.valueAsNumber;if (Number.isFinite(value)) update(key,{[field.key]:Math.max(field.min,Math.min(field.max,value))}); }} /></label>)}
         {([{key:'color',label:'文字颜色'},{key:'outline_color',label:'描边颜色'},{key:'background_color',label:'背景颜色'}] as const).map(field => <label className="ny-field" key={field.key}>{key === 'original' ? '原文' : '译文'}{field.label}<input className="ny-input" type="color" value={style[key][field.key]} onChange={event => update(key,{[field.key]:event.target.value})} /></label>)}
-        <label className="ny-field">{key === 'original' ? '原文' : '译文'}位置<select className="ny-input" value={style[key].position} onChange={event => update(key,{position:event.target.value === 'top' ? 'top' : 'bottom'})}><option value="bottom">底部</option><option value="top">顶部</option></select></label>
+        <label className="ny-field">{key === 'original' ? '原文' : '译文'}位置<select className="ny-input" value={style[key].position} onChange={event => update(key,{position:event.target.value === 'top' ? 'top' : 'bottom',align:event.target.value === 'top' ? 8 : 2,x:null,y:null})}><option value="bottom">底部</option><option value="top">顶部</option></select></label>
+        <details><summary>更多文字与排版设置</summary><TextStyleFields advancedOnly style={style[key]} onChange={patch => update(key,patch)} fonts={fonts} /></details>
       </fieldset>)}</div>
       <p className="companion-footnote">字号和边距按 1080 高画布缩放。字体取决于本机安装情况；浏览器与烧录的字形可能略有差异。</p>
       <label className="ny-field">模板名称<input className="ny-input" maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>

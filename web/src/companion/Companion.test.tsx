@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 
 import { Companion } from "./Companion";
+import { documentFixture } from './subtitleDocument.fixture';
 
 it("previews and downloads available bilingual live clips before recording ends", async () => {
   const job = {id:"aabbccddeeff",state:"recording",mode:"saozi",live:true,has_source:false,
@@ -345,6 +346,7 @@ it('allows retry and editing after a subtitle export was interrupted', async () 
     if (options?.method === 'POST') posts.push(url);
     if (url.endsWith('/jobs') && !options) return new Response(JSON.stringify([{id:'aabbccddeeff',state:'completed',started_at:0,mode:'ranges'}]));
     if (url.endsWith('/subtitle-settings')) return new Response(JSON.stringify({style:defaultStyle,templates:[],arctime_templates:[],burn_available:true,native_handoff_available:false}));
+    if (url.endsWith('/subtitle-document')) return new Response(JSON.stringify(documentFixture()));
     if (url.endsWith('/subtitle-exports')) return new Response(JSON.stringify({active:{state:'interrupted',message:'字幕导出已中断，请重新导出',error:null},outputs:[]}));
     return original(url, options);
   }));
