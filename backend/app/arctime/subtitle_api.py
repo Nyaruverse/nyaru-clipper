@@ -8,12 +8,16 @@ from typing import TYPE_CHECKING, TypeVar
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.arctime.subtitle_encoding import burn_available
+from app.arctime.subtitle_fonts import FontCatalog, font_catalog
 from app.arctime.subtitle_exports import ExportSnapshot, SubtitleExports
 from app.arctime.subtitle_inputs import ExportRequest
 from app.arctime.subtitle_style import SubtitleStyle
+from app.arctime.subtitle_document import DocumentStore, SubtitleDocument, validate_source
+from app.arctime.subtitle_render import preview_png
 from app.arctime.subtitle_templates import ProjectTemplate, StyleTemplate
 
 if TYPE_CHECKING:
@@ -31,8 +35,17 @@ def _operation(action: Callable[[], Result]) -> Result:
         raise HTTPException(404, "模板或任务文件不存在") from None
     except ValueError as error:
         raise HTTPException(409, str(error)) from None
+    except subprocess.SubprocessError:
+        raise HTTPException(409, "字幕工具执行失败或超时；原文件已保留") from None
     except OSError:
         raise HTTPException(500, "字幕文件操作失败，请检查目录权限；原文件已保留") from None
+
+
+class PreviewInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    document: SubtitleDocument
+    time: float = Field(ge=0)
+    bilingual: bool = False
 
 
 class DefaultInput(BaseModel):
@@ -65,6 +78,37 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
 def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     router = APIRouter(prefix="/companion-api")
     store = exports.templates
+    documents = DocumentStore()
+
+    @router.get('/jobs/{job_id}/subtitle-document')
+    def document(job_id: str, source: bool = False) -> SubtitleDocument:
+        return _operation(lambda: documents.load(manager.directory(job_id), store.load_defaults(), source=source))
+
+    @router.post('/jobs/{job_id}/subtitle-document')
+    async def save(job_id: str, request: Request) -> SubtitleDocument:
+        content = await _bounded_body(request, 20 * 1024 * 1024)
+        payload = _operation(lambda: SubtitleDocument.model_validate_json(content))
+        def persist() -> SubtitleDocument:
+            with manager.lock:
+                if manager.active:
+                    raise HTTPException(409, '已有任务正在处理，请等待完成')
+                return _operation(lambda: documents.save(manager.directory(job_id), payload))
+        return await run_in_threadpool(persist)
+
+    @router.post('/jobs/{job_id}/subtitle-preview')
+    async def preview(job_id: str, request: Request) -> Response:
+        content = await _bounded_body(request, 20 * 1024 * 1024)
+        payload = _operation(lambda: PreviewInput.model_validate_json(content))
+        def render() -> bytes:
+            validate_source(payload.document, documents.base(manager.directory(job_id), payload.document.style))
+            if payload.time > payload.document.duration:
+                raise ValueError('预览时间超过视频时长')
+            return preview_png(payload.document, payload.time, payload.bilingual)
+        return Response(await run_in_threadpool(lambda: _operation(render)), media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    @router.get('/subtitle-fonts')
+    def fonts() -> FontCatalog:
+        return font_catalog()
 
     @router.get("/subtitle-settings")
     def settings() -> SubtitleSettings:
@@ -112,8 +156,10 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="template-{identity}.atpj"'})
 
     @router.post("/jobs/{job_id}/subtitle-export", status_code=202)
-    def submit(job_id: str, payload: ExportRequest) -> dict[str, str]:
-        return {"id": _operation(lambda: exports.submit(job_id, payload))}
+    async def submit(job_id: str, request: Request) -> dict[str, str]:
+        content = await _bounded_body(request, 20 * 1024 * 1024)
+        payload = _operation(lambda: ExportRequest.model_validate_json(content))
+        return {'id': await run_in_threadpool(lambda: _operation(lambda: exports.submit(job_id, payload)))}
 
     @router.get("/jobs/{job_id}/subtitle-exports")
     def snapshot(job_id: str) -> ExportSnapshot:
