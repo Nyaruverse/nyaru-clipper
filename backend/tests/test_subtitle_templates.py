@@ -7,6 +7,21 @@ from app.arctime.subtitle_style import SubtitleStyle, TextStyle
 from app.arctime.subtitle_templates import TemplateStore
 
 
+def test_nyaru_is_builtin_default_without_changing_saved_custom_style(tmp_path):
+    store = TemplateStore(tmp_path)
+    builtin = next(item for item in store.list_styles() if item.id == 'nyaru')
+    assert builtin.builtin
+    assert store.load_defaults() == builtin.style
+    assert builtin.style.original.font == 'Hiragino Maru Gothic ProN'
+    assert builtin.style.translation.color == '#A0F5DA'
+    assert builtin.style.translation.size == 64
+    with pytest.raises(ValueError):
+        store.delete_style('nyaru')
+    custom = SubtitleStyle(original=TextStyle(size=77))
+    store.save_defaults(custom)
+    assert TemplateStore(tmp_path).load_defaults() == custom
+
+
 def test_defaults_persist_privately(tmp_path):
     store = TemplateStore(tmp_path)
     style = SubtitleStyle(original=TextStyle(size=72))

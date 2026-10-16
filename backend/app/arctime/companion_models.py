@@ -27,9 +27,12 @@ class JobInput(BaseModel):
     saozi: bool = False
     live: bool = False
     language: str = Field(default="auto", pattern=r"^[a-z]{2,8}$")
+    subtitle_template_id: str | None = Field(default=None, pattern=r'^(?:[0-9a-f]{32}|nyaru|default|white)$')
 
     @model_validator(mode="after")
     def validate_selection(self):
+        if self.subtitle_template_id and not self.live:
+            raise ValueError('自动字幕模板仅用于实时录播')
         self.url = self.url.strip()
         if self.live and re.fullmatch(r"[1-9][0-9]*", self.url):
             self.url = "https://live.bilibili.com/" + self.url

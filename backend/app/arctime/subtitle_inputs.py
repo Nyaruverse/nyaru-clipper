@@ -46,8 +46,9 @@ class CompletedClip(BaseModel):
 class ManagedRun(BaseModel):
     state: str
     duration: float
-    video: str
-    video_sha256: str
+    video: str = ''
+    video_sha256: str = ''
+    live: bool = False
     subtitles: str
     artifacts: dict[str, str]
     completed_clips: list[CompletedClip]
@@ -75,14 +76,15 @@ def checked_artifact(directory: Path, name: str, digest: str) -> Path:
     return path
 
 
-def load_inputs(directory: Path, request: ExportRequest) -> ExportInputs:
+def load_inputs(directory: Path, request: ExportRequest, *, allow_live: bool = False) -> ExportInputs:
     job_path = workflow._path(directory, "job.json")
     run = ManagedRun.model_validate_json(job_path.read_bytes())
-    if run.state != "completed":
+    partial = allow_live and run.live and request.video != 'source.mp4' and request.document is None
+    if run.state != "completed" and not partial:
         raise ExportError("请等待视频任务完成后再导出字幕")
     if request.kind == "burn" and request.video == "source.mp4":
         raise ExportError("字幕烧录请选择已完成切片")
-    digests = {run.video: run.video_sha256, **run.artifacts}
+    digests = {} if partial else {run.video: run.video_sha256, **run.artifacts}
     for name, digest in digests.items():
         checked_artifact(directory, name, digest)
     subtitle_name = run.subtitles
@@ -103,7 +105,7 @@ def load_inputs(directory: Path, request: ExportRequest) -> ExportInputs:
         if not translation_path.is_file():
             raise ExportError("请先完成中日双语字幕")
         result = TranslationRun.model_validate_json(translation_path.read_bytes())
-        if result.state != "completed":
+        if result.state != "completed" and not (partial and result.state in {'partial', 'translating', 'failed'}):
             raise ExportError("请先完成中日双语字幕")
         bilingual_name = Path(subtitle_name).stem + ".ja-zh.srt"
         bilingual_path = checked_artifact(directory, bilingual_name, result.artifacts.get(bilingual_name, ""))

@@ -24,6 +24,9 @@ def save(directory, job):
 
 
 def verify(directory, job, adapter, selector):
+    if (job.get('subtitle_template') or job.get('subtitle_template_sha256')) and (
+            job.get('subtitle_template_sha256') != digest(job.get('subtitle_template'))):
+        raise ValueError('直播字幕模板快照已改变，请保留任务并检查')
     if (job.get('version') != 2 or not job.get('live') or job.get('asr') != adapter.identity()
             or job.get('saozi_model') != selector.model
             or job.get('saozi_prompt_sha256') != digest(saozi.PROMPT)):

@@ -20,7 +20,7 @@ from app.arctime.subtitle_style import render_ass
 from app.arctime.subtitle_document import SubtitleDocument
 from app.arctime.subtitle_render import render_document_ass
 from app.arctime.subtitle_style import SubtitleStyle
-from app.arctime.subtitle_templates import TemplateStore
+from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
 from app.services.subtitles import render_bilingual_srt, render_srt
 
 if TYPE_CHECKING:
@@ -118,6 +118,34 @@ class SubtitleExports:
         self.templates = TemplateStore(manager.root)
         self.failures: dict[str, ExportActivity] = {}
 
+    def export_live(self, directory: Path, job: dict) -> None:
+        if not job.get('subtitle_template'):
+            return
+        snapshot = None
+        with self.manager.lock:
+            if self.manager.active:
+                self.manager.active['auto_subtitle_export'] = True
+        try:
+            template = StyleTemplate.model_validate(job['subtitle_template'])
+            translated = self.manager.read_json(directory / 'translation.json').get('artifacts', {})
+            snapshot = read_exports(directory)
+            for clip in job['completed_clips']:
+                bilingual = Path(clip['subtitles']).stem + '.ja-zh.srt' in translated
+                for kind in ('ass', 'burn'):
+                    request = ExportRequest(kind=kind, video=clip['video'], bilingual=bilingual, style=template.style)
+                    self._run_locked(directory, request, None, snapshot, allow_live=True)
+            job.pop('subtitle_style_error', None)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, HTTPException):
+            job['subtitle_style_error'] = '自动样式导出未完成；录制及原始切片已保留，可恢复处理重试'
+            if snapshot is not None:
+                snapshot.active = ExportActivity(state='failed', message='自动样式导出未完成', error=job['subtitle_style_error'])
+                media.write_json(_registry(directory), snapshot.model_dump())
+        finally:
+            with self.manager.lock:
+                if self.manager.active:
+                    self.manager.active.pop('auto_subtitle_export', None)
+        workflow.write_manifest(directory, job)
+
     def snapshot(self, job_id: str) -> ExportSnapshot:
         directory = self.manager.directory(job_id)
         self.manager.detail(job_id, include_segments=False)
@@ -126,7 +154,7 @@ class SubtitleExports:
             if job_id in self.failures:
                 snapshot.active = self.failures[job_id]
             live = self.manager.active
-            if live and live["id"] == job_id and live["state"] == "subtitle_export":
+            if live and live["id"] == job_id and (live["state"] == "subtitle_export" or live.get('auto_subtitle_export')):
                 snapshot.active = ExportActivity(state="exporting", message=live["message"])
             elif snapshot.active and snapshot.active.state == "exporting":
                 snapshot.active = ExportActivity(state="interrupted", message="字幕导出已中断，请重新导出；原结果已保留")
@@ -174,7 +202,8 @@ class SubtitleExports:
                 self.manager.last = self.manager.active
                 self.manager.active = None
 
-    def _run_locked(self, directory: Path, request: ExportRequest, project: bytes | None, snapshot: ExportSnapshot) -> None:
+    def _run_locked(self, directory: Path, request: ExportRequest, project: bytes | None, snapshot: ExportSnapshot,
+                    *, allow_live: bool = False) -> None:
         def progress(message: str) -> None:
             snapshot.active = ExportActivity(state="exporting", message=message)
             media.write_json(_registry(directory), snapshot.model_dump())
@@ -182,7 +211,7 @@ class SubtitleExports:
                 if self.manager.active:
                     self.manager.active["message"] = message
         progress("正在校验字幕和媒体")
-        inputs = load_inputs(directory, request)
+        inputs = load_inputs(directory, request, allow_live=True) if allow_live else load_inputs(directory, request)
         identity = hashlib.sha256(json.dumps({"renderer_revision": 2, "package_revision": 1, "request": request.model_dump(), "inputs": inputs.digests,
             "project": hashlib.sha256(project).hexdigest() if project else None}, sort_keys=True).encode()).hexdigest()[:20]
         extension = {"ass": "ass", "burn": "mp4", "arctime": "zip"}[request.kind]

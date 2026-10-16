@@ -14,7 +14,7 @@ def _lines(text: str, spans: list[Emphasis], style: TextStyle, width: float, mat
     used = 0.0
     formatting = None
     span_index = 0
-    available = max(1, width * style.max_width / 100 - 40 - 2 * style.padding)
+    available = max(1, width * style.max_width / 100 - style.margin_left - style.margin_right - 2 * style.padding)
     for index, char in enumerate(text):
         if char == '\r':
             if index + 1 < len(text) and text[index + 1] == '\n':
@@ -89,7 +89,7 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
             name = f'{language}{index}'
             alignment = alignment_for(style)
             column, row = (alignment - 1) % 3, (alignment - 1) // 3
-            x = style.x if style.x is not None else (20 * scale if column == 0 else width / 2 if column == 1 else width - 20 * scale)
+            x = style.x if style.x is not None else (style.margin_left * scale if column == 0 else (width + (style.margin_left - style.margin_right) * scale) / 2 if column == 1 else width - style.margin_right * scale)
             y = style.y if style.y is not None else (margins[language] * scale if row == 2 else centers.get(language, height / 2) if row == 1 else height - margins[language] * scale)
             size, step = style.size * scale, style.size * style.line_height * style.scale_y / 100 * scale
             color = paint(style.color, style.opacity)
