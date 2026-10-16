@@ -4,18 +4,16 @@
 
 ## 本次发布与分支边界
 
-用户授权将“顶部选项＋右侧抽屉”提交并推送到以下两个开发分支，**master 不动**。实现、测试及双语使用／验收文档随功能提交发布，当前交接与历史快照位于其后的文档提交。
+本轮交付 Web／macOS 逐条字幕编辑与一致的预览、ASS 和烧录导出。用户随后授权安装 build16，并将本次实现及交接提交、推送到以下两个开发分支，**master 不动**。功能与测试单独提交，使用／验收文档及当前交接在随后的文档提交中。
 
 | 开发分支 | 本次功能提交（交接文档提交之前） | 工作目录 |
 | --- | --- | --- |
-| `codex/local-companion-web` | `cf2cfd0fefc2bd3f7e9925fb5f2be747c088daaa` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
-| `codex/local-companion-macos` | `b0dee61d4112a2ce965dec9d92a779ca0b8e2361` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+| `codex/local-companion-web` | `576b538d336cbeaf9c869f049f3b7d063ad9f792` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `a132fcc6125380a5451e5cfe2dd335ec55260e81` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
 
-两分支使用显式 refspec 原子推送；不会推送主目录的 `feat/arctime-pro-plugin` 或其他分支。本地／远程 `master` 基线均为 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`，未合并。主目录仍为旧工作站源码与文档，其余未提交工作保留。
+使用显式 refspec 原子推送这两个分支；主目录 `feat/arctime-pro-plugin` 和其他分支不推送、不合并。本地／远程 master 基线为 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`。主目录中的其他未提交工作保留。
 
-仓库地址为 [Nyaruverse/nyaru-clipper](https://github.com/Nyaruverse/nyaru-clipper)，origin 为 `https://github.com/Nyaruverse/nyaru-clipper.git`。10 月 15 日完成转移，历史账号权限记录见快照；不要把旧权限查询当作永久权限。
-
-最终分支 HEAD 包含当前交接提交，因此不要把上表功能提交误作最终 HEAD。接手时现场核验：
+仓库为 [Nyaruverse/nyaru-clipper](https://github.com/Nyaruverse/nyaru-clipper)，origin 为 `https://github.com/Nyaruverse/nyaru-clipper.git`。最终 HEAD 包含后续交接提交，上表不是最终远程 HEAD。接手时核验：
 
 ```bash
 git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master
@@ -23,30 +21,45 @@ git -C /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper status --sh
 git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --short
 ```
 
-本地精确推送回执在 macOS 工作树 `.omo/evidence/toolbar-drawer-2026-10-16/publish-receipt.json`，不进入 Git。此交接记录开发分支源码发布，不代表 Developer ID／公证／公开安装包发布。
+本地精确推送回执在 macOS 工作树 `.omo/evidence/subtitle-editor-2026-10-16/publish-receipt.json`，不进入 Git。源码推送和本机安装不代表公证、公开分发或全平台验收。
 
-## 当前界面与本机安装
+## 当前功能与使用入口
 
-顶部六个入口为「新建任务」「切片方式」「字幕样式」「AI 设置」「任务记录」「导出」。初始收起；点击展开右侧抽屉，再点同一入口收起；切换仅显示一项。关闭按钮与 Escape 也可收起并返回键盘焦点。表单保持挂载，链接／时间段、本地录像选择、字幕模板和供应商草稿在切换时保留。
+顶部六入口和独立滚动的右侧抽屉继续保留。打开已完成任务，点击字幕，选择右侧「位置」；X/Y 是输出视频有效画面的像素坐标，不含播放器黑边。红色「＋」可拖动，聚焦后方向键每次移动 1 像素、Shift 为 10；支持九宫格锚点、吸附、安全区、居中、恢复自动位置和中日文联动。多选后按每条字幕自己的原位置移动。
 
-创建与切片共用提交表单，必填项校验会定位对应分区。桌面抽屉位于视频右侧并独立滚动；窄窗口使用右侧覆盖面板。进度、任务错误、恢复及直播停止操作保留在主工作区。原有识别、翻译、切片、样式／模板、ASS／烧录／ArcTime 文件交接调用契约保持。
+逐条编辑器分为「内容／位置／样式／时间」，支持独立原文／译文、局部强调、字体与高级排版、拆分／合并、帧微调、批量平移、循环播放、样式复制粘贴、撤销／重做和串行自动保存。独立样式为该语言整套覆盖，恢复继承后才跟随全局模板。保存冲突保留草稿；源字幕变化需显式重建并备份旧编辑稿。
 
-本机安装版为 **0.1.8 build15**，位于 `~/Applications/Nyaru Clipper.app`。本轮 UI 更新复用 build14 的原生窗口、冻结后端、工具和模型，仅更新构建后的前端与构建号并重新本地签名，未重新冻结后端。严格签名验证通过，所引用 HTML／JS／CSS 的 SHA256 与生产构建一致。旧版位于：
+编辑稿独立保存为任务目录 `subtitle-document.json`；原始字幕、媒体、识别／翻译记录及旧导出不覆盖。精确预览通过与 ASS／烧录相同的 libass 生成透明图片。切片按源视频绝对时间求交、截断并转换为片段零点；ASS 为百分之一秒精度。烧录仍仅支持完成切片。原 SRT 下载保持原结果，编辑后的 SRT 与 JSON 随 ArcTime ZIP 交付。具体入口和限制见[逐条字幕编辑](subtitle-editor.zh-CN.md)。
 
-`~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-16-before-toolbar-build15/Nyaru Clipper.app`
+## build16 安装、回退与数据保留
+
+本机安装版为 **0.1.8 build16**，位于 `~/Applications/Nyaru Clipper.app`。本轮重新构建前端、冻结后端及工具／模型、编译 Swift 窗口并本地签名；严格签名和 Swift 类型检查通过。安装时无运行任务，正常退出 build15 后替换并成功打开 build16。
+
+- 旧 App：`~/Applications/Nyaru Clipper Backups/20261016-114616/Nyaru Clipper-build15.app`。
+- 完整数据备份：`~/Library/Application Support/Nyaru Clipper Backups/20261016-114616/Nyaru Clipper/`，备份目录 0700。包含授权配置，只保留在本机，不提交或共享。
+- 替换前后 **6,560 个文件、9,935,471,576 字节**逐文件哈希一致；重启后 **20 个历史任务 ID**全部保留，原有文件再次核验未变化。
+- 安装前未另存的自定义样式已保留为「升级前自定义样式 2026-10-16」。原生位置演示 X640→641 后撤销，恢复 X640/Y656；保存第 2 版、各条样式仍继承。演示仅新增该任务的编辑稿及启动文件。
+- 本地 ZIP `Nyaru-Clipper-0.1.8-build16-accepted.zip` 位于上述证据目录，514,619,440 字节、3,914 项；SHA256 为 `2badc99dc66bb1cfa44888d3a976ce87a693710e02c9fc6e534d00d89a15ff17`。App／ZIP／模型不进入 Git。
 
 ## 本次验证与证据边界
 
-- 本次提交前，两工作树各运行 Companion 前端 **5 文件、47 项测试通过**，并通过 TypeScript／Vite 生产构建；范围重叠，不相加。`git diff --check` 和暂存范围检查通过。
-- 前一实现阶段已通过本地 HTTP／短视频夹具驱动生产前端，覆盖六个入口、草稿、文件选择、校验、Escape 焦点、抽屉滚动、播放连续性、空任务和录制状态，及 1440／1920／390 宽度。系统外观偏好均检查，产品仍沿用原浅色主题。
-- 安装版原生窗口已逐项验证六个入口点击开合、跨面板链接草稿及 Escape；安装前后历史任务均为 20 项，更新时无活动任务。本次 Git 发布阶段没有重新处理媒体、调用模型或改变授权。
-- 私密证据位于 macOS 工作树 `.omo/evidence/toolbar-drawer-2026-10-16/`，包括 `browser-qa.json`、`native-qa.json`、`install-assets.json` 和窗口截图；不提交运行数据、媒体、凭据或私密截图。
+| 范围 | 结果与证据 |
+| --- | --- |
+| 两端前端 | 各 10 文件／65 项通过，TypeScript／Vite 构建通过；重复覆盖不相加 |
+| 后端回归 | 字幕、模板、API、渲染、GUI、翻译和 macOS 共 160 项通过；Web 独立执行其中 50 项编辑稿／字体测试 |
+| Web 实际界面 | 1440／1920／390 宽度、两种系统外观偏好、四个页签，共 48 张顶／底截图；无横向溢出，产品仍为浅色主题 |
+| 最终冻结后端＋原生 WKWebView | 底部／居中／顶部双语多行、原文／译文分别微调、联动数值定位通过；选中像素边界 +1X/0Y，另一语言不动 |
+| 预览／ASS／烧录 | 实际 ASS 坐标与 PNG 对照；烧录帧与预览合成 RMSE 分别 1.355／1.507／1.422（满量程 255，包含有损编码差异） |
+| 数据与失败路径 | 样例邻句、源文件、旧导出哈希不变；源变化／版本冲突／无效时间拒绝，草稿保留；缺失字体警告通过 |
+| 复核 | 早期 G1 多行自动锚点跳动已修复；新一轮位置代码复核 APPROVE，无阻塞，并独立运行 14 项前端／41 项后端及实际 ASS 过渡对照 |
 
-见[本轮界面验收](toolbar-drawer-acceptance-2026-10-16.zh-CN.md)。本轮未重新执行真实下载、ASR、翻译、录制、烧录、导出或原生保存权限验收。Developer ID、公证、公开分发、新机器、Intel／旧 macOS 兼容性及真实授权到期／撤销仍未验收。构建为 arm64／最低 macOS 27.0。
+完整、安全脱敏的摘要见[本轮验收](subtitle-editor-acceptance-2026-10-16.zh-CN.md)。私密原始证据仍在上述 `.omo/evidence/` 目录：`acceptance.md`、`integration-receipt.json`、`native-candidate-*-verification.json`、`native-report.md`、`position-delta-review.md`、`installation-receipt.json`。历史拒绝报告与失败测试保留，不能当作当前仍失败。
+
+本次未重新验收真实下载、ASR、供应商授权／到期／撤销、所有字体／字形与样式组合、原生保存／确认对话框、新机器或 Intel／旧 macOS。用户已授权并完成这台机器的替换升级；构建仍为 arm64、最低 macOS 27.0、本地签名未公证。复杂动画、卡拉 OK、运动关键帧、透视、矢量遮罩及完整视频烧录不在本次范围。
 
 ## 保留的真实任务记录（历史验收）
 
-10 月 15 日交接记录以下处理／翻译终态为 completed，本轮未重新处理或重算全部媒体哈希：
+10 月 15 日交接记录以下处理／翻译终态为 completed，本轮未重新处理。build16 安装时已核验当前完整数据目录文件哈希；历史质量结论仍以当时验收为限：
 
 | 场景 | 任务 | 记录结果 |
 | --- | --- | --- |
@@ -76,6 +89,6 @@ macOS 工作树同样在其 `web/` 目录运行上述命令。安装版双击启
 
 ## 后续与历史
 
-本轮授权范围是开发分支发布与交接更新。逐句／切点复核、样式与 ArcTime 使用反馈、更多平台验收、签名公证、公开分发以及分支合并均需另定范围。
+本轮已授权开发分支发布、交接更新及本机 build16 替换安装。逐句／切点复核、样式与 ArcTime 使用反馈、更多平台验收、签名公证、公开分发以及分支合并均需另定范围。
 
-完整保留[本次发布前交接](project-handoff-history-2026-10-16-before-toolbar-publish.zh-CN.md)、[10 月 15 日刷新前快照](project-handoff-history-2026-10-15-before-delivery-refresh.zh-CN.md)、[10 月 15 日](project-handoff-history-2026-10-15.zh-CN.md)和[10 月 14 日](project-handoff-history-2026-10-14.zh-CN.md)。历史“未提交／未推送”、build14 及旧分支 HEAD 只适用于对应记录时间。
+另保留[逐条字幕发布前交接](project-handoff-history-2026-10-16-before-subtitle-editor-publish.zh-CN.md)。此前完整保留[工具栏发布前交接](project-handoff-history-2026-10-16-before-toolbar-publish.zh-CN.md)、[10 月 15 日刷新前快照](project-handoff-history-2026-10-15-before-delivery-refresh.zh-CN.md)、[10 月 15 日](project-handoff-history-2026-10-15.zh-CN.md)和[10 月 14 日](project-handoff-history-2026-10-14.zh-CN.md)。历史“未提交／未推送”、build14 及旧分支 HEAD 只适用于对应记录时间。

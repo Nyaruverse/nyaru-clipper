@@ -2,14 +2,16 @@
 
 The local Companion's subtitle panel configures original and translated text independently: font, size, foreground, outline, background opacity, top/bottom placement and margins. The same parameters drive preview, ASS downloads and burned clips, reusing existing recognition/translation timelines.
 
+For the new per-cue editor, precise X/Y positioning, advanced styles, autosave and matching libass preview, see [Per-cue subtitle editing](subtitle-editor.md). Global defaults and templates remain under the drawer's Global style section; original download links retain the original results.
+
 ## Use
 
 1. Select a completed task, full video or clip, and original/bilingual mode.
-2. Open the subtitle style panel and edit or apply a template. The styled preview toggle controls the overlay; subtitle fullscreen includes an exit control inside the picture.
+2. Open the top Subtitle style tool. Edit individual cues as described in the per-cue guide; expand Global style at the drawer bottom to edit defaults or apply templates. The styled preview toggle controls the overlay; subtitle fullscreen includes an exit control inside the picture.
 3. Export ASS, burn a clip MP4, or export an ArcTime ZIP. Burning requires a completed clip and a libass-capable FFmpeg; missing capability is shown explicitly.
 4. Download the completed output. The macOS app uses native save panels. Each new output records the submitted style, language mode and scope.
 
-Sizes/margins use a 1080-high reference canvas. Preview scales to the displayed video; downloadable ASS uses actual video resolution with proportional size/outline/margin/position conversion for ArcTime compatibility. Same-side bilingual text reserves vertical spacing. Layouts that cannot fit fail visibly. Install the selected fonts on both machines; browser, libass and ArcTime typography can differ.
+Sizes/margins use a 1080-high reference canvas; explicit per-cue X/Y use source pixels. Editing-document previews, ASS and burns share libass rendering. Automatic bilingual placement reserves spacing; explicit coordinates bypass stacking, so inspect overlaps. Invalid positions/times are rejected. Install selected fonts on both machines; third-party ASS players and ArcTime can interpret fonts/styles differently. The retained legacy preview without an editing document uses browser typography.
 
 ## Two template types
 

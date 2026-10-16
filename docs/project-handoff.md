@@ -1,21 +1,19 @@
 # Nyaru-Clipper project handoff
 
-Verified: **16 October 2026, Asia/Shanghai**. This is the current entry point. Historical snapshots describe their observation time, not current branch heads, installed versions or service state.
+Verified: **16 October 2026, Asia/Shanghai**. This is the current entry point. Historical snapshots describe their observation time, not current heads, installations or service state.
 
 ## Publication and branch boundaries
 
-The user authorized committing and pushing the top toolbar/right drawer change to the following two development branches, **leaving master untouched**. Implementation, tests and bilingual usage/acceptance notes are in the feature commits; this handoff and preserved snapshots are in the following documentation commits.
+This delivery adds per-cue subtitle editing on Web/macOS with shared preview, ASS and burned-video rendering. The user subsequently authorized installing build16 and committing/pushing this work and handoffs to the two development branches below, **leaving master untouched**. Implementation/tests are feature commits; usage, acceptance and this handoff follow in documentation commits.
 
 | Development branch | Feature commit, before the handoff commit | Worktree |
 | --- | --- | --- |
-| `codex/local-companion-web` | `cf2cfd0fefc2bd3f7e9925fb5f2be747c088daaa` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
-| `codex/local-companion-macos` | `b0dee61d4112a2ce965dec9d92a779ca0b8e2361` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+| `codex/local-companion-web` | `576b538d336cbeaf9c869f049f3b7d063ad9f792` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `a132fcc6125380a5451e5cfe2dd335ec55260e81` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
 
-Publication uses an atomic push with explicit refspecs for these two branches. It does not push the primary checkout's `feat/arctime-pro-plugin` or any other branch. Local/remote `master` remain at baseline `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`, without a merge. Unrelated dirty work in the primary legacy-workstation checkout is preserved.
+Publication uses an atomic push with explicit refspecs for those branches. The primary checkout's `feat/arctime-pro-plugin` and other branches are not pushed or merged. Local/remote master baseline is `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`. Unrelated dirty work in the primary checkout is preserved.
 
-Repository: [Nyaruverse/nyaru-clipper](https://github.com/Nyaruverse/nyaru-clipper), origin `https://github.com/Nyaruverse/nyaru-clipper.git`. Transfer completed on 15 October; account-role observations are preserved in the snapshot and are not a promise of permanent permissions.
-
-Final branch HEADs include the subsequent handoff commits, so the feature SHAs above are not the final HEADs. Recheck them when continuing:
+Repository: [Nyaruverse/nyaru-clipper](https://github.com/Nyaruverse/nyaru-clipper), origin `https://github.com/Nyaruverse/nyaru-clipper.git`. Final HEADs include the following handoff commits, so the feature SHAs above are not final remote heads. Recheck when continuing:
 
 ```bash
 git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master
@@ -23,30 +21,45 @@ git -C /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper status --sh
 git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --short
 ```
 
-The exact private publication receipt is in the macOS worktree at `.omo/evidence/toolbar-drawer-2026-10-16/publish-receipt.json`, outside Git. This is development-branch source publication, not Developer ID signing, notarization or a public installer release.
+The exact private publication receipt is in the macOS worktree's `.omo/evidence/subtitle-editor-2026-10-16/publish-receipt.json`, outside Git. Source publication and local installation do not establish notarization, public distribution or all-platform acceptance.
 
-## Current interface and local installation
+## Current features and entry points
 
-The six top entries are New task, Slicing, Subtitle style, AI settings, Task history and Export. The drawer starts closed. Clicking an entry opens it; clicking the same entry closes it; another entry switches the single visible section. Close and Escape also dismiss it and return keyboard focus. Mounted forms preserve URL/range, local recording, subtitle-template and provider drafts.
+The six-entry toolbar and independently scrolling right drawer remain. Open a completed task, click a cue, then choose Position. X/Y are output-video image pixels excluding player letterboxing. Drag the red + handle or focus it and press arrows for 1 pixel, Shift for 10. Anchor grid, snapping, safe area, centering, automatic positioning and original/translation linkage are supported. Batch moves use each cue's own previous position.
 
-Creation and slicing share the submission form; required-input validation reveals the relevant section. The desktop drawer sits beside the preview and scrolls independently; narrow windows use a right overlay. Progress, task errors, recovery and live stop remain in the workspace. Existing recognition, translation, clipping, styles/templates, ASS, burning and ArcTime file-handoff call contracts remain.
+The Content/Position/Style/Timing tabs support independent original/translation text, partial emphasis, fonts/advanced layout, split/merge, frame adjustment, batch shifts, looping, style clipboard, undo/redo and serialized autosave. A per-language style is a complete override until inheritance is restored. Conflicts retain drafts; changed sources require explicit reset with a backup of the old editing document.
 
-The installed version is **0.1.8 build15**, at `~/Applications/Nyaru Clipper.app`. The UI update reused build14's native launcher, frozen backend, tools and model, replaced built frontend resources and the build number, and reapplied local signing; the backend was not refrozen. Strict signature verification passed and referenced HTML/JS/CSS SHA256 hashes match the production build. The previous bundle is preserved at:
+Edits live in task-local `subtitle-document.json`; source subtitles/media, recognition/translation results and prior exports remain immutable. Precise preview is a transparent image rendered by the same libass path as ASS/burning. Clip export intersects absolute source times and rebases them to clip zero; ASS precision is centiseconds. Burning remains completed-clips-only. Original SRT downloads remain original; edited SRT and JSON are included in ArcTime ZIP. See [per-cue editing](subtitle-editor.md).
 
-`~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-16-before-toolbar-build15/Nyaru Clipper.app`
+## build16 installation, rollback and preservation
+
+The installed app is **0.1.8 build16** at `~/Applications/Nyaru Clipper.app`. This build rebuilt the frontend, froze backend/tools/model, compiled the Swift shell and reapplied local signing. Strict signature verification and Swift typechecking passed. With no active task, build15 was quit normally, replaced, and build16 opened successfully.
+
+- Old app: `~/Applications/Nyaru Clipper Backups/20261016-114616/Nyaru Clipper-build15.app`.
+- Full data backup: `~/Library/Application Support/Nyaru Clipper Backups/20261016-114616/Nyaru Clipper/`, under a 0700 directory. It includes authorization configuration: keep it local; never commit or share it.
+- All **6,560 files / 9,935,471,576 bytes** had identical hashes across replacement. After restart all **20 historical task IDs** remained; all existing files were checked again and unchanged.
+- The unsaved custom style was retained as “升级前自定义样式 2026-10-16”. Native demonstration changed X640 to641 then undid it, restoring X640/Y656, saved revision2 and inherited styles. Only that task's editing document and startup file were added by the demonstration/restart.
+- Local ZIP `Nyaru-Clipper-0.1.8-build16-accepted.zip` is in the evidence directory above:514,619,440bytes,3,914entries,SHA256 `2badc99dc66bb1cfa44888d3a976ce87a693710e02c9fc6e534d00d89a15ff17`. App/ZIP/model are excluded from Git.
 
 ## Verification and boundaries
 
-- Immediately before these commits, each worktree passed **5 Companion frontend files / 47 tests** and TypeScript/Vite production builds; coverage overlaps and must not be added. Whitespace and staged-scope checks passed.
-- The preceding implementation phase drove the production UI with local HTTP/video fixtures through all entries, drafts, file selection, validation, Escape focus, drawer scrolling, continuous playback, empty/recording states and widths 1440/1920/390. Both system appearance preferences were exercised; the product retains its fixed light palette.
-- In the installed native window, all six triggers opened/closed correctly, URL drafts survived switches and Escape dismissed the drawer. Task counts stayed 20 across installation, with no active task during the update. This Git-publication phase did not reprocess media, invoke models or change authorization.
-- Private evidence is under the macOS worktree's `.omo/evidence/toolbar-drawer-2026-10-16/`: `browser-qa.json`, `native-qa.json`, `install-assets.json` and captures. Runtime data, media, credentials and private screenshots are excluded from Git.
+| Scope | Result and evidence |
+| --- | --- |
+| Both frontends | Each10files/65tests passed; TypeScript/Vite production builds passed; overlapping coverage is not additive |
+| Backend | 160 regressions covering subtitles/templates/APIs/rendering/GUI/translation/macOS passed; Web separately ran50 overlapping document/font tests |
+| Actual Web UI | 1440/1920/390widths, both system appearance preferences, four tabs,48top/end captures; no horizontal overflow; existing light palette retained |
+| Final frozen backend/native WKWebView | Bottom/center/top multiline bilingual placement, separate language nudges and linked numeric positioning passed; selected bounds move+1X/0Y, sibling stays fixed |
+| Preview/ASS/burn | Actual ASS coordinates versus PNG; burned-frame/composited-preview RMSE1.355/1.507/1.422of255, including lossy encoding |
+| Data/failure paths | Sample neighbour/source/old-export hashes retained; changed sources/stale revisions/invalid timing rejected while drafts retained; missing-font warning passed |
+| Review | Earlier G1 automatic multiline-anchor jump repaired; fresh position code review APPROVE/no blockers, independently14frontend/41backend tests and actual ASS transitions |
 
-See [UI acceptance](toolbar-drawer-acceptance-2026-10-16.md). Real download, ASR, translation, recording, burning, export and native-save permission acceptance were not repeated. Developer ID, notarization, public distribution, new-machine setup, Intel/older-macOS compatibility and actual token-expiry/revocation scenarios remain unaccepted. The build targets arm64 and macOS 27.0 or later.
+See the [sanitized acceptance summary](subtitle-editor-acceptance-2026-10-16.md). Private raw evidence remains under the above `.omo/evidence/`: `acceptance.md`, `integration-receipt.json`, `native-candidate-*-verification.json`, `native-report.md`, `position-delta-review.md`, `installation-receipt.json`. Earlier rejecting reports and failing tests are retained as history, not current failures.
+
+Not reaccepted here: real downloads, ASR, provider authorization/expiry/revocation, all font/glyph/style combinations, native save/confirmation panels, new machines or Intel/older macOS. The authorized replacement upgrade on this machine completed. Target remains arm64/macOS27.0+, ad-hoc signed and not notarized. Animations, karaoke, motion keyframes, perspective, vector masks and full-video burns remain outside scope.
 
 ## Preserved real-task observations
 
-The 15 October handoff recorded these processing/translation states as completed. Media processing and full hash recomputation were not repeated here:
+The 15 October handoff recorded these processing/translation states as completed. Media processing was not repeated. build16 installation verified full current data-directory file hashes; historical quality conclusions retain their original limits:
 
 | Scenario | Task | Historical result |
 | --- | --- | --- |
@@ -76,6 +89,6 @@ Use the same commands in the macOS worktree's `web/` directory. Launch the insta
 
 ## Next work and history
 
-The authorized scope is development-branch publication and handoff updates. Full translation/cut proofreading, subtitle/ArcTime feedback, more platform validation, signing/notarization, public distribution and branch merges require a separate scope.
+The authorized scope includes development-branch publication, handoff updates and this machine's build16 replacement installation. Full translation/cut proofreading, subtitle/ArcTime feedback, more platform validation, signing/notarization, public distribution and branch merges require a separate scope.
 
-Preserved snapshots: [before this publication](project-handoff-history-2026-10-16-before-toolbar-publish.md), [before the 15 October delivery refresh](project-handoff-history-2026-10-15-before-delivery-refresh.md), [15 October](project-handoff-history-2026-10-15.md) and [14 October](project-handoff-history-2026-10-14.md). Historical uncommitted/unpushed statements, build14 and old branch heads apply only to their observation time.
+Preserved snapshots: [before subtitle-editor publication](project-handoff-history-2026-10-16-before-subtitle-editor-publish.md), [before toolbar publication](project-handoff-history-2026-10-16-before-toolbar-publish.md), [before the 15 October delivery refresh](project-handoff-history-2026-10-15-before-delivery-refresh.md), [15 October](project-handoff-history-2026-10-15.md) and [14 October](project-handoff-history-2026-10-14.md). Historical uncommitted/unpushed statements, build14 and old branch heads apply only to their observation time.
