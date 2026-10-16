@@ -1,6 +1,6 @@
 # macOS App
 
-当前安装版为 **0.1.8 build15**，已加入[臊子](saozi.zh-CN.md)回放／本地录像／Bilibili实时切片、自动双语字幕和[ChatGPT订阅供应商](openai-subscription.zh-CN.md)。可在AI供应商中选择DeepSeek Flash或ChatGPT；DeepSeek Pro已禁用。见[订阅验收](openai-subscription-acceptance-2026-10-15.zh-CN.md)和[Web端复测](web-app-acceptance-2026-10-15.zh-CN.md)。下文0.1.5版本及安装收据为历史记录，其基础操作仍适用。
+当前安装版为 **0.1.9 build17**，2026-10-16 已替换并验证启动。新建任务直接填写 Bilibili 直播间号、BV 号或选择本地视频，20 个历史任务及原有数据／配置全部保留；备份与证据见[当前交接](project-handoff.zh-CN.md)。支持[臊子](saozi.zh-CN.md)实时切片、自动双语字幕和[ChatGPT订阅供应商](openai-subscription.zh-CN.md)，AI 可选择 DeepSeek Flash 或 ChatGPT。下文旧版本安装记录均为历史。
 
 2026-10-16 的 build15 将功能入口收为顶部选项与右侧抽屉：点击展开，再点同一项收起。草稿保留，进度与停止操作保持可见。此次复用 build14 运行时，仅更新前端及构建号并重新本地签名；原生开合验证与旧版备份见[界面验收](toolbar-drawer-acceptance-2026-10-16.zh-CN.md)。
 
@@ -14,7 +14,7 @@
 
 2026-10-15 已将验证通过的 0.1.5 build 9 安装到 `~/Applications/Nyaru Clipper.app` 并启动。旧版 0.1.4 build 5 保存在 `~/Library/Application Support/Nyaru Clipper/app-backups/2026-10-15-0.1.4-build5/Nyaru Clipper.app`；任务数据和模型保留。安装副本1498个文件的SHA256与验证构建一致，严格签名验证通过；实际界面读取7个历史任务、3个样式模板和1个ArcTime模板。新包为 `dist/Nyaru-Clipper-0.1.5-build9-macOS-arm64.zip`。见[本次功能验证记录](subtitle-styles-acceptance-2026-10-14.zh-CN.md)。
 
-1. 输入可访问的视频链接，选择语种或自动识别。
+1. 选择实时录播、下载视频或本地视频，填写直播间号、BV 号或选择文件，再选择语种或自动识别。
 2. 选择指定起止时间，或高光模式及最多导出数量。
 3. 点击「开始处理」，查看下载、识别、导出阶段，一次处理一个任务。
 4. 预览视频或切片、点击字幕时间跳转，再通过系统保存面板导出 MP4/SRT 或完整 SRT/TXT。

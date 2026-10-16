@@ -4,11 +4,11 @@ Saozi divides a video into consecutive clips of about one to two minutes. It reu
 
 ## Use
 
-Select **臊子** under the clipping mode, then choose an input:
+Choose a source under **新建任务**. For downloads and local videos, then select **臊子** under Slicing:
 
-- **Replay link**: an HTTP(S) link to a finished video.
-- **Local recording**: choose a video file. The task keeps a separate copy and preserves the original.
-- **Bilibili live**: a currently live numeric room URL such as `https://live.bilibili.com/12345`. Other live platforms are unsupported.
+- **下载视频 (download)**: the BV identifier of a finished video; no full URL is needed.
+- **本地视频 (local video)**: choose a video file. The task keeps a separate copy and preserves the original; ranges and highlights are also available.
+- **实时录播 (live capture)**: a currently live Bilibili room number such as `12345`; no full URL is needed. This uses real-time saozi; other live platforms are unsupported.
 
 Choose a language and start. Live recording and recognition run concurrently; published clips can be previewed and downloaded immediately. **停止直播并导出剩余内容** stops capture, then drains the backlog and final tail. Closing the App interrupts processing; **恢复处理** processes saved recording data without reconnecting to the live room automatically.
 
