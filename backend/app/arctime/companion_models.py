@@ -30,6 +30,11 @@ class JobInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_selection(self):
+        self.url = self.url.strip()
+        if self.live and re.fullmatch(r"[1-9][0-9]*", self.url):
+            self.url = "https://live.bilibili.com/" + self.url
+        if not self.live and re.fullmatch(r"BV[A-Za-z0-9]{10}", self.url):
+            self.url = "https://www.bilibili.com/video/" + self.url
         parsed = urlsplit(self.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("请输入不含账号密码的 HTTP(S) 视频链接")
