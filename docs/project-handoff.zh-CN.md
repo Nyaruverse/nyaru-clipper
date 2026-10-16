@@ -2,7 +2,32 @@
 
 核验日期：**2026-10-16，Asia/Shanghai**。本页为当前交接入口；历史快照保留当时的状态，不代表当前 HEAD、安装版或服务状态。
 
-## 本轮开发分支发布
+## 本轮 ASS 模板与 build18 开发分支发布
+
+本轮包含 ASS 样式导入、直播模板快照、逐段样式导出与猫雷内置／默认样式。只发布 `codex/local-companion-web`、`codex/local-companion-macos`；主目录其他未提交内容保留。本地及远程 master 基线为 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`。
+
+| 开发分支 | 功能提交 | 打包提交 |
+| --- | --- | --- |
+| `codex/local-companion-web` | `09acdc420ed7f0b8ecd10a84672d3613770281ed` | 不适用 |
+| `codex/local-companion-macos` | `6040ca9415e07357993eba3f5b3ee21c5ec47182` | `fbd7d5b2df40cba1619a99c6cdac1c56727494ee` |
+
+双语交接、使用说明、计划与验收记录随后作为文档提交，因此上表不是最终分支 HEAD。使用显式 refspec 与 `--atomic` 推送；最终远程比对回执保留在 macOS 工作树 `.omo/evidence/nyaru-default-build18-2026-10-16/publish-receipt.json`。接手时运行 `git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master` 核验。
+
+发布前复测：macOS 相关后端 231 项、Web 前端 77 项与生产构建通过；两端 27 个共用源码／测试文件逐字节一致。此前 macOS 前端、冻结运行时、原生界面与数据保留验收见下文。任务数据、媒体、模型、凭据、备份和二进制安装包均不进入 Git。本次未重跑真实 Bilibili／外部 AI，不包含公证或分支合并。
+
+## 当前本机版本：0.1.10 build18
+
+猫雷「薄荷电波」已内置并设为本机默认样式；实时录播默认选择该模板，可取消自动套用。新版已打包、替换安装并启动，包含 ASS 样式导入与逐段样式导出。20 个历史任务保留，供应商配置与授权状态不变；启动后原有数据仅默认字幕文件按要求改变。旧 build17 与完整数据备份位于 20261016-174807 目录。详见[build18 验收与备份](nyaru-default-build18-acceptance-2026-10-16.zh-CN.md)。
+
+本轮功能提交及发布核验见上文；master 不变。以下 build17 发布与安装记录为历史。
+
+## 最新开发：ASS 样式导入与直播套用
+
+本地验收：两端各 227 项后端、75 项前端和生产构建通过，另有真实浏览器及 FFmpeg 证据。详见[本轮验收与限制](ass-style-import-acceptance-2026-10-16.zh-CN.md)。
+
+Web/macOS 开发工作树新增 ArcTime ASS 样式读取、原文／译文映射、保存为现有样式模板，以及新建实时录播时选择模板。每个任务保存样式快照，每段自动新增 ASS／烧录 MP4，双语可用后补齐；原始文件不覆盖。详见[字幕样式](subtitle-styles.zh-CN.md)。本项已随 build18 安装；功能提交及发布核验见上文。下面的分支发布与安装记录属于此前三来源交付。
+
+## 此前 build17 开发分支发布（历史）
 
 发布范围仅为以下两个开发分支；功能与测试、使用与验收文档分别提交。主目录 `feat/arctime-pro-plugin` 不提交、不推送、不合并；本地及远程 `master` 保持 `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`。
 
@@ -21,7 +46,7 @@ git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --
 
 两端前端各 72 项及生产构建通过；本轮发布前后端复测 115 项通过（其中 3 项为 macOS 打包检查），另有一条 Starlette/httpx 依赖弃用警告。冻结后端、本地安装、原生输入和数据保留验收见[三来源与 build17 验收](task-sources-acceptance-2026-10-16.zh-CN.md)。下一步为用户真实房间／BV 使用反馈；更多平台、公开分发、公证和分支合并均未包含在本轮发布。
 
-## 最新本机安装：0.1.9 build17
+## 此前本机安装：0.1.9 build17（历史）
 
 2026-10-16 已按用户授权重新打包并替换 `~/Applications/Nyaru Clipper.app`，启动验证通过。新建任务提供「实时录播／下载视频／本地视频」，分别直接填写数字直播间号、BV 号或选择文件；下载和本地视频共用切片选项。以下 build16 发布与安装记录保留为历史，不能视为当前安装版。
 
