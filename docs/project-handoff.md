@@ -2,7 +2,36 @@
 
 Verified: **16 October 2026, Asia/Shanghai**. This is the current entry point. Historical snapshots describe their observation time, not current heads, installations or service state.
 
-## Publication and branch boundaries
+## Development-branch publication
+
+This release is limited to the two development branches below, with separate implementation/tests and documentation commits. The primary checkout's `feat/arctime-pro-plugin` is not committed, pushed or merged. Local and remote `master` remain at `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`.
+
+| Development branch | Feature commit, before the following handoff commit | Worktree |
+| --- | --- | --- |
+| `codex/local-companion-web` | `edf3777636e0b9f231eb1734ee78dc2f55ec4eb4` | `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` |
+| `codex/local-companion-macos` | `069061bddc0ded8936932dbe6c12d0b786069a22` | `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` |
+
+Publication uses an atomic push with explicit refspecs. Final HEADs include subsequent documentation commits and differ from the feature SHAs above; the exact remote receipt stays local at `.omo/evidence/task-sources-build17-2026-10-16/publish-receipt.json` in the macOS worktree. Recheck when continuing:
+
+```bash
+git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master
+git -C /Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper status --short
+git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --short
+```
+
+Both frontends passed 72 tests and production builds. Pre-publication backend verification passed 115 tests, including three macOS packaging checks, with one Starlette/httpx dependency deprecation warning. Frozen-runtime, native input and data-preservation results are recorded in [task sources and build17 acceptance](task-sources-acceptance-2026-10-16.md). Next is feedback using the user's real room/BV identifiers; further platform acceptance, public distribution, notarization and branch merges are outside this release.
+
+## Latest local installation: 0.1.9 build17
+
+On 16 October 2026, the user-authorized rebuilt App replaced `~/Applications/Nyaru Clipper.app` and passed startup checks. New Task exposes live capture, download and local video: enter a numeric Bilibili room ID, a BV ID, or choose a file. Downloads and local files share slicing choices. The build16 publication/installation sections below are historical and do not describe the current installed version.
+
+The old App is at `~/Applications/Nyaru Clipper Backups/20261016-132441/Nyaru Clipper-build16.app`; the complete data backup is at `~/Library/Application Support/Nyaru Clipper Backups/20261016-132441/Nyaru Clipper/`. Its parent is mode 0700; it contains authorization configuration and must remain local.
+
+Across replacement, all 6,561 files / 9,935,483,555 bytes, permissions and symlinks matched. After startup and native UI checks, all 20 historical task IDs and provider/authorization status matched; every existing data file was unchanged, with only one new startup-information file. Strict signing, frozen-backend identifier validation, real local import/ASR/three-second clip export and ZIP integrity passed. All three sources were observed in the installed native window without creating or reprocessing historical tasks. Real Bilibili download/capture and external AI were not revalidated. This remains locally signed, unnotarized, arm64 and macOS 27.0 minimum.
+
+The package is in the macOS worktree at `.omo/evidence/task-sources-build17-2026-10-16/Nyaru-Clipper-0.1.9-build17-macOS-arm64.zip`, 520,730,841 bytes, SHA256 `be1154477eada169d384f61b8f4960bb507095dd48821dd574be38207e89ac11`. Local receipts are `installation-receipt.json`, `frozen-smoke-receipt.json`, `package-receipt.json` and `installed-{bv,live,local}.jpg` in the same directory. Do not commit the App, backups, models or private manifests.
+
+## build16 publication and branch boundaries (historical)
 
 This delivery adds per-cue subtitle editing on Web/macOS with shared preview, ASS and burned-video rendering. The user subsequently authorized installing build16 and committing/pushing this work and handoffs to the two development branches below, **leaving master untouched**. Implementation/tests are feature commits; usage, acceptance and this handoff follow in documentation commits.
 
