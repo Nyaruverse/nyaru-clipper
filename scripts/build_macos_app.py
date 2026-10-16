@@ -122,8 +122,8 @@ def main() -> int:
                str(ROOT / "desktop/macos/App.swift"), "-o", str(macos / NAME)]), flush=True)
     with (app / "Contents/Info.plist").open("wb") as handle:
         plistlib.dump({"CFBundleExecutable": NAME, "CFBundleIdentifier": "local.nyaru.clipper", "CFBundleName": NAME,
-                      "CFBundleDisplayName": NAME, "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.9",
-                      "CFBundleVersion": "17", "LSMinimumSystemVersion": "27.0", "LSArchitecturePriority": ["arm64"],
+                      "CFBundleDisplayName": NAME, "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.10",
+                      "CFBundleVersion": "18", "LSMinimumSystemVersion": "27.0", "LSArchitecturePriority": ["arm64"],
                       "NSHighResolutionCapable": True, "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True}}, handle)
 
     licenses = resources / "Licenses"
