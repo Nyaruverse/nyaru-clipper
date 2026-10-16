@@ -17,6 +17,8 @@ from app.arctime import media, workflow
 from app.arctime.subtitle_encoding import burn_available, burn_clip, video_dimensions
 from app.arctime.subtitle_inputs import ExportError, ExportInputs, ExportRequest, load_inputs
 from app.arctime.subtitle_style import render_ass
+from app.arctime.subtitle_document import SubtitleDocument
+from app.arctime.subtitle_render import render_document_ass
 from app.arctime.subtitle_style import SubtitleStyle
 from app.arctime.subtitle_templates import TemplateStore
 from app.services.subtitles import render_bilingual_srt, render_srt
@@ -34,6 +36,7 @@ class ExportOutput(BaseModel):
     filename: str = Field(pattern=r"^styled-[0-9a-f]{20}\.(ass|mp4|zip)$")
     sha256: str
     style: SubtitleStyle | None = None
+    document: SubtitleDocument | None = None
 
 
 class ExportActivity(BaseModel):
@@ -79,6 +82,9 @@ def _package(working: Path, inputs: ExportInputs, request: ExportRequest, projec
         name = f"{basename}.ja-zh.srt"
         (working / name).write_text(render_bilingual_srt(inputs.original, [cue.text for cue in inputs.translated]), encoding="utf-8")
         names.append(name)
+    if request.document is not None:
+        (working / 'subtitle-document.json').write_text(request.document.model_dump_json(indent=2), encoding='utf-8')
+        names.append('subtitle-document.json')
     if project is not None:
         (working / "template.atpj").write_bytes(project)
         names.append("template.atpj")
@@ -185,7 +191,7 @@ class SubtitleExports:
         receipt = workflow._path(directory, f"styled-{identity}.receipt.json")
         pending = ExportOutput.model_validate_json(receipt.read_bytes()) if receipt.is_file() else None
         if pending and (pending.id != identity or pending.filename != filename or pending.kind != request.kind
-                        or pending.video != request.video or pending.bilingual != request.bilingual or pending.style != request.style):
+                        or pending.video != request.video or pending.bilingual != request.bilingual or pending.style != request.style or pending.document != request.document):
             raise ExportError("导出恢复记录与请求不一致；已保留文件，请检查")
         existing = next((item for item in snapshot.outputs if item.id == identity), None)
         if existing:
@@ -196,7 +202,8 @@ class SubtitleExports:
             snapshot.outputs.append(pending)
         else:
             dimensions = video_dimensions(inputs.source)
-            content = render_ass(inputs.original, inputs.translated, request.style, *dimensions, video_canvas=request.kind != "burn")
+            content = (render_document_ass(inputs.document, request.bilingual) if inputs.document is not None else
+                       render_ass(inputs.original, inputs.translated, request.style, *dimensions, video_canvas=request.kind != "burn"))
             with tempfile.TemporaryDirectory(prefix=".subtitle-export-", dir=directory) as temporary:
                 working = Path(temporary)
                 (working / "subtitle.ass").write_text(content, encoding="utf-8")
@@ -212,7 +219,7 @@ class SubtitleExports:
                         case unreachable:
                             assert_never(unreachable)
                     output = ExportOutput(id=identity, kind=request.kind, video=request.video, bilingual=request.bilingual,
-                        filename=filename, sha256=media.fingerprint(product), style=request.style)
+                        filename=filename, sha256=media.fingerprint(product), style=request.style, document=request.document)
                     if pending is not None and pending != output:
                         raise ExportError("导出内容与恢复记录不一致；已保留文件，请检查")
                     if pending is None:

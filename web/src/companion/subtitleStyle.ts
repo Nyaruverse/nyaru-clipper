@@ -1,4 +1,8 @@
-export interface TextStyle { font: string; size: number; color: string; outline_color: string; outline: number; background_color: string; background_opacity: number; position: 'top' | 'bottom'; margin: number }
+export interface TextStyle { font: string; size: number; color: string; outline_color: string; outline: number; background_color: string; background_opacity: number; position: 'top' | 'bottom'; margin: number;
+  bold?: boolean; italic?: boolean; underline?: boolean; opacity?: number; spacing?: number; line_height?: number;
+  align?: number; x?: number | null; y?: number | null; rotation?: number; scale_x?: number; scale_y?: number;
+  shadow?: number; shadow_color?: string; padding?: number; max_width?: number; hidden?: boolean;
+}
 export interface SubtitleStyle { version: 1; original: TextStyle; translation: TextStyle }
 export interface StyleTemplate { id: string; name: string; style: SubtitleStyle; arctime_template_id: string | null; builtin: boolean }
 export interface ProjectTemplate { id: string; name: string; sha256: string; size: number }
