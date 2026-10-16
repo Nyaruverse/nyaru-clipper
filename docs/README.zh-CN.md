@@ -12,6 +12,9 @@
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md)：当前项目交接，含本地工具／macOS App、验收、运行状态及待办
 - [project-handoff.md](project-handoff.md)：对应英文交接
 
+- [subtitle-editor.zh-CN.md](subtitle-editor.zh-CN.md)：逐条字幕、像素定位、样式／时间与导出
+- [subtitle-editor-acceptance-2026-10-16.zh-CN.md](subtitle-editor-acceptance-2026-10-16.zh-CN.md)：Web／macOS 测试、一致性与 build16 安装验收
+
 - `macos-app.zh-CN.md`：本地工具的 macOS App、数据目录与构建说明
 - `macos-app.md`：对应英文说明
 
