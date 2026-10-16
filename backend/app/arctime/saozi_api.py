@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -16,11 +17,14 @@ def saozi_router(manager: JobManager) -> APIRouter:
     router = APIRouter(prefix="/companion-api")
 
     @router.post("/saozi/upload", status_code=202)
-    async def upload(request: Request, language: str = "auto"):
+    @router.post("/jobs/upload", status_code=202)
+    async def upload(request: Request, language: str = "auto", saozi: bool = True,
+                     ranges: str = "[]", highlights: int | None = None):
         try:
-            payload = JobInput(url="https://local.invalid", saozi=True, language=language)
-        except ValidationError:
-            raise HTTPException(422, "请选择有效视频语种") from None
+            payload = JobInput(url="https://local.invalid", saozi=saozi, language=language,
+                               ranges=json.loads(ranges), highlights=highlights)
+        except (ValidationError, json.JSONDecodeError):
+            raise HTTPException(422, "请检查视频语种及切片选项：选择有效时间段、高光数量或臊子其中一种") from None
         declared = request.headers.get("content-length")
         if declared and (not declared.isdigit() or int(declared) > shutil.disk_usage(manager.root).free - 64 * 1024 ** 2):
             raise HTTPException(413, "录像过大或磁盘空间不足")
@@ -29,7 +33,7 @@ def saozi_router(manager: JobManager) -> APIRouter:
         model = manager.active['model']
         temporary = None
         try:
-            key = companion_llm.require_key(manager, model)
+            key = companion_llm.require_key(manager, model) if payload.saozi else manager.api_key
             descriptor, name = tempfile.mkstemp(prefix=".saozi-upload-", dir=manager.root)
             temporary = Path(name)
             count = 0

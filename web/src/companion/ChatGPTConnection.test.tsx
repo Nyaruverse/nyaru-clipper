@@ -66,7 +66,7 @@ it("shows missing plan sharing and disables account model saving", async () => {
   fireEvent.click(screen.getByRole("button", {name:"切片方式"}));
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
   fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
-  fireEvent.change(screen.getByLabelText("视频链接"),{target:{value:"https://example.org/video.mp4"}});
+  fireEvent.change(screen.getByLabelText("BV 号"),{target:{value:"BV1xx411c7mD"}});
   fireEvent.click(screen.getByRole("button",{name:"开始处理"}));
   expect(await screen.findByText("臊子需要先连接 ChatGPT、授权订阅额度并保存可用模型")).toBeVisible();
   expect(posts).toEqual([]);
@@ -106,7 +106,7 @@ it("uses ChatGPT readiness for Saozi even when no DeepSeek key exists", async ()
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
   expect(screen.getByText(/ChatGPT 根据字幕段落选择切点/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
-  fireEvent.change(screen.getByLabelText("视频链接"),{target:{value:"https://example.org/video.mp4"}});
+  fireEvent.change(screen.getByLabelText("BV 号"),{target:{value:"BV1xx411c7mD"}});
   fireEvent.click(screen.getByRole("button",{name:"开始处理"}));
   await waitFor(()=>expect(globalThis.fetch).toHaveBeenCalledWith("/companion-api/jobs",expect.objectContaining({method:"POST"})));
   expect(screen.queryByText(/需要先保存 DeepSeek/)).toBeNull();
