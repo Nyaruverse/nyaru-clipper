@@ -26,14 +26,14 @@ import { defaultStyle } from "./subtitleStyle";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function saoziApi() {
+function saoziApi(translationConfigured = true) {
   const posts: {url: string; body: BodyInit | null | undefined}[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") {
       posts.push({url, body: options.body});
       return new Response(JSON.stringify({id:"aabbccddeeff"}), {status:202});
     }
-    return new Response(JSON.stringify(url.endsWith("/config") ? {ready:true,missing:[],translation_configured:true} : url.endsWith("/jobs") ? [] : {
+    return new Response(JSON.stringify(url.endsWith("/config") ? {ready:true,missing:[],translation_configured:translationConfigured} : url.endsWith("/jobs") ? [] : {
       id:"aabbccddeeff",state:"recording",mode:"saozi",live:true,can_stop:true,message:"正在录制",clips:[],segments:[],translation:{state:"not_started"}
     }));
   }));
@@ -44,14 +44,12 @@ it("starts Bilibili live saozi and stops capture while preserving results", asyn
   const posts = saoziApi();
   mount();
   await waitFor(() => expect(screen.getByRole("button", {name:"开始处理"})).toBeEnabled());
-  openTool("切片方式");
-  fireEvent.click(screen.getByRole("radio", {name:"臊子"}));
   openTool("新建任务");
-  fireEvent.change(screen.getByLabelText("臊子输入"), {target:{value:"live"}});
-  fireEvent.change(screen.getByLabelText("视频链接"), {target:{value:"https://live.bilibili.com/12345"}});
+  fireEvent.click(screen.getByRole("button", {name:"实时录播"}));
+  fireEvent.change(screen.getByLabelText("直播间号"), {target:{value:"12345"}});
   fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
   expect(await screen.findByRole("button", {name:"停止直播并导出剩余内容"})).toBeEnabled();
-  expect(JSON.parse(String(posts[0]?.body))).toEqual({url:"https://live.bilibili.com/12345",ranges:[],highlights:null,language:"auto",saozi:true,live:true});
+  expect(JSON.parse(String(posts[0]?.body))).toEqual({url:"12345",ranges:[],highlights:null,language:"auto",saozi:true,live:true});
   fireEvent.click(screen.getByRole("button", {name:"停止直播并导出剩余内容"}));
   await waitFor(() => expect(posts[1]?.url).toBe("/companion-api/jobs/aabbccddeeff/stop"));
 });
@@ -63,12 +61,90 @@ it("uploads a local recording as raw file bytes for saozi", async () => {
   openTool("切片方式");
   fireEvent.click(screen.getByRole("radio", {name:"臊子"}));
   openTool("新建任务");
-  fireEvent.change(screen.getByLabelText("臊子输入"), {target:{value:"file"}});
+  fireEvent.click(screen.getByRole("button", {name:"本地视频"}));
   const file = new File(["recording"], "my-video.mp4", {type:"video/mp4"});
-  fireEvent.change(screen.getByLabelText("本地录像"), {target:{files:[file]}});
+  fireEvent.change(screen.getByLabelText("本地视频文件"), {target:{files:[file]}});
   fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
   await waitFor(() => expect(posts[0]?.body).toBe(file));
-  expect(posts[0]?.url).toBe("/companion-api/saozi/upload?language=auto");
+  const url = new URL(posts[0]?.url ?? "", "http://localhost");
+  expect(url.pathname).toBe("/companion-api/jobs/upload");
+  expect(url.searchParams.get("saozi")).toBe("true");
+});
+
+it("submits a BV number with the selected video slicing mode", async () => {
+  const posts = saoziApi();
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", {name:"开始处理"})).toBeEnabled());
+  openTool("新建任务");
+  expect(screen.getByRole("button", {name:"下载视频"})).toHaveAttribute("aria-pressed", "true");
+  fireEvent.change(screen.getByLabelText("BV 号"), {target:{value:"BV1xx411c7mD"}});
+  fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(JSON.parse(String(posts[0]?.body))).toEqual({url:"BV1xx411c7mD",ranges:[["00:00","00:30"]],highlights:null,language:"auto"});
+});
+
+it.each([
+  ["下载视频", "BV 号", "BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD"],
+  ["实时录播", "直播间号", "12345", "https://live.bilibili.com/12345"],
+])("accepts only an identifier in the %s source field", (sourceName, label, identifier, link) => {
+  saoziApi();
+  mount();
+  openTool("新建任务");
+  fireEvent.click(screen.getByRole("button", {name:sourceName}));
+  const input = screen.getByLabelText<HTMLInputElement>(label);
+  fireEvent.change(input, {target:{value:identifier}});
+  expect(input.validity.valid).toBe(true);
+  fireEvent.change(input, {target:{value:link}});
+  expect(input.validity.patternMismatch).toBe(true);
+});
+
+it("keeps source drafts and restores non-live slicing after switching away from live", async () => {
+  saoziApi();
+  mount();
+  openTool("新建任务");
+  fireEvent.change(screen.getByLabelText("BV 号"), {target:{value:"BV1xx411c7mD"}});
+  fireEvent.click(screen.getByRole("button", {name:"实时录播"}));
+  fireEvent.change(screen.getByLabelText("直播间号"), {target:{value:"12345"}});
+  openTool("切片方式");
+  expect(screen.getByRole("radio", {name:"臊子"})).toBeChecked();
+  expect(screen.getByRole("radio", {name:"指定时间段"})).toBeDisabled();
+  openTool("新建任务");
+  fireEvent.click(screen.getByRole("button", {name:"下载视频"}));
+  expect(screen.getByLabelText("BV 号")).toHaveValue("BV1xx411c7mD");
+  openTool("切片方式");
+  expect(screen.getByRole("radio", {name:"指定时间段"})).toBeChecked();
+  openTool("新建任务");
+  fireEvent.click(screen.getByRole("button", {name:"实时录播"}));
+  expect(screen.getByLabelText("直播间号")).toHaveValue("12345");
+});
+
+it("excludes an invalid inactive source draft from form validation", () => {
+  saoziApi();
+  mount();
+  openTool("新建任务");
+  fireEvent.change(screen.getByLabelText("BV 号"), {target:{value:"invalid BV"}});
+  fireEvent.click(screen.getByRole("button", {name:"实时录播"}));
+  expect(screen.getByLabelText("BV 号")).toBeDisabled();
+});
+
+it.each(["指定时间段", "高光自动切片"])("imports a local file with %s without AI configuration", async mode => {
+  const posts = saoziApi(false);
+  mount();
+  await waitFor(() => expect(screen.getByRole("button", {name:"开始处理"})).toBeEnabled());
+  openTool("切片方式");
+  fireEvent.click(screen.getByRole("radio", {name:mode}));
+  openTool("新建任务");
+  fireEvent.click(screen.getByRole("button", {name:"本地视频"}));
+  const file = new File(["recording"], "my-video.mp4", {type:"video/mp4"});
+  fireEvent.change(screen.getByLabelText("本地视频文件"), {target:{files:[file]}});
+  fireEvent.click(screen.getByRole("button", {name:"下载视频"}));
+  fireEvent.click(screen.getByRole("button", {name:"本地视频"}));
+  fireEvent.click(screen.getByRole("button", {name:"开始处理"}));
+  await waitFor(() => expect(posts[0]?.body).toBe(file));
+  const params = new URL(posts[0]?.url ?? "", "http://localhost").searchParams;
+  expect(params.get("saozi")).toBe("false");
+  expect(JSON.parse(params.get("ranges") ?? "null")).toEqual(mode === "指定时间段" ? [["00:00","00:30"]] : []);
+  expect(params.get("highlights")).toBe(mode === "高光自动切片" ? "3" : null);
 });
 
 it("saves a persistent key and translates an existing task without creating or resuming one", async () => {
@@ -133,7 +209,7 @@ it("toggles the right drawer closed when its active toolbar option is clicked ag
   expect(button).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(button);
   expect(screen.getByRole("complementary", {name:"工具选项"})).toBeVisible();
-  expect(screen.getByLabelText("视频链接")).toBeVisible();
+  expect(screen.getByLabelText("BV 号")).toBeVisible();
   fireEvent.click(button);
   expect(button).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByRole("complementary", {name:"工具选项"})).toBeNull();
@@ -144,12 +220,12 @@ it("preserves source and provider drafts while switching the single open drawer 
   mount(false);
   const toolbar = screen.getByRole("navigation", {name:"工作台工具"});
   fireEvent.click(within(toolbar).getByRole("button", {name:"新建任务"}));
-  fireEvent.change(screen.getByLabelText("视频链接"), {target:{value:"https://example.org/draft.mp4"}});
+  fireEvent.change(screen.getByLabelText("BV 号"), {target:{value:"BV1xx411c7mD"}});
   fireEvent.click(within(toolbar).getByRole("button", {name:"AI 设置"}));
   fireEvent.change(screen.getByLabelText("DeepSeek API Key"), {target:{value:"unsaved-test-key"}});
-  expect(screen.getByLabelText("视频链接")).not.toBeVisible();
+  expect(screen.getByLabelText("BV 号")).not.toBeVisible();
   fireEvent.click(within(toolbar).getByRole("button", {name:"新建任务"}));
-  expect(screen.getByLabelText("视频链接")).toHaveValue("https://example.org/draft.mp4");
+  expect(screen.getByLabelText("BV 号")).toHaveValue("BV1xx411c7mD");
   fireEvent.click(within(toolbar).getByRole("button", {name:"AI 设置"}));
   expect(screen.getByLabelText("DeepSeek API Key")).toHaveValue("unsaved-test-key");
   expect(within(toolbar).getAllByRole("button", {expanded:true})).toHaveLength(1);
@@ -160,8 +236,8 @@ it("returns focus to the active toolbar option when Escape closes the drawer", (
   mount(false);
   const button = screen.getByRole("button", {name:"新建任务"});
   fireEvent.click(button);
-  screen.getByLabelText("视频链接").focus();
-  fireEvent.keyDown(screen.getByLabelText("视频链接"), {key:"Escape"});
+  screen.getByLabelText("BV 号").focus();
+  fireEvent.keyDown(screen.getByLabelText("BV 号"), {key:"Escape"});
   expect(button).toHaveFocus();
   expect(screen.queryByRole("complementary", {name:"工具选项"})).toBeNull();
 });
@@ -173,14 +249,14 @@ it("retains a selected local recording after closing and reopening the drawer", 
   openTool("切片方式");
   fireEvent.click(screen.getByRole("radio", {name:"臊子"}));
   openTool("新建任务");
-  fireEvent.change(screen.getByLabelText("臊子输入"), {target:{value:"file"}});
+  fireEvent.click(screen.getByRole("button", {name:"本地视频"}));
   const file = new File(["sample"], "draft.mp4", {type:"video/mp4"});
-  const input = screen.getByLabelText<HTMLInputElement>("本地录像");
+  const input = screen.getByLabelText<HTMLInputElement>("本地视频文件");
   fireEvent.change(input, {target:{files:[file]}});
   fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
   openTool("AI 设置");
   openTool("新建任务");
-  expect(screen.getByLabelText("本地录像")).toBe(input);
+  expect(screen.getByLabelText("本地视频文件")).toBe(input);
   expect(input.files?.[0]).toBe(file);
 });
 
@@ -196,12 +272,12 @@ it("reveals source validation when starting from the slicing section", () => {
   fakeApi();
   mount();
   openTool("切片方式");
-  const input = screen.getByLabelText("视频链接");
+  const input = screen.getByLabelText("BV 号");
   const invalid = vi.fn();
   input.addEventListener("invalid", invalid);
   fireEvent.invalid(input);
   expect(invalid).toHaveBeenCalledTimes(1);
-  expect(screen.getByLabelText("视频链接")).toBeVisible();
+  expect(screen.getByLabelText("BV 号")).toBeVisible();
   expect(screen.getByRole("button", {name:"新建任务"})).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByRole("alert")).not.toBeEmptyDOMElement();
 });
@@ -248,13 +324,13 @@ it("submits explicit ranges and shows real preview and export links", async () =
   const submitted = fakeApi();
   mount();
   await waitFor(() => expect(screen.getByRole("button", { name: "开始处理" })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("视频链接"), { target: { value: "https://example.org/video.mp4" } });
+  fireEvent.change(screen.getByLabelText("BV 号"), { target: { value: "BV1xx411c7mD" } });
   openTool("切片方式");
   fireEvent.change(screen.getByLabelText("开始时间 1"), { target: { value: "00:01" } });
   fireEvent.change(screen.getByLabelText("结束时间 1"), { target: { value: "00:04" } });
   fireEvent.click(screen.getByRole("button", { name: "开始处理" }));
   await screen.findByText("测试字幕");
-  expect(submitted()).toEqual({ url: "https://example.org/video.mp4", ranges: [["00:01", "00:04"]], highlights: null, language: "auto" });
+  expect(submitted()).toEqual({ url: "BV1xx411c7mD", ranges: [["00:01", "00:04"]], highlights: null, language: "auto" });
   openTool("导出");
   expect(screen.getByRole("link", { name: "下载切片 1 视频" })).toHaveAttribute("href", "/companion-api/jobs/aabbccddeeff/files/clip-001.mp4?download=true");
   fireEvent.click(screen.getByRole("button", { name: "预览切片 1" }));
@@ -266,7 +342,7 @@ it("preserves range drafts when switching mode and submits only highlights", asy
   const submitted = fakeApi();
   mount();
   await waitFor(() => expect(screen.getByRole("button", { name: "开始处理" })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("视频链接"), { target: { value: "https://example.org/v.mp4" } });
+  fireEvent.change(screen.getByLabelText("BV 号"), { target: { value: "BV1xx411c7mD" } });
   openTool("切片方式");
   fireEvent.change(screen.getByLabelText("开始时间 1"), { target: { value: "12" } });
   fireEvent.click(screen.getByLabelText("高光自动切片"));
@@ -276,14 +352,14 @@ it("preserves range drafts when switching mode and submits only highlights", asy
   fireEvent.click(screen.getByLabelText("高光自动切片"));
   fireEvent.click(screen.getByRole("button", { name: "开始处理" }));
   await screen.findByText("测试字幕");
-  expect(submitted()).toEqual({ url: "https://example.org/v.mp4", ranges: [], highlights: 2, language: "auto" });
+  expect(submitted()).toEqual({ url: "BV1xx411c7mD", ranges: [], highlights: 2, language: "auto" });
 });
 
 it("rejects reversed ranges and never starts a job", async () => {
   const submitted = fakeApi();
   mount();
   await waitFor(() => expect(screen.getByRole("button", { name: "开始处理" })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("视频链接"), { target: { value: "https://example.org/v.mp4" } });
+  fireEvent.change(screen.getByLabelText("BV 号"), { target: { value: "BV1xx411c7mD" } });
   openTool("切片方式");
   fireEvent.change(screen.getByLabelText("开始时间 1"), { target: { value: "30" } });
   fireEvent.change(screen.getByLabelText("结束时间 1"), { target: { value: "10" } });
@@ -302,7 +378,7 @@ it("retries a failed initial task detail request and recovers the preview", asyn
   }));
   mount();
   await waitFor(() => expect(screen.getByRole("button", { name: "开始处理" })).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("视频链接"), { target: { value: "https://example.org/video.mp4" } });
+  fireEvent.change(screen.getByLabelText("BV 号"), { target: { value: "BV1xx411c7mD" } });
   fireEvent.click(screen.getByRole("button", { name: "开始处理" }));
   await screen.findByText(/本地服务连接中断/);
   await waitFor(() => expect(screen.getByText("测试字幕")).toBeInTheDocument(), { timeout: 5000 });
@@ -335,7 +411,7 @@ it('blocks new jobs while another history job exports subtitles', async () => {
   mount();
   await screen.findByText('测试字幕');
   expect(screen.getByRole('button',{name:'已有任务处理中'})).toBeDisabled();
-  expect(screen.getByLabelText('视频链接')).toBeDisabled();
+  expect(screen.getByLabelText('BV 号')).toBeDisabled();
 });
 
 it('allows retry and editing after a subtitle export was interrupted', async () => {

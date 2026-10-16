@@ -23,6 +23,12 @@ const TOOLS = [
   { id: "export", label: "导出", icon: ArrowDownToLine },
 ] as const;
 type Tool = typeof TOOLS[number]["id"];
+const SOURCES = [
+  {id:"live",label:"实时录播"},
+  {id:"replay",label:"下载视频"},
+  {id:"file",label:"本地视频"},
+] as const;
+type Source = typeof SOURCES[number]["id"];
 
 export function Companion() {
   const [tool, setTool] = useState<Tool | null>(null);
@@ -32,7 +38,9 @@ export function Companion() {
   const queryClient = useQueryClient();
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<"ranges" | "highlights" | "saozi">("ranges");
-  const [source, setSource] = useState("replay");
+  const [source, setSource] = useState<Source>("replay");
+  const [room, setRoom] = useState("");
+  const processingMode = source === "live" ? "saozi" : mode;
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [ranges, setRanges] = useState<[string, string][]>([["00:00", "00:30"]]);
   const [highlights, setHighlights] = useState(3);
@@ -73,9 +81,11 @@ export function Companion() {
   const job = detail.data;
   const visibleJobs = history.data?.map(item => item.id === job?.id ? job : item);
   const busy = visibleJobs?.some(running) || running(job) || exportBusy;
-  const create = useMutation({ mutationFn: async (payload: JobInput | {file:File;language:string}) => {
-    if (!("file" in payload)) return api<{id:string}>("/jobs", payload);
-    const response = await fetch(`/companion-api/saozi/upload?language=${encodeURIComponent(payload.language)}`, {method:"POST",body:payload.file});
+  const create = useMutation({ mutationFn: async (payload: JobInput & {file?:File}) => {
+    if (!payload.file) return api<{id:string}>("/jobs", payload);
+    const params = new URLSearchParams({language:payload.language,saozi:String(!!payload.saozi),ranges:JSON.stringify(payload.ranges)});
+    if (payload.highlights !== null) params.set("highlights", String(payload.highlights));
+    const response = await fetch(`/companion-api/jobs/upload?${params}`, {method:"POST",body:payload.file});
     const result: {id:string;detail?:string} = await response.json();
     if (!response.ok) throw new Error(result.detail ?? "录像导入失败，请检查磁盘空间");
     return result;
@@ -110,13 +120,13 @@ export function Companion() {
     event.preventDefault();
     setError(null);
     try {
-      if (mode === "ranges") ranges.forEach(([start, end], index) => { if (parseTime(start) >= parseTime(end)) throw new Error(`片段 ${index + 1}：结束时间必须大于开始时间`); });
-      if (mode === "saozi" && !llmConfigured) throw new Error(chatgptSelected ? "臊子需要先连接 ChatGPT、授权订阅额度并保存可用模型" : "臊子需要先保存 DeepSeek API Key 并选择 Flash");
-      if (mode === "saozi" && source === "file") {
-        if (!localFile) throw new Error("请选择本地录像");
-        create.mutate({file:localFile,language});
-      } else create.mutate({ url: url.trim(), ranges: mode === "ranges" ? ranges : [], highlights: mode === "highlights" ? highlights : null, language,
-        ...(mode === "saozi" ? {saozi:true,live:source === "live"} : {}) });
+      if (processingMode === "ranges") ranges.forEach(([start, end], index) => { if (parseTime(start) >= parseTime(end)) throw new Error(`片段 ${index + 1}：结束时间必须大于开始时间`); });
+      if (processingMode === "saozi" && !llmConfigured) throw new Error(chatgptSelected ? "臊子需要先连接 ChatGPT、授权订阅额度并保存可用模型" : "臊子需要先保存 DeepSeek API Key 并选择 Flash");
+      if (source === "file" && !localFile) throw new Error("请选择本地视频文件");
+      create.mutate({url:source === "live" ? room.trim() : url.trim(),ranges:processingMode === "ranges" ? ranges : [],
+        highlights:processingMode === "highlights" ? highlights : null,language,
+        ...(processingMode === "saozi" ? {saozi:true,live:source === "live"} : {}),
+        ...(source === "file" && localFile ? {file:localFile} : {})});
     } catch (err) { setError(err instanceof Error ? err.message : "请检查输入"); }
   }
 
@@ -161,7 +171,7 @@ export function Companion() {
         <div className="companion-drawer-heading"><h2>{TOOLS.find(item => item.id === tool)?.label}</h2><button type="button" className="ny-button ny-button--quiet" aria-label="收起工具面板" onClick={closeDrawer}><X size={16} /></button></div>
         <div className="companion-drawer-content">
         <section className="companion-panel" hidden={tool !== "create" && tool !== "slice"}>
-          <p className="companion-muted" hidden={tool !== "create"}>粘贴链接，生成字幕与时间轴，再导出你需要的片段。</p>
+          <p className="companion-muted" hidden={tool !== "create"}>选择视频来源，生成字幕与时间轴，再导出你需要的片段。</p>
           <form onSubmit={submit} onInvalid={event => {
             event.preventDefault();
             const invalid = Array.from(event.currentTarget.querySelectorAll("input")).find(input => input.willValidate && !input.validity.valid);
@@ -172,18 +182,24 @@ export function Companion() {
           }}>
             <fieldset disabled={busy || create.isPending}>
               <div className="companion-task-fields" data-tool-pane="create" hidden={tool !== "create"}>
-              {mode === "saozi" && <label className="ny-field">臊子输入<select className="ny-input" value={source} onChange={event=>setSource(event.target.value)}><option value="replay">直播回放链接</option><option value="file">本地录像</option><option value="live">Bilibili 实时直播</option></select></label>}
-              {mode === "saozi" && source === "file" ? <label key="file" className="ny-field">本地录像<input className="ny-input" type="file" accept="video/*,.mkv,.flv,.ts" onChange={event=>setLocalFile(event.target.files?.[0] ?? null)} /></label> : <label key="url" className="ny-field">视频链接<input className="ny-input" type="url" required placeholder={mode === "saozi" && source === "live" ? "https://live.bilibili.com/直播间号" : "https://…"} value={url} onChange={event => setUrl(event.target.value)} /></label>}
+              <div className="companion-sources" role="group" aria-label="视频来源">
+                {SOURCES.map(({id,label}) => <button key={id} type="button" className="ny-button" aria-pressed={source === id} onClick={() => {setSource(id);setError(null);}}>{label}</button>)}
+              </div>
+              <label className="ny-field" hidden={source !== "live"}>直播间号<input className="ny-input" type="text" inputMode="numeric" disabled={source !== "live"} required={source === "live"} pattern="[1-9][0-9]*" title="只需输入数字直播间号，例如 12345" placeholder="例如：12345" value={room} onChange={event => setRoom(event.target.value)} /></label>
+              <label className="ny-field" hidden={source !== "replay"}>BV 号<input className="ny-input" type="text" disabled={source !== "replay"} required={source === "replay"} pattern="BV[A-Za-z0-9]{10}" title="只需输入 BV 开头的视频编号，例如 BV1xx411c7mD" placeholder="例如：BV1xx411c7mD" value={url} onChange={event => setUrl(event.target.value)} /></label>
+              <label className="ny-field" hidden={source !== "file"}>本地视频文件<input className="ny-input" type="file" disabled={source !== "file"} accept="video/*,.mkv,.flv,.ts" onChange={event=>setLocalFile(event.target.files?.[0] ?? null)} /></label>
+              {source === "live" && <p className="companion-muted">录制正在直播的房间，按约 1–2 分钟连续处理；需要先配置 AI。点击停止后处理剩余内容。</p>}
               <label className="ny-field">视频语种<select className="ny-input" value={language} onChange={event => setLanguage(event.target.value)}><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
-              <button className="ny-button" type="button" onClick={() => setTool("slice")}><Scissors size={16} />{mode === "ranges" ? `指定时间段 · ${ranges.length} 段` : mode === "saozi" ? "臊子" : `高光自动切片 · 最多 ${highlights} 段`}</button>
+              <button className="ny-button" type="button" onClick={() => setTool("slice")}><Scissors size={16} />{processingMode === "ranges" ? `指定时间段 · ${ranges.length} 段` : processingMode === "saozi" ? "臊子" : `高光自动切片 · 最多 ${highlights} 段`}</button>
               </div>
               <div className="companion-task-fields" data-tool-pane="slice" hidden={tool !== "slice"}>
-              <fieldset className="companion-mode"><legend>切片方式</legend>
-                <label className={mode === "ranges" ? "is-selected" : ""}><input type="radio" name="mode" checked={mode === "ranges"} onChange={() => setMode("ranges")} />指定时间段</label>
-                <label className={mode === "highlights" ? "is-selected" : ""}><input type="radio" name="mode" checked={mode === "highlights"} onChange={() => setMode("highlights")} />高光自动切片</label>
-                <label className={mode === "saozi" ? "is-selected" : ""}><input type="radio" name="mode" checked={mode === "saozi"} onChange={() => setMode("saozi")} />臊子</label>
+              <fieldset className="companion-mode" disabled={source === "live"}><legend>切片方式</legend>
+                <label className={processingMode === "ranges" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "ranges"} onChange={() => setMode("ranges")} />指定时间段</label>
+                <label className={processingMode === "highlights" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "highlights"} onChange={() => setMode("highlights")} />高光自动切片</label>
+                <label className={processingMode === "saozi" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "saozi"} onChange={() => setMode("saozi")} />臊子</label>
               </fieldset>
-              {mode === "ranges" ? <div className="companion-ranges">
+              {source === "live" && <p className="companion-muted">实时录播使用臊子连续处理；下载视频和本地视频可选择其他切片方式。</p>}
+              {processingMode === "ranges" ? <div className="companion-ranges">
                 <p className="companion-muted">支持秒数或时:分:秒，时间不能超过视频时长。</p>
                 {ranges.map((range, index) => <div className="companion-range" key={index}>
                   <span className="companion-muted">{String(index + 1).padStart(2, "0")}</span>
@@ -192,7 +208,7 @@ export function Companion() {
                   <button className="ny-button ny-button--quiet" type="button" aria-label={`移除时间段 ${index + 1}`} disabled={ranges.length === 1} onClick={() => setRanges(ranges.filter((_, i) => i !== index))}><X size={16} /></button>
                 </div>)}
                 <button className="ny-button" type="button" disabled={ranges.length >= 100} onClick={() => setRanges([...ranges, ["00:00", "00:30"]])}><Plus size={16} />添加时间段</button>
-              </div> : mode === "highlights" ? <div className="companion-highlights">
+              </div> : processingMode === "highlights" ? <div className="companion-highlights">
                 <label className="ny-field">最多导出片段数<input className="ny-input" type="number" min={1} max={100} required value={highlights} onChange={event => setHighlights(Number(event.target.value))} /></label>
                 <p className="companion-muted">根据字幕密度、笑声与兴奋词筛选。达不到评分阈值时，会保留完整字幕并报告零切片。</p>
               </div> : <p className="companion-muted">连续切为约 1–2 分钟，{chatgptSelected ? "ChatGPT" : "DeepSeek Flash"} 根据字幕段落选择切点，并自动生成中日双语字幕，会使用{chatgptSelected ? "订阅" : " API "}额度。短尾段完整保留。{source === "live" ? "实时结果会有缓冲与处理延迟；停止后导出剩余内容。" : "原视频保留，切片按顺序覆盖全部内容。"}</p>}

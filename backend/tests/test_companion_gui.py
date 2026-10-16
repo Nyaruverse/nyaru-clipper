@@ -75,6 +75,40 @@ def test_highlights_are_selected_from_local_transcript(client):
     assert job["clips"][0]["score"] >= .55
 
 
+@pytest.mark.parametrize("selection,mode", [
+    ({"ranges": json.dumps([["1", "4"]])}, "ranges"),
+    ({"highlights": 2}, "highlights"),
+])
+def test_local_video_supports_slicing_without_ai(client, tmp_path, selection, mode):
+    response = client.post("/companion-api/jobs/upload", params={"saozi": "false", **selection}, content=b"local-video")
+    assert response.status_code == 202
+    job = completed(client, response.json()["id"])
+    assert job["state"] == "completed" and job["mode"] == mode
+    assert len(job["clips"]) == 1
+    assert client.get(f"/companion-api/jobs/{job['id']}/files/source.mp4").content == b"local-video"
+    assert not list(tmp_path.glob(".saozi-upload-*"))
+
+
+@pytest.mark.parametrize("selection", [
+    {"ranges": "bad-json"}, {"ranges": "null"}, {"ranges": "[]"},
+    {"ranges": json.dumps([["4", "1"]])},
+    {"ranges": json.dumps([["1", "4"]]), "highlights": 2},
+    {"highlights": 0}, {"highlights": 2, "language": "--bad"},
+])
+def test_invalid_local_selection_does_not_reserve_job(client, selection):
+    response = client.post("/companion-api/jobs/upload", params={"saozi": "false", **selection}, content=b"video")
+    assert response.status_code == 422
+    assert client.get("/companion-api/jobs").json() == []
+
+
+def test_empty_local_upload_can_be_retried_without_ai(client):
+    params = {"saozi": "false", "ranges": json.dumps([["1", "4"]])}
+    assert client.post("/companion-api/jobs/upload", params=params, content=b"").status_code == 422
+    retry = client.post("/companion-api/jobs/upload", params=params, content=b"video")
+    assert retry.status_code == 202
+    assert completed(client, retry.json()["id"])["state"] == "completed"
+
+
 @pytest.mark.parametrize("payload", [
     {"url": "file:///etc/passwd"},
     {"url": "https://user:password@example.org/v.mp4"},

@@ -33,6 +33,10 @@ body { margin: 0; }
 .companion-drawer .subtitle-style-columns { grid-template-columns: 1fr; gap: var(--ny-space-6); }
 .companion-drawer .companion-llm-settings, .companion-drawer .subtitle-editor > fieldset { margin-top: 0; }
 .companion-task-fields { display: grid; gap: var(--ny-space-4); }
+.companion-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--ny-space-2); }
+.companion-sources .ny-button { min-width: 0; padding: var(--ny-space-2) var(--ny-space-1); white-space: nowrap; }
+.companion-sources .ny-button[aria-pressed="true"]:not(:disabled) { background: var(--ny-ink); color: var(--ny-surface); }
+.companion-task-fields input[type="file"] { max-width: 100%; }
 @keyframes companion-drawer-in { from { opacity: 0; transform: translateX(var(--ny-space-2)); } to { opacity: 1; transform: translateX(0); } }
 .companion-panel { padding: var(--ny-space-6); border: 1px solid var(--ny-border); border-radius: var(--ny-radius-2); background: var(--ny-surface); }
 .companion-panel-title { display: flex; align-items: center; gap: var(--ny-space-3); }
