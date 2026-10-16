@@ -12,6 +12,9 @@ Available documents:
 - [project-handoff.md](project-handoff.md): Current local companion/macOS handoff, evidence, runtime snapshot and next actions
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md): Chinese handoff
 
+- [subtitle-editor.md](subtitle-editor.md): Per-cue content, pixel positioning, styles, timing and export
+- [subtitle-editor-acceptance-2026-10-16.md](subtitle-editor-acceptance-2026-10-16.md): Web/macOS tests, preview/ASS/burn consistency and build16 installation
+
 - `macos-app.md`: Bundled macOS companion, persistent data and build instructions
 - `macos-app.zh-CN.md`: Chinese macOS app guide
 
