@@ -62,6 +62,128 @@ def test_style_template_routes_and_restart_keep_key_separate(finished):
     assert not (directory.parent / "config.json").exists()
 
 
+def test_ass_inspection_mapping_saves_regular_template_and_rejects_bad_upload(finished):
+    from test_ass_style_import import ass_content
+    client, directory = finished
+    result = client.post('/companion-api/style-templates/inspect-ass', content=ass_content())
+    assert result.status_code == 200
+    parsed = result.json()
+    mapped = {'version': 1, 'original': parsed['styles'][0]['style'], 'translation': parsed['styles'][0]['style']}
+    saved = client.post('/companion-api/style-templates', json={'name': 'ASS imported', 'style': mapped})
+    assert saved.status_code == 200
+    assert saved.json()['style']['original']['color'] == '#FF0000'
+    assert client.post('/companion-api/style-templates/inspect-ass', content=b'invalid').status_code == 409
+    assert client.post('/companion-api/style-templates/inspect-ass', content=b'x' * (1024 * 1024 + 1)).status_code == 413
+
+
+def test_live_clip_exports_before_full_source_exists_and_keeps_identity(finished, monkeypatch):
+    from app.arctime.subtitle_exports import SubtitleExports, read_exports
+    from app.arctime.companion_manager import JobManager
+    from app.arctime.subtitle_templates import TemplateStore
+    from app.arctime.subtitle_style import SubtitleStyle, TextStyle
+    from app.arctime import subtitle_exports
+    client, directory = finished
+    job = json.loads((directory / 'job.json').read_text())
+    job.update(state='recording', live=True)
+    for field in ['video', 'video_sha256']:
+        job.pop(field)
+    (directory / 'source.mp4').unlink()
+    store = TemplateStore(directory.parent)
+    template = store.save_style('Live', SubtitleStyle(original=TextStyle(size=63)))
+    job['subtitle_template'] = template.model_dump()
+    media.write_json(directory / 'job.json', job)
+    store.delete_style(template.id)
+    monkeypatch.setattr(subtitle_exports, 'video_dimensions', lambda path: (640, 360))
+    monkeypatch.setattr(subtitle_exports, 'burn_clip', lambda source, working, duration, notify: source)
+    manager = JobManager(directory.parent, directory / 'unused', 1)
+    try:
+        exports = SubtitleExports(manager)
+        exports.export_live(directory, job)
+        outputs = read_exports(directory).outputs
+        assert {output.kind for output in outputs} == {'ass', 'burn'}
+        assert all(output.style.original.size == 63 for output in outputs)
+        original_ids = [output.id for output in outputs]
+        exports.export_live(directory, job)
+        assert [output.id for output in read_exports(directory).outputs] == original_ids
+        assert (directory / 'clip-001.mp4').read_bytes() == b'original-clip'
+        paired = '1\n00:00:00,000 --> 00:00:02,000\nこんにちは\n你好\n\n2\n00:00:03,000 --> 00:00:04,000\n次の字幕\n下一条\n'
+        (directory / 'clip-001.ja-zh.srt').write_text(paired)
+        media.write_json(directory / 'translation.json', {'state': 'partial', 'artifacts': {
+            'clip-001.ja-zh.srt': media.fingerprint(directory / 'clip-001.ja-zh.srt')}})
+        exports.export_live(directory, job)
+        assert len(read_exports(directory).outputs) == 4
+        assert len([o for o in read_exports(directory).outputs if o.bilingual]) == 2
+        (directory / 'clip-001.ja-zh.srt').write_text('tampered')
+        exports.export_live(directory, job)
+        assert job['subtitle_style_error']
+        assert len(read_exports(directory).outputs) == 4
+        assert read_exports(directory).active.state == 'failed'
+    finally:
+        manager.executor.shutdown(wait=True)
+
+
+def test_live_template_selection_snapshots_before_worker_and_rejects_missing(tmp_path, monkeypatch):
+    import threading
+    from app.arctime.companion_manager import JobManager
+    from app.arctime.companion_models import JobInput
+    from app.arctime.subtitle_templates import TemplateStore
+    from app.arctime.subtitle_style import SubtitleStyle, TextStyle
+    from fastapi import HTTPException
+    from pydantic import SecretStr
+    from app.arctime import companion_llm, companion_manager
+    store = TemplateStore(tmp_path)
+    template = store.save_style('Pinned', SubtitleStyle(original=TextStyle(size=67)))
+    manager = JobManager(tmp_path, tmp_path / 'unused-model', 1)
+    observed = []
+    entered, release = threading.Event(), threading.Event()
+    def worker(*args, style_template=None, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        observed.append(style_template)
+    monkeypatch.setattr(manager, 'run', worker)
+    monkeypatch.setattr(companion_llm, 'require_key', lambda *args: SecretStr('fixture'))
+    monkeypatch.setattr(companion_manager, 'burn_available', lambda: True)
+    try:
+        manager.submit(JobInput(url='123', saozi=True, live=True, subtitle_template_id=template.id))
+        assert entered.wait(2)
+        store.save_style('Pinned', SubtitleStyle(original=TextStyle(size=88)), template_id=template.id)
+        store.delete_style(template.id)
+        release.set()
+    finally:
+        release.set()
+        manager.executor.shutdown(wait=True)
+    assert observed[0].style.original.size == 67
+    manager.active = None
+    with pytest.raises(HTTPException) as error:
+        manager.submit(JobInput(url='123', saozi=True, live=True, subtitle_template_id=template.id))
+    assert error.value.status_code == 409
+
+
+def test_manual_bilingual_retry_also_generates_live_style_outputs(finished, monkeypatch):
+    from pydantic import SecretStr
+    from app.arctime.companion_manager import JobManager
+    from app.arctime.subtitle_templates import StyleTemplate
+    from app.arctime.subtitle_style import SubtitleStyle
+    from app.arctime.subtitle_exports import read_exports
+    from app.arctime import subtitle_exports, translation
+    client, directory = finished
+    job = json.loads((directory / 'job.json').read_text())
+    job.update(saozi=True, live=True, subtitle_template=StyleTemplate(id='frozen', name='Live', style=SubtitleStyle()).model_dump())
+    media.write_json(directory / 'job.json', job)
+    monkeypatch.setattr(translation, '_request', lambda client, key, cues, start, model, **kwargs:
+        [{'id': start+i+1, 'zh': '你好'} for i, cue in enumerate(cues)])
+    monkeypatch.setattr(subtitle_exports, 'video_dimensions', lambda path: (640, 360))
+    monkeypatch.setattr(subtitle_exports, 'burn_clip', lambda source, working, duration, notify: source)
+    manager = JobManager(directory.parent, directory / 'unused', 1)
+    manager.active = {'id': 'abcdef123456', 'state': 'translating', 'message': ''}
+    try:
+        manager.run_translation('abcdef123456', SecretStr('fixture'), 'deepseek-flash')
+        assert {output.kind for output in read_exports(directory).outputs if output.bilingual} == {'ass', 'burn'}
+        assert not manager.last.get('translation_error')
+    finally:
+        manager.executor.shutdown(wait=True)
+
+
 def test_defaults_load_after_service_restart(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         style = client.get("/companion-api/subtitle-settings").json()["style"]

@@ -11,10 +11,21 @@ from typing import assert_never
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.arctime.subtitle_style import SubtitleStyle, TextStyle
+from app.arctime.ass_import import inspect_ass
 
 
 class _Binding(Enum):
     PRESERVE = 'preserve'
+
+
+def nyaru_style() -> SubtitleStyle:
+    return SubtitleStyle(
+        original=TextStyle(font='Hiragino Maru Gothic ProN', size=44, color='#F7F3FF',
+            outline_color='#2D2147', outline=3.5, background_color='#181325', margin=170,
+            spacing=.2, shadow=1.1, shadow_color='#181325', max_width=90),
+        translation=TextStyle(font='Noto Sans CJK SC', size=64, color='#A0F5DA',
+            outline_color='#2D2147', outline=4.6, background_color='#181325', margin=80,
+            bold=True, spacing=.6, line_height=1.15, shadow=1.8, shadow_color='#181325', max_width=90))
 
 
 class StyleTemplate(BaseModel):
@@ -78,7 +89,7 @@ class TemplateStore:
 
     def load_defaults(self) -> SubtitleStyle:
         path = self._check(self.root / 'defaults.json')
-        return SubtitleStyle.model_validate_json(path.read_bytes()) if path.exists() else SubtitleStyle()
+        return SubtitleStyle.model_validate_json(path.read_bytes()) if path.exists() else nyaru_style()
 
     def save_defaults(self, style: SubtitleStyle) -> SubtitleStyle:
         with self._lock:
@@ -87,7 +98,8 @@ class TemplateStore:
 
     def list_styles(self) -> list[StyleTemplate]:
         directory = self._check(self.root / 'styles')
-        result = [StyleTemplate(id='default', name='双语基础', style=SubtitleStyle(), builtin=True),
+        result = [StyleTemplate(id='nyaru', name='猫雷 Nyaru｜薄荷电波·中日双语', style=nyaru_style(), builtin=True),
+                  StyleTemplate(id='default', name='双语基础', style=SubtitleStyle(), builtin=True),
                   StyleTemplate(id='white', name='单语白字描边', style=SubtitleStyle(translation=TextStyle()), builtin=True)]
         for path in sorted(directory.glob('*.json')):
             item = StyleTemplate.model_validate_json(self._check(path).read_bytes())
