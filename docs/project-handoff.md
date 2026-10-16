@@ -2,7 +2,32 @@
 
 Verified: **16 October 2026, Asia/Shanghai**. This is the current entry point. Historical snapshots describe their observation time, not current heads, installations or service state.
 
-## Development-branch publication
+## ASS templates and build18 development-branch publication
+
+This delivery covers ASS style import, frozen live templates, incremental styled exports and the Nyaru builtin/default. Only `codex/local-companion-web` and `codex/local-companion-macos` are published; the primary checkout's other dirty work is preserved. Local and remote master baseline: `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`.
+
+| Branch | Implementation commit | Packaging commit |
+| --- | --- | --- |
+| `codex/local-companion-web` | `09acdc420ed7f0b8ecd10a84672d3613770281ed` | Not applicable |
+| `codex/local-companion-macos` | `6040ca9415e07357993eba3f5b3ee21c5ec47182` | `fbd7d5b2df40cba1619a99c6cdac1c56727494ee` |
+
+Paired handoff, usage, plans and acceptance records follow in documentation commits, so the table does not list final branch heads. Push uses explicit refspecs and `--atomic`; the final remote comparison is retained locally in the macOS worktree at `.omo/evidence/nyaru-default-build18-2026-10-16/publish-receipt.json`. Recheck with `git ls-remote origin refs/heads/codex/local-companion-web refs/heads/codex/local-companion-macos refs/heads/master`.
+
+Publication verification: 231 relevant macOS backend tests, 77 Web frontend tests and the Web production build passed. Both worktrees' 27 shared implementation/test files are byte-identical; earlier macOS frontend/frozen/native acceptance and data preservation are detailed below. Task data, media, models, credentials, backups and binary packages are excluded from Git. Real Bilibili/external AI were not rerun; no notarization or branch merge is included.
+
+## Current local version: 0.1.10 build18
+
+Nyaru Mint Signal is built in and selected as the installed default; new live tasks select it automatically with an opt-out. The new package was installed and launched, including ASS style import and incremental styled outputs. All 20 historical tasks and provider/authorization state were retained; only the requested default subtitle file changed after startup. Previous build17 and full data backups are under timestamp 20261016-174807. See [build18 acceptance and backup](nyaru-default-build18-acceptance-2026-10-16.md).
+
+Implementation commits and publication verification are listed above; master is unchanged. The build17 publication/installation records below are historical.
+
+## Latest development: ASS style import and live application
+
+Local validation: 227 backend tests, 75 frontend tests and production build in each worktree, plus real browser and FFmpeg evidence. See [acceptance and limits](ass-style-import-acceptance-2026-10-16.md).
+
+The Web/macOS development worktrees add ArcTime ASS style inspection, explicit original/translation mapping, ordinary saved templates and a live-task template selector. Each task freezes its style and automatically publishes additional ASS/burned MP4 outputs per clip, including bilingual versions when available. Originals remain intact. See [Subtitle styles](subtitle-styles.md). These changes are installed in build18; implementation commits and publication verification are listed above. Publication and installation records below describe the preceding three-source delivery.
+
+## Previous build17 development-branch publication (historical)
 
 This release is limited to the two development branches below, with separate implementation/tests and documentation commits. The primary checkout's `feat/arctime-pro-plugin` is not committed, pushed or merged. Local and remote `master` remain at `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6`.
 
@@ -21,7 +46,7 @@ git -C /Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper status --
 
 Both frontends passed 72 tests and production builds. Pre-publication backend verification passed 115 tests, including three macOS packaging checks, with one Starlette/httpx dependency deprecation warning. Frozen-runtime, native input and data-preservation results are recorded in [task sources and build17 acceptance](task-sources-acceptance-2026-10-16.md). Next is feedback using the user's real room/BV identifiers; further platform acceptance, public distribution, notarization and branch merges are outside this release.
 
-## Latest local installation: 0.1.9 build17
+## Previous local installation: 0.1.9 build17 (historical)
 
 On 16 October 2026, the user-authorized rebuilt App replaced `~/Applications/Nyaru Clipper.app` and passed startup checks. New Task exposes live capture, download and local video: enter a numeric Bilibili room ID, a BV ID, or choose a file. Downloads and local files share slicing choices. The build16 publication/installation sections below are historical and do not describe the current installed version.
 
