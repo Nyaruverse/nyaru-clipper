@@ -1,6 +1,6 @@
 # Windows 部署
 
-适用于独立 Companion（CPU，无需 Docker）。假设已有 PowerShell 7，项目已下载；项目命令均在仓库根目录执行。
+适用于独立 Companion（NVIDIA GPU／CUDA，无需 Docker）。假设已有 PowerShell 7 和 NVIDIA 显卡驱动，项目已下载；项目命令均在仓库根目录执行。
 
 ## 安装
 
@@ -40,14 +40,15 @@ node .tools/pnpm/node_modules/pnpm/bin/pnpm.cjs --dir web install --frozen-lockf
 node .tools/pnpm/node_modules/pnpm/bin/pnpm.cjs --dir web build
 ```
 
-安装 whisper.cpp 到 `.bin`，下载多语种模型到 `data/model-cache/whispercpp`：
+安装 CUDA 版 whisper.cpp 到 `.bin`，下载多语种模型到 `data/model-cache/whispercpp`：
 
 ```powershell
 New-Item -ItemType Directory -Force .tools, .bin, data/model-cache/whispercpp | Out-Null
-Invoke-WebRequest 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip' -OutFile .tools/whisper.zip
-Expand-Archive .tools/whisper.zip -DestinationPath .tools/whisper -Force
-Copy-Item .tools/whisper/Release/whisper-cli.exe .bin/ -Force
-Copy-Item .tools/whisper/Release/*.dll .bin/ -Force
+Invoke-WebRequest 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-cublas-12.4.0-bin-x64.zip' -OutFile .tools/whisper-cuda.zip
+if ((Get-FileHash .tools/whisper-cuda.zip -Algorithm SHA256).Hash -ne '443110ddaad70d4290ab2e77179e31cf712035bbc4fad56bb4519a90c917b39c') { throw 'whisper.cpp 下载校验失败' }
+Expand-Archive .tools/whisper-cuda.zip -DestinationPath .tools/whisper-cuda -Force
+Copy-Item .tools/whisper-cuda/Release/whisper-cli.exe .bin/ -Force
+Copy-Item .tools/whisper-cuda/Release/*.dll .bin/ -Force
 Invoke-WebRequest 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin' -OutFile data/model-cache/whispercpp/ggml-small.bin
 ```
 
@@ -57,6 +58,7 @@ Invoke-WebRequest 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggm
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev_companion.ps1 -Command doctor
+nvidia-smi
 ```
 
 启动，保留终端：
@@ -66,6 +68,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev_companion.ps1
 ```
 
 浏览器打开 <http://127.0.0.1:8787>。
+
+识别期间在另一个终端观察 GPU；任务 ASR 日志应加载 CUDA 后端。`doctor` 只检查依赖，不验证 GPU 推理。
+
+```powershell
+nvidia-smi -l 1
+```
 
 关闭：在启动终端按 `Ctrl+C`；也可在仓库根目录的另一个 PowerShell 7 终端执行：
 

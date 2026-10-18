@@ -62,7 +62,7 @@ On Linux, install FFmpeg and install/build `whisper-cli` following the [upstream
 
 ## Native Windows (PowerShell, no Docker)
 
-This path runs the standalone Companion on CPU, using Python and whisper.cpp. It does not start the separate GPU workstation API/worker stack. Install Python 3.11 (or let uv obtain it), uv, Node.js 20+ and Corepack first. From the repository root:
+This path runs the standalone Companion on an NVIDIA GPU using CUDA-enabled whisper.cpp. It does not start the separate GPU workstation API/worker stack. Install the NVIDIA driver, Python 3.11 (or let uv obtain it), uv, Node.js 20+ and Corepack first. See the [Windows deployment commands](deployment-windows.zh-CN.md). From the repository root:
 
 ```powershell
 uv venv --python 3.11 .venv
@@ -73,7 +73,7 @@ corepack pnpm build
 Set-Location ..
 ```
 
-Install Windows FFmpeg/FFprobe from a [build linked by FFmpeg](https://ffmpeg.org/download.html), and `whisper-cli.exe` from the [whisper.cpp Windows releases](https://github.com/ggml-org/whisper.cpp/releases). Put the executables on PATH, or copy them into the ignored repository `.bin/` directory. Keep the whisper.cpp DLLs beside `whisper-cli.exe`; copying just the executable is insufficient. The CPU `whisper-bin-x64.zip` build is sufficient; CUDA is optional and has not been validated by this path.
+Install Windows FFmpeg/FFprobe from a [build linked by FFmpeg](https://ffmpeg.org/download.html), and the `whisper-cublas-12.4.0-bin-x64.zip` package from the [whisper.cpp v1.9.2 release](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.9.2). Put the executables on PATH, or copy them into the ignored repository `.bin/` directory. Keep all matching DLLs, including the CUDA backend and runtime libraries, beside `whisper-cli.exe`; copying just the executable is insufficient.
 
 Download the multilingual model once:
 
@@ -86,7 +86,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev_companion.ps1
 
 Open <http://127.0.0.1:8787> and keep the terminal running; Ctrl+C stops the service. The launcher enables UTF-8, adds the virtual environment and `.bin/` to the process PATH, and uses repository-relative defaults even when launched from another directory. `-Python`, `-Model`, `-OutputDir`, `-Port` and `-Threads` override those defaults.
 
-Local-file recognition and explicit-range export have been verified on Windows with the multilingual `small` model and the upstream JFK audio sample. ChatGPT sign-in is unavailable on Windows until the credential store has Windows permission protection; it reports this explicitly without writing tokens. DeepSeek remains a separate optional configuration, and its existing local configuration file inherits Windows directory permissions. Live capture, online video downloads, provider calls and GPU acceleration require separate real-task validation.
+Local-file recognition and explicit-range export have been verified on Windows with the multilingual `small` model and the upstream JFK audio sample. CUDA inference and the application's unchanged ASR adapter have also been verified on an RTX 4070 Laptop GPU. ChatGPT sign-in is unavailable on Windows until the credential store has Windows permission protection; it reports this explicitly without writing tokens. DeepSeek remains a separate optional configuration, and its existing local configuration file inherits Windows directory permissions. Live capture, online video downloads and provider calls require separate real-task validation.
 
 ## Artifacts and recovery
 
