@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import threading
 import time
@@ -304,7 +305,8 @@ def test_translation_config_persists_updates_privately_and_loads_after_restart(t
             assert key not in response.text
             assert json.loads(path.read_text()) == {"deepseek_api_key": key, "deepseek_model": "deepseek-flash",
                                                     'llm_provider': 'deepseek', 'chatgpt_model': ''}
-            assert path.stat().st_mode & 0o777 == 0o600
+            if os.name != "nt":  # Windows uses inherited ACLs, not POSIX mode bits.
+                assert path.stat().st_mode & 0o777 == 0o600
         assert client.get("/companion-api/jobs").json() == []
         assert client.get("/companion-api/jobs/aaaaaaaaaaaa/files/config.json").status_code == 404
     with TestClient(create_app(tmp_path)) as restarted:

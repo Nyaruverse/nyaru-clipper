@@ -9,6 +9,8 @@
 
 当前中文文档对应关系如下：
 
+- [deployment-windows.zh-CN.md](deployment-windows.zh-CN.md)：Windows 安装、启动与关闭命令
+
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md)：网页版交接，含本地工具、分支划分、验收及待办
 - [project-handoff.md](project-handoff.md)：对应英文交接
 

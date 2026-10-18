@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import os
@@ -17,6 +16,13 @@ from app.arctime import media
 from app.arctime.local_asr import LocalASR
 from app.services.subtitles import render_srt
 
+if os.name == "nt":
+    import errno
+    import msvcrt
+    import stat
+else:
+    import fcntl
+
 if TYPE_CHECKING:
     from app.arctime.saozi import SaoziSelector
 
@@ -24,7 +30,31 @@ fingerprint = media.fingerprint
 
 
 @contextmanager
+def _windows_exclusive_lock(path: Path):
+    if path.is_symlink():
+        raise ValueError("Run lock must not be a symbolic link")
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("Run lock must be a regular file")
+        try:
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise
+            raise RuntimeError("Run is busy in another companion process") from exc
+        yield
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
 def exclusive_lock(path: Path):
+    if os.name == "nt":
+        with _windows_exclusive_lock(path):
+            yield
+        return
     descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         try:

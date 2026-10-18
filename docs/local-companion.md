@@ -60,6 +60,34 @@ curl -fL --retry 2 -o ~/.cache/nyaru-clipper/models/ggml-small.bin https://huggi
 
 On Linux, install FFmpeg and install/build `whisper-cli` following the [upstream instructions](https://github.com/ggml-org/whisper.cpp), then add it to PATH. Model downloads are a setup step, never an inference step. Use a multilingual model for Chinese, not an English-only `.en` model.
 
+## Native Windows (PowerShell, no Docker)
+
+This path runs the standalone Companion on CPU, using Python and whisper.cpp. It does not start the separate GPU workstation API/worker stack. Install Python 3.11 (or let uv obtain it), uv, Node.js 20+ and Corepack first. From the repository root:
+
+```powershell
+uv venv --python 3.11 .venv
+uv pip install --python .venv/Scripts/python.exe 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' 'httpx>=0.28,<1' 'PyJWT[crypto]>=2.10,<3' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
+Set-Location web
+corepack pnpm install --frozen-lockfile
+corepack pnpm build
+Set-Location ..
+```
+
+Install Windows FFmpeg/FFprobe from a [build linked by FFmpeg](https://ffmpeg.org/download.html), and `whisper-cli.exe` from the [whisper.cpp Windows releases](https://github.com/ggml-org/whisper.cpp/releases). Put the executables on PATH, or copy them into the ignored repository `.bin/` directory. Keep the whisper.cpp DLLs beside `whisper-cli.exe`; copying just the executable is insufficient. The CPU `whisper-bin-x64.zip` build is sufficient; CUDA is optional and has not been validated by this path.
+
+Download the multilingual model once:
+
+```powershell
+New-Item -ItemType Directory -Force data/model-cache/whispercpp | Out-Null
+Invoke-WebRequest 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin' -OutFile data/model-cache/whispercpp/ggml-small.bin
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev_companion.ps1 -Command doctor
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev_companion.ps1
+```
+
+Open <http://127.0.0.1:8787> and keep the terminal running; Ctrl+C stops the service. The launcher enables UTF-8, adds the virtual environment and `.bin/` to the process PATH, and uses repository-relative defaults even when launched from another directory. `-Python`, `-Model`, `-OutputDir`, `-Port` and `-Threads` override those defaults.
+
+Local-file recognition and explicit-range export have been verified on Windows with the multilingual `small` model and the upstream JFK audio sample. ChatGPT sign-in is unavailable on Windows until the credential store has Windows permission protection; it reports this explicitly without writing tokens. DeepSeek remains a separate optional configuration, and its existing local configuration file inherits Windows directory permissions. Live capture, online video downloads, provider calls and GPU acceleration require separate real-task validation.
+
 ## Artifacts and recovery
 
 Every job gets `data/local-runs/<id>/` containing `source.mp4`, full `subtitles.srt`, `transcript.txt`, structured `transcript.json`, MP4/SRT clip pairs, persistent `clip-*.log` export diagnostics, `job.json`, and `asr/chunk-*.json`/logs. The GUI adds `gui.json` for messages/errors without persisting the source URL. Clip subtitle timestamps start at zero. The GUI can additionally export `styled-*.mp4` burned copies while preserving the original clip.

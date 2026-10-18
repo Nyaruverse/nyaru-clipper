@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import threading
@@ -27,7 +28,7 @@ class JobManager:
         self.model = model
         self.threads = threads
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-companion")
-        self.lock = threading.Lock()
+        self.lock = threading.RLock() if os.name == "nt" else threading.Lock()
         self.active: dict | None = None
         self.last: dict | None = None
         self.stop_event = threading.Event()
@@ -164,6 +165,8 @@ class JobManager:
 
     def run(self, job_id: str, request: JobInput | None, key: SecretStr | None = None,
             model: str | None = None, local_source: Path | None = None, *, style_template: StyleTemplate | None = None):
+        if os.name == "nt":
+            terminal_update = None
         try:
             directory = self.directory(job_id)
             saved = self.read_json(directory / "job.json")
@@ -204,9 +207,14 @@ class JobManager:
                                lambda message: self.update("recording", message), url=request.url if request else None,
                                bilingual=bilingual, style_template=style_template,
                                styled=SubtitleExports(self).export_live)
-                self.update("completed", f"臊子已完成，导出 {len(job['completed_clips'])} 个切片" +
-                            ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕") +
-                            ('；自动样式导出未完成，可恢复处理重试' if job.get('subtitle_style_error') else ''))
+                if os.name == "nt":
+                    terminal_update = ("completed", f"臊子已完成，导出 {len(job['completed_clips'])} 个切片" +
+                                ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕") +
+                                ('；自动样式导出未完成，可恢复处理重试' if job.get('subtitle_style_error') else ''))
+                else:
+                    self.update("completed", f"臊子已完成，导出 {len(job['completed_clips'])} 个切片" +
+                                ("；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕") +
+                                ('；自动样式导出未完成，可恢复处理重试' if job.get('subtitle_style_error') else ''))
                 return
             if request:
                 adapter = LocalASR(self.model, request.language, self.threads)
@@ -233,16 +241,40 @@ class JobManager:
                 message += "；双语字幕未完成，可重试" if translation_failed else "及中日双语字幕"
             if not job["completed_clips"]:
                 message = "未发现达到阈值的高光；完整视频和字幕已保留"
-            self.update("completed", message)
+            if os.name == "nt":
+                terminal_update = ("completed", message)
+            else:
+                self.update("completed", message)
         except Exception as exc:
             error = "外部工具执行超时，请重试；已完成结果会保留" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
-            self.update("failed", "处理失败", error)
+            if os.name == "nt":
+                terminal_update = ("failed", "处理失败", error)
+            else:
+                self.update("failed", "处理失败", error)
         finally:
-            if local_source and local_source.parent == self.root and local_source.name.startswith(".saozi-upload-"):
-                local_source.unlink(missing_ok=True)
-            with self.lock:
-                self.last = self.active
-                self.active = None
+            if os.name == "nt":
+                # Windows file cleanup must finish before publishing the terminal
+                # state. Always release the active slot, even if status I/O fails.
+                try:
+                    if local_source and local_source.parent == self.root and local_source.name.startswith(".saozi-upload-"):
+                        local_source.unlink(missing_ok=True)
+                except OSError as exc:
+                    terminal_update = ("failed", "处理失败", str(exc))
+                with self.lock:
+                    try:
+                        if terminal_update:
+                            self.update(*terminal_update)
+                    except Exception as exc:
+                        self.update("failed", "处理失败", str(exc))
+                    finally:
+                        self.last = self.active
+                        self.active = None
+            else:
+                if local_source and local_source.parent == self.root and local_source.name.startswith(".saozi-upload-"):
+                    local_source.unlink(missing_ok=True)
+                with self.lock:
+                    self.last = self.active
+                    self.active = None
 
     def detail(self, job_id: str, *, include_segments: bool = True) -> dict:
         return job_detail(self, job_id, include_segments=include_segments)
@@ -252,7 +284,11 @@ class JobManager:
         if path.is_symlink():
             raise HTTPException(404, "无效任务文件")
         try:
-            value = json.loads(path.read_text())
+            if os.name == "nt":
+                with media.json_io_lock:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+            else:
+                value = json.loads(path.read_text())
             return value if isinstance(value, dict) else {}
         except (FileNotFoundError, json.JSONDecodeError):
             return {}

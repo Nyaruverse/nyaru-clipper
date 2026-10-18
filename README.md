@@ -14,6 +14,8 @@
 
 优先阅读以下文档：
 
+- [Windows 部署](docs/deployment-windows.zh-CN.md)：PowerShell 7 安装、启动与关闭命令
+
 - [项目交接](docs/project-handoff.zh-CN.md)：当前本地工具与 macOS App 的交付、验收、数据保护和待办
 
 - `docs/deployment-guide.md`：English deployment guide, recommends `uv + pnpm` as the primary local and self-hosted workflow

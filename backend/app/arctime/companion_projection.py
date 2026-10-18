@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,7 +24,12 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
     if not job and not live and not last and not saved:
         raise HTTPException(404, "任务不存在")
     record = live or last or saved
-    state = "completed" if job.get("state") == "completed" else record.get("state", "interrupted")
+    if os.name == "nt":
+        state = ("completed" if job.get("state") == "completed" and
+                 (not live or live.get("live") or live.get("state") == "translating")
+                 else record.get("state", "interrupted"))
+    else:
+        state = "completed" if job.get("state") == "completed" else record.get("state", "interrupted")
     if not live and state not in {"completed", "failed"}:
         state = "interrupted"
     clips = []

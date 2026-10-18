@@ -15,6 +15,13 @@ from urllib.parse import urlsplit
 from app.services.highlight_scoring import derive_scene_like_windows, score_candidate_windows
 from app.services.subtitles import SubtitleSegment, render_srt
 
+if os.name == "nt":
+    import threading
+    import time
+
+    # Windows cannot replace a JSON file while a reader holds it open.
+    json_io_lock = threading.RLock()
+
 
 def fingerprint(path: Path) -> str:
     digest = hashlib.sha256()
@@ -31,7 +38,20 @@ def write_json(path: Path, payload: dict) -> None:
             json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(name, path)
+        if os.name == "nt":
+            with json_io_lock:
+                for attempt in range(6):
+                    try:
+                        os.replace(name, path)
+                        break
+                    except PermissionError:
+                        # Windows readers and file scanners can briefly deny rename.
+                        # Keep the old JSON intact and stop after a bounded retry.
+                        if attempt == 5:
+                            raise
+                        time.sleep(.01 * 2 ** attempt)
+        else:
+            os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -131,6 +151,11 @@ def tool_path(name: str) -> str:
         return str(environment_tool)
     if bundled.is_file() and os.access(bundled, os.X_OK):
         return str(bundled)
+    if os.name == "nt":
+        for directory in (Path(sys.executable).parent, bundled.parent):
+            candidate = directory / (name + ".exe")
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     raise FileNotFoundError(f"Required tool is missing: {name}")
 
 

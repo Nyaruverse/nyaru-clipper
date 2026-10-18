@@ -63,6 +63,10 @@ curl -fL --retry 2 -o ~/.cache/nyaru-clipper/models/ggml-small.bin https://huggi
 
 Linux 安装 FFmpeg，并按 [whisper.cpp 官方说明](https://github.com/ggml-org/whisper.cpp)安装或编译 `whisper-cli`，加入 PATH。下载模型只属于安装步骤；处理任务时使用本地权重，不自动联网下载模型。这里的 `small` 是多语种模型，不要用仅英语的 `.en` 模型识别中文。
 
+## Windows 部署
+
+安装依赖、启动与关闭命令见 [Windows 部署](deployment-windows.zh-CN.md)。
+
 ## 输出与恢复
 
 每次运行创建独立的 `data/local-runs/<id>/`：

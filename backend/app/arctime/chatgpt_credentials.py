@@ -1,6 +1,5 @@
 """Private, atomic SIWC credential storage and cross-process serialization."""
 from contextlib import contextmanager
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -8,6 +7,9 @@ import secrets
 import stat
 import threading
 import uuid
+
+if os.name != 'nt':
+    import fcntl
 
 
 class AuthError(ValueError):
@@ -21,6 +23,8 @@ class CredentialStore:
 
     @contextmanager
     def open(self):
+        if os.name == 'nt':
+            raise AuthError('ChatGPT sign-in is unavailable on Windows until private credential storage is supported.')
         # Directory-relative operations prevent replacement of the checked directory.
         with self._lock:
             directory = self.root / '.chatgpt'
