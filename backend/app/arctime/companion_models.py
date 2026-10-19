@@ -41,8 +41,10 @@ class JobInput(BaseModel):
         parsed = urlsplit(self.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("请输入不含账号密码的 HTTP(S) 视频链接")
-        if sum((bool(self.ranges), self.highlights is not None, self.saozi)) != 1:
-            raise ValueError("请选择指定时间段、高光或臊子模式")
+        if sum((bool(self.ranges), self.highlights is not None, self.saozi)) > 1:
+            raise ValueError("指定时间段、高光与臊子模式互斥，最多选择一个")
+        # 全为 False 时表示「完整视频」模式：仅生成完整字幕不切片
+        mode = "saozi" if self.saozi else "highlights" if self.highlights is not None else "ranges" if self.ranges else "full"
         if self.live and (not self.saozi or parsed.hostname != "live.bilibili.com"
                           or parsed.port is not None or parsed.query or parsed.fragment
                           or not re.fullmatch(r"/(?:blanc/)?[1-9]\d*/?", parsed.path)):

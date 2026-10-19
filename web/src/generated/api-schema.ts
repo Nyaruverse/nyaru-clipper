@@ -55,6 +55,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runtime/config/deepseek": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Deepseek Config
+         * @description Report whether DeepSeek proofreading is configured, never exposing the key.
+         */
+        get: operations["get_deepseek_config_api_runtime_config_deepseek_get"];
+        /**
+         * Put Deepseek Config
+         * @description Store a WebUI-managed DeepSeek API key used when the environment has none.
+         */
+        put: operations["put_deepseek_config_api_runtime_config_deepseek_put"];
+        post?: never;
+        /**
+         * Delete Deepseek Config
+         * @description Remove the WebUI-managed DeepSeek API key.
+         */
+        delete: operations["delete_deepseek_config_api_runtime_config_deepseek_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tasks": {
         parameters: {
             query?: never;
@@ -627,6 +655,20 @@ export interface components {
             /** Task Id */
             task_id: string;
         };
+        /** DeepSeekConfigStatus */
+        DeepSeekConfigStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Source */
+            source: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** DeepSeekConfigUpdate */
+        DeepSeekConfigUpdate: {
+            /** Api Key */
+            api_key: string;
+        };
         /**
          * DownloadAsrModelRecoveryAction
          * @description Download the ASR models required to recover a missing-model failure.
@@ -1188,6 +1230,79 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    get_deepseek_config_api_runtime_config_deepseek_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeepSeekConfigStatus"];
+                };
+            };
+        };
+    };
+    put_deepseek_config_api_runtime_config_deepseek_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeepSeekConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeepSeekConfigStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_deepseek_config_api_runtime_config_deepseek_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeepSeekConfigStatus"];
                 };
             };
         };

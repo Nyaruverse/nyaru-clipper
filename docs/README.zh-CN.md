@@ -9,20 +9,11 @@
 
 当前中文文档对应关系如下：
 
-- [deployment-windows.zh-CN.md](deployment-windows.zh-CN.md)：Windows 安装、启动与关闭命令
-
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md)：网页版交接，含本地工具、分支划分、验收及待办
 - [project-handoff.md](project-handoff.md)：对应英文交接
 
-- [task-sources-acceptance-2026-10-16.zh-CN.md](task-sources-acceptance-2026-10-16.zh-CN.md)：直播间号／BV 号／本地视频、build17 安装与数据保留验收
-
-- [subtitle-editor.zh-CN.md](subtitle-editor.zh-CN.md)：逐条字幕、像素定位、样式／时间与导出
-- [subtitle-editor-acceptance-2026-10-16.zh-CN.md](subtitle-editor-acceptance-2026-10-16.zh-CN.md)：Web／macOS 测试、一致性与 build16 安装验收
-
 - `local-companion.zh-CN.md`：本地链接下载、字幕识别、时间轴、指定片段／高光切片及恢复
 - `local-companion.md`：对应英文说明
-- [openai-subscription.zh-CN.md](openai-subscription.zh-CN.md)：ChatGPT订阅授权与供应商选择
-- [openai-subscription-acceptance-2026-10-15.zh-CN.md](openai-subscription-acceptance-2026-10-15.zh-CN.md)：真实订阅与双语验收
 
 - `user-manual.zh-CN.md`：用户手册（中文）
 - `operator-manual.zh-CN.md`：运维/操作手册（中文）

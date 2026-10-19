@@ -67,15 +67,21 @@ def exclusive_lock(path: Path):
 
 
 def write_manifest(directory: Path, job: dict) -> None:
-    media.write_json(directory / "job.json", job)
+    try:
+        media.write_json(directory / "job.json", job)
+    except OSError:
+        # Windows 文件锁竞态：写入失败不中止任务，内存状态继续推进
+        pass
 
 
 def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highlight_count: int | None,
                transcriber: LocalASR | None = None, *, run_id: str | None = None,
                progress: Callable[[str], None] | None = None, saozi: bool = False,
-               local_source: Path | None = None) -> Path:
-    if sum((bool(ranges), highlight_count is not None, saozi)) != 1 or (highlight_count is not None and highlight_count <= 0):
-        raise ValueError("Choose at least one explicit range or a positive highlight count")
+               local_source: Path | None = None,
+               should_cancel: Callable[[], bool] | None = None) -> Path:
+    explicit = sum((bool(ranges), highlight_count is not None, saozi))
+    if explicit > 1 or (highlight_count is not None and highlight_count <= 0):
+        raise ValueError("指定时间段、高光与臊子模式互斥，最多选择一个；高光必须为正整数")
     if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e for s, e in ranges):
         raise ValueError("Clip bounds must be finite and satisfy 0 <= start < end")
     identity = (transcriber or LocalASR()).identity()
@@ -85,12 +91,23 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
     root.mkdir(parents=True, exist_ok=True)
     directory = root.resolve() / run_id
     directory.mkdir(mode=0o700)
-    job = {"version": 2, "state": "downloading", "ranges": ranges, "highlight_count": highlight_count,
-           "asr": identity, "completed_clips": []}
+    # 计算 ASR 覆盖区间：指定时间段模式只转 ranges 的并集；其他模式转完整视频
+    if ranges:
+        asr_offset = min(s for s, _ in ranges)
+        asr_end = max(e for _, e in ranges)
+    else:
+        asr_offset = 0.0
+        asr_end = None  # 在 duration 探测后回填
+    job: dict = {"version": 2, "state": "downloading", "ranges": ranges, "highlight_count": highlight_count,
+                 "asr": identity, "completed_clips": [], "asr_offset": asr_offset}
     if saozi:
         job["saozi"] = True
+    if not ranges and highlight_count is None and not saozi:
+        job["mode"] = "full"  # 完整视频模式：只生成字幕不切片
     write_manifest(directory, job)
     try:
+        if should_cancel is not None and should_cancel():
+            raise media.RunCancelled()
         video = directory / "source.mp4"
         if progress:
             progress("正在导入本地录像" if local_source else "正在下载视频，完成后开始识别")
@@ -101,17 +118,23 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
             source = video
         else:
             source = media.download_video(url, directory)
+        if should_cancel is not None and should_cancel():
+            raise media.RunCancelled()
         if source != video:
             source.rename(video)
         duration = media.probe_video(video)
-        if not saozi:
+        if not saozi and not job.get("mode") == "full":
             media.select_clips([], duration, ranges, highlight_count)
-        job.update(state="downloaded", video=video.name, video_sha256=fingerprint(video), duration=duration)
+        if asr_end is None:
+            asr_end = duration
+        job.update(state="downloaded", video=video.name, video_sha256=fingerprint(video), duration=duration,
+                   asr_duration=asr_end - asr_offset)
         write_manifest(directory, job)
         return directory
     except BaseException as exc:
-        job["state"] = "download_failed"
-        write_manifest(directory, job)
+        if not isinstance(exc, media.RunCancelled):
+            job["state"] = "download_failed"
+            write_manifest(directory, job)
         exc.add_note(f"Run directory: {directory}")
         raise
 
@@ -135,7 +158,7 @@ def _verify(directory: Path, job: dict) -> Path:
         raise ValueError("Source video changed; create a new run")
     if not math.isfinite(float(job["duration"])) or float(job["duration"]) <= 0:
         raise ValueError("Invalid media duration")
-    if not job.get("saozi"):
+    if not job.get("saozi") and not job.get("mode") == "full":
         media.select_clips([], float(job["duration"]), [tuple(r) for r in job["ranges"]], job["highlight_count"])
     return video
 
@@ -154,7 +177,8 @@ def _publish_text(path: Path, content: str) -> None:
 
 def resume_run(directory: Path, transcriber: LocalASR | None = None,
                *, progress: Callable[[str], None] | None = None,
-               selector: SaoziSelector | None = None) -> dict:
+               selector: SaoziSelector | None = None,
+               should_cancel: Callable[[], bool] | None = None) -> dict:
     directory = directory.resolve()
     notify = progress or (lambda message: None)
     with exclusive_lock(directory / ".lock"):
@@ -174,9 +198,11 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
                 raise ValueError("Local ASR configuration changed; create a new run")
             job["state"] = "transcribing"
             write_manifest(directory, job)
+            asr_offset = float(job.get("asr_offset", 0.0) or 0.0)
+            asr_duration = float(job.get("asr_duration", job["duration"]))
             notify("正在本地识别并生成时间轴")
             try:
-                cues = adapter.transcribe(video, directory, job["duration"])
+                cues = adapter.transcribe(video, directory, asr_duration, offset=asr_offset, should_cancel=should_cancel)
             except ValueError as exc:
                 if not job.get("saozi") or str(exc) != "No speech was recognized; check the source audio and language":
                     raise
@@ -198,6 +224,11 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
                 raise ValueError("Managed transcript changed; create a new run rather than mixing results")
         subtitle_path = _path(directory, job["subtitles"])
         cues = media.read_subtitles(subtitle_path) if subtitle_path.read_text().strip() else []
+        # 完整视频模式：只字幕不切片，跳过 selection/export
+        if job.get("mode") == "full":
+            job["state"] = "completed"
+            write_manifest(directory, job)
+            return job
         if job.get("saozi") and selector is not None:
             if job["state"] != "completed":
                 job["state"] = "analyzing"
@@ -213,6 +244,8 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
         if not selection:
             notify("没有达到评分阈值的高光，保留完整字幕，不生成切片")
         for index, clip in enumerate(selection, start=1):
+            if should_cancel is not None and should_cancel():
+                raise media.RunCancelled()
             target = directory / f"clip-{index:03d}.mp4"
             subtitle = target.with_suffix(".srt")
             completed = next((c for c in job["completed_clips"] if c["video"] == target.name), None)
@@ -224,7 +257,6 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
             if target.is_symlink() or subtitle.is_symlink():
                 raise ValueError("Clip artifacts must not be symlinks")
             if target.exists():
-                # Recover the publication/checkpoint gap without overwriting an existing pair.
                 expected = render_srt(media.clip_subtitles(cues, clip["start"], clip["end"]))
                 if not target.is_file() or not subtitle.is_file() or subtitle.read_text(encoding="utf-8") != expected:
                     raise ValueError("Incomplete or changed clip pair; preserve it and inspect before retrying")

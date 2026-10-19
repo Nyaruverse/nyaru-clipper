@@ -28,7 +28,7 @@ def test_local_saozi_preserves_original_and_recovers_without_recognition(tmp_pat
 
 def test_saozi_silence_retains_video_without_inventing_subtitles(tmp_path, fake_media):
     asr = FakeASR()
-    asr.transcribe = lambda *args: []
+    asr.transcribe = lambda *args, **kwargs: []
     directory = workflow.create_run("https://example.org/replay", tmp_path, [], None, asr, saozi=True)
     job = workflow.resume_run(directory, asr, selector=Selector())
     assert len(job["completed_clips"]) == 1
@@ -44,7 +44,7 @@ def test_saozi_requires_selector_before_export(tmp_path, fake_media):
 
 def test_real_asr_empty_speech_exception_preserves_silent_video(tmp_path, fake_media):
     asr = FakeASR()
-    def silent(*args):
+    def silent(*args, **kwargs):
         raise ValueError("No speech was recognized; check the source audio and language")
     asr.transcribe = silent
     directory = workflow.create_run("https://example.org/replay", tmp_path, [], None, asr, saozi=True)

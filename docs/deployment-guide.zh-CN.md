@@ -19,9 +19,10 @@
 
 以下内容不在本文支持范围内：
 
-- 原生 Windows GPU 部署
 - 原生 macOS GPU 部署
 - 公网暴露
+
+原生 Windows + NVIDIA GPU 部署由根 README 的「快速开始（Windows）」章节覆盖，使用 `scripts/setup.ps1` + `start-all.bat` 两步完成，不在本文展开。
 
 ## 共用要求
 

@@ -32,6 +32,7 @@ class JobManager:
         self.active: dict | None = None
         self.last: dict | None = None
         self.stop_event = threading.Event()
+        self.cancel_event = threading.Event()
         self.api_key: SecretStr | None = None
         self.translation_model = translation.MODEL
         self.llm_provider = 'deepseek'
@@ -93,6 +94,7 @@ class JobManager:
                 if not burn_available():
                     raise HTTPException(409, '当前 FFmpeg 不支持字幕烧录，请取消模板或安装支持 libass 的版本')
             self.stop_event.clear()
+            self.cancel_event.clear()
             self.active = {"id": job_id, "state": "uploading" if deferred else "preparing",
                            "message": "正在导入录像" if deferred else "正在检查本地环境", "started_at": time.time(),
                            "error": None, "live": bool(request.live if request else False), "saozi": saozi,
@@ -107,6 +109,22 @@ class JobManager:
                 raise HTTPException(409, "没有正在录制的臊子直播任务")
             self.stop_event.set()
             self.active["message"] = "正在停止录制并处理剩余内容"
+
+    def cancel(self, job_id: str) -> None:
+        """手动终止正在运行的任务（下载/转录/导出/翻译）。"""
+        with self.lock:
+            if not self.active or self.active["id"] != job_id:
+                raise HTTPException(409, "该任务未在运行，无法终止")
+            if self.active.get("state") in {"cancelling", "cancelled"}:
+                return
+            self.active["state"] = "cancelling"
+            self.active["message"] = "正在终止任务"
+            self.cancel_event.set()
+            self.stop_event.set()
+        killed = media.terminate_active_processes()
+        with self.lock:
+            if self.active and self.active["id"] == job_id:
+                self.active["message"] = f"正在终止任务（已结束 {killed} 个子进程）"
 
     def submit_translation(self, job_id: str) -> str:
         record = self.detail(job_id)
@@ -124,12 +142,15 @@ class JobManager:
                 raise HTTPException(409, str(exc)) from None
             if self.last and self.last["id"] == job_id:
                 self.last = None
+            self.cancel_event.clear()
             self.active = {"id": job_id, "state": "translating", "message": "准备日译中", "error": None, "model": model}
             self.executor.submit(self.run_translation, job_id, key, model)
         return job_id
 
     def run_translation(self, job_id: str, key: SecretStr, model: str):
         def progress(message: str):
+            if self.cancel_event.is_set():
+                raise media.RunCancelled()
             with self.lock:
                 self.active["message"] = message
         try:
@@ -140,11 +161,21 @@ class JobManager:
                 from app.arctime.saozi_translation import translate
                 translate(directory, key, progress=progress, model=model, **options)
             else:
-                translation.translate_run(directory, key, progress=progress, model=model, **options)
+                # 术语表只走 DeepSeek 经典路径（ChatGPT 订阅路径不注入）
+                store = None if request_json is not None else self._load_glossary()
+                terms = store.terms if store is not None else None
+                translation.translate_run(directory, key, progress=progress, model=model, terms=terms, **options)
+                if request_json is None and store is not None:
+                    self._collect_glossary_candidates(directory, key, model, store, progress)
             with workflow.exclusive_lock(directory / '.lock'):
                 saved = self.read_json(directory / 'job.json')
                 if saved.get('live') and saved.get('subtitle_template'):
                     SubtitleExports(self).export_live(directory, saved)
+        except media.RunCancelled:
+            with self.lock:
+                self.active["state"] = "cancelled"
+                self.active["message"] = "翻译已手动终止，可继续翻译"
+                self.active["error"] = None
         except Exception:
             with self.lock:
                 self.active["translation_error"] = "翻译未完成；检查字幕、API Key 或网络后重试，原结果已保留"
@@ -152,6 +183,34 @@ class JobManager:
             with self.lock:
                 self.last = self.active
                 self.active = None
+
+    def _load_glossary(self):
+        from app.arctime.local_features_api import load_glossary_store
+        return load_glossary_store(self)
+
+    def _save_glossary(self, store) -> None:
+        from app.arctime.local_features_api import save_glossary_store
+        save_glossary_store(self, store)
+
+    def _collect_glossary_candidates(self, directory: Path, key: SecretStr, model: str,
+                                     store, progress) -> None:
+        """翻译完成后提取未收录术语候选；任何失败都不影响翻译结果。"""
+        from app.arctime import glossary
+        try:
+            job = json.loads(workflow._path(directory, "job.json").read_text())
+            cues = media.read_subtitles(workflow._path(directory, job["subtitles"]))
+            zh_path = directory / "subtitles.zh.srt"
+            translated = [cue.text for cue in media.read_subtitles(zh_path)] if zh_path.is_file() else []
+            if not cues or not translated:
+                return
+            progress("正在整理术语候选")
+            import httpx
+            with httpx.Client(timeout=120, follow_redirects=False) as client:
+                found = translation.extract_candidates(client, key, model, cues, translated, store.terms)
+            if found and glossary.add_candidates(store, found):
+                self._save_glossary(store)
+        except Exception:
+            pass
 
     def update(self, state: str, message: str, error: str | None = None):
         with self.lock:
@@ -167,6 +226,7 @@ class JobManager:
             model: str | None = None, local_source: Path | None = None, *, style_template: StyleTemplate | None = None):
         if os.name == "nt":
             terminal_update = None
+        should_cancel = lambda: self.cancel_event.is_set()
         try:
             directory = self.directory(job_id)
             saved = self.read_json(directory / "job.json")
@@ -221,7 +281,8 @@ class JobManager:
                 ranges = [(media.parse_time(start), media.parse_time(end)) for start, end in request.ranges]
                 directory = workflow.create_run(request.url, self.root, ranges, request.highlights, adapter, run_id=job_id,
                                                 progress=lambda message: self.update("downloading", message),
-                                                saozi=request.saozi, local_source=local_source)
+                                                saozi=request.saozi, local_source=local_source,
+                                                should_cancel=should_cancel)
                 snapshot = self.read_json(directory / 'job.json')
                 snapshot.update(llm_provider='chatgpt' if selected.startswith('chatgpt:') else 'deepseek', llm_model=selected)
                 workflow.write_manifest(directory, snapshot)
@@ -232,7 +293,8 @@ class JobManager:
                 stage = json.loads((directory / "job.json").read_text())["state"]
                 self.update(stage, message)
 
-            job = workflow.resume_run(directory, adapter, progress=progress, selector=selector)
+            job = workflow.resume_run(directory, adapter, progress=progress, selector=selector,
+                                      should_cancel=should_cancel)
             if is_saozi:
                 self.update("translating", "正在自动生成中日双语字幕")
                 bilingual(directory, True, locked=False)
@@ -245,6 +307,11 @@ class JobManager:
                 terminal_update = ("completed", message)
             else:
                 self.update("completed", message)
+        except media.RunCancelled:
+            if os.name == "nt":
+                terminal_update = ("cancelled", "任务已手动终止，可恢复继续", None)
+            else:
+                self.update("cancelled", "任务已手动终止，可恢复继续")
         except Exception as exc:
             error = "外部工具执行超时，请重试；已完成结果会保留" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
             if os.name == "nt":
@@ -305,8 +372,24 @@ class JobManager:
             allowed.update((clip["video"], clip["subtitles"]))
         translated = self.read_json(directory / "translation.json")
         if translated.get("state") in {"completed", "partial", "translating", "failed"}:
-            bilingual_names = {"subtitles.ja-zh.srt"} | {Path(clip["video"]).stem + ".ja-zh.srt" for clip in job.get("completed_clips", [])}
+            bilingual_names = ({"subtitles.ja-zh.srt", "subtitles.zh.srt"}
+                               | {Path(clip["video"]).stem + suffix for clip in job.get("completed_clips", [])
+                                  for suffix in (".ja-zh.srt", ".zh.srt")})
             allowed.update(bilingual_names & set(translated.get("artifacts", {})))
+        # 切片视频产物（topic-NN.mp4 / topic-combined.mp4）
+        topic_clips = self.read_json(directory / "topic_clips.json")
+        for item in topic_clips.get("items", []):
+            if isinstance(item, dict) and item.get("state") == "completed" and isinstance(item.get("file"), str):
+                allowed.add(item["file"])
+        combined = topic_clips.get("combined")
+        if isinstance(combined, dict) and isinstance(combined.get("file"), str):
+            allowed.add(combined["file"])
+        # 烧录合成产物（*.burn.{variant}.mp4）
+        for clip_burns in self.read_json(directory / "burn.json").get("clips", {}).values():
+            if isinstance(clip_burns, dict):
+                for entry in clip_burns.values():
+                    if isinstance(entry, dict) and entry.get("state") == "completed" and isinstance(entry.get("file"), str):
+                        allowed.add(entry["file"])
         path = directory / name
         if name not in allowed or Path(name).name != name or path.is_symlink() or not path.is_file():
             raise HTTPException(404, "结果文件不存在")

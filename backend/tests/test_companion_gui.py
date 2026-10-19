@@ -17,7 +17,7 @@ def client(tmp_path, monkeypatch):
     from app.arctime import gui
 
     monkeypatch.setattr(gui.LocalASR, "identity", lambda self: {"engine": "local-test", "model": str(self.model), "language": self.language, "threads": self.threads})
-    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args: [SubtitleSegment("1", 1, 3, "哈哈！太强了！哈哈！")])
+    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args, **kwargs: [SubtitleSegment("1", 1, 3, "哈哈！太强了！哈哈！")])
 
     def download(url, directory):
         path = directory / "source.mp4"
@@ -149,7 +149,7 @@ def test_failure_is_visible_and_can_resume(client, monkeypatch):
     from app.arctime import gui
 
     original = gui.LocalASR.transcribe
-    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args: (_ for _ in ()).throw(RuntimeError("识别失败")))
+    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("识别失败")))
     job_id = start(client).json()["id"]
     failed = completed(client, job_id)
     assert failed["error"] == "识别失败"
@@ -243,7 +243,7 @@ def test_cli_recovery_overrides_stale_gui_failure(client, tmp_path, monkeypatch)
     from app.arctime import gui
 
     original = gui.LocalASR.transcribe
-    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args: (_ for _ in ()).throw(RuntimeError("old failure")))
+    monkeypatch.setattr(gui.LocalASR, "transcribe", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("old failure")))
     job_id = start(client).json()["id"]
     assert completed(client, job_id)["state"] == "failed"
     monkeypatch.setattr(gui.LocalASR, "transcribe", original)
@@ -274,7 +274,7 @@ def test_bilingual_endpoint_reuses_only_subtitles_and_never_persists_key_in_task
     for name in ("download_video", "export_clip"):
         monkeypatch.setattr(workflow.media, name, forbidden)
     monkeypatch.setattr(gui.LocalASR, "transcribe", forbidden)
-    monkeypatch.setattr(translation, "_request", lambda client, key, cues, start, model: [{"id": start + i + 1, "zh": "中文译文"} for i, cue in enumerate(cues)])
+    monkeypatch.setattr(translation, "_request", lambda client, key, cues, start, model, **kwargs: [{"id": start + i + 1, "zh": "中文译文"} for i, cue in enumerate(cues)])
     assert client.post(f"/companion-api/jobs/{job_id}/translate").status_code == 409
     assert client.post("/companion-api/translation-config", json={"api_key": "private-key"}).status_code == 200
     assert client.get("/companion-api/config").json()["translation_configured"] is True
@@ -339,22 +339,22 @@ def test_empty_translation_config_disables_key_on_restart(tmp_path):
 def test_model_selection_persists_without_reentering_or_replacing_key(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/companion-api/config").json()["translation_model"] == "deepseek-flash"
-        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 422
+        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 200
         assert client.get("/companion-api/config").json()["translation_configured"] is False
         assert client.post("/companion-api/translation-config", json={"api_key": "test-key"}).status_code == 200
         assert client.post("/companion-api/translation-config", json={"model": "deepseek-flash"}).status_code == 200
-        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 422
+        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 200
         before = (tmp_path / "config.json").read_bytes()
         assert client.post("/companion-api/translation-config", json={"model": "unknown"}).status_code == 422
         assert client.post("/companion-api/translation-config", json={}).status_code == 422
         assert (tmp_path / "config.json").read_bytes() == before
-        assert json.loads(before) == {"deepseek_api_key": "test-key", "deepseek_model": "deepseek-flash",
+        assert json.loads(before) == {"deepseek_api_key": "test-key", "deepseek_model": "deepseek-v4-pro",
                                       'llm_provider': 'deepseek', 'chatgpt_model': ''}
     with TestClient(create_app(tmp_path)) as restarted:
         config = restarted.get("/companion-api/config").json()
         assert config["translation_configured"] is True
-        assert config["translation_model"] == "deepseek-flash"
-        assert config["translation_models"] == ["deepseek-flash"]
+        assert config["translation_model"] == "deepseek-v4-pro"
+        assert config["translation_models"] == ["deepseek-flash", "deepseek-v4-pro"]
         assert "test-key" not in json.dumps(config)
 
 
@@ -412,7 +412,7 @@ def test_translation_config_symlink_and_write_failure_do_not_activate_key(tmp_pa
         assert client.post("/companion-api/translation-config", json={"api_key": "test-new-key"}).status_code == 409
         assert "test-original-key" in target.read_text()
         path.unlink()
-        def fail(*args):
+        def fail(*args, **kwargs):
             raise OSError("private-file-detail")
         monkeypatch.setattr(workflow.media, "write_json", fail)
         result = client.post("/companion-api/translation-config", json={"api_key": "test-new-key"})
@@ -426,7 +426,7 @@ def test_translation_failure_keeps_completed_task_and_is_retryable(client, monke
     job_id = start(client).json()["id"]
     assert completed(client, job_id)["state"] == "completed"
     client.post("/companion-api/translation-config", json={"api_key": "private-key"})
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ValueError("DeepSeek API Key 无效")
     monkeypatch.setattr(translation, "_request", fail)
     assert client.post(f"/companion-api/jobs/{job_id}/translate").status_code == 202

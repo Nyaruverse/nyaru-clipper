@@ -88,10 +88,10 @@ def test_truncated_response_never_publishes(tmp_path):
 
 def test_completed_checkpoint_requires_all_rows_and_outputs(tmp_path, monkeypatch):
     fixture_run(tmp_path)
-    monkeypatch.setattr(translation, "_request", lambda client, key, cues, start, model: [{"id": start + i + 1, "zh": "你好"} for i, cue in enumerate(cues)])
+    monkeypatch.setattr(translation, "_request", lambda client, key, cues, start, model, **kwargs: [{"id": start + i + 1, "zh": "你好"} for i, cue in enumerate(cues)])
     state = translation.translate_run(tmp_path, SecretStr("key"))
     unchanged = media.fingerprint(tmp_path / "translation.json")
-    with pytest.raises(ValueError, match="模型"):
+    with pytest.raises(ValueError, match="缓存"):
         translation.translate_run(tmp_path, SecretStr("key"), model="deepseek-v4-pro")
     assert media.fingerprint(tmp_path / "translation.json") == unchanged
     original = json.loads(json.dumps(state))

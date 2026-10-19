@@ -23,6 +23,64 @@ if os.name == "nt":
     json_io_lock = threading.RLock()
 
 
+class RunCancelled(Exception):
+    """协作式取消：任务被用户手动终止。"""
+
+
+_ACTIVE_PROCESSES: set[subprocess.Popen] = set()
+_ACTIVE_PROCESSES_LOCK = threading.Lock()
+
+
+def run_managed(command: list, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run 的可终止版本：登记 Popen 句柄，支持 taskkill 进程树。"""
+    kwargs.pop("capture_output", None)  # Popen 不支持 capture_output，手动转换
+    if kwargs.get("stdout") is None and "stdout" not in kwargs:
+        kwargs["stdout"] = subprocess.PIPE
+    if kwargs.get("stderr") is None and "stderr" not in kwargs:
+        kwargs["stderr"] = subprocess.PIPE
+    kwargs.pop("check", None)
+    text = kwargs.pop("text", False)
+    timeout = kwargs.pop("timeout", None)
+    process = subprocess.Popen(command, **kwargs)
+    with _ACTIVE_PROCESSES_LOCK:
+        _ACTIVE_PROCESSES.add(process)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        if text and isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if text and isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        _kill_process(process)
+        raise
+    finally:
+        with _ACTIVE_PROCESSES_LOCK:
+            _ACTIVE_PROCESSES.discard(process)
+
+
+def _kill_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                       capture_output=True, check=False)
+    else:
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
+def terminate_active_processes() -> int:
+    """终止所有登记的子进程，返回终止数量。"""
+    with _ACTIVE_PROCESSES_LOCK:
+        processes = list(_ACTIVE_PROCESSES)
+    for process in processes:
+        _kill_process(process)
+    return len(processes)
+
+
 def fingerprint(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -69,7 +127,11 @@ def parse_time(value: str) -> float:
 
 
 def read_subtitles(path: Path, *, merge_contiguous_zero_duration: bool = False) -> list[SubtitleSegment]:
-    content = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").strip()
+    try:
+        content = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").strip()
+    except OSError:
+        # Windows 文件锁竞态：读取失败返回空列表，避免前端白屏
+        return []
     cues: list[SubtitleSegment] = []
     if path.suffix.lower() == ".ass":
         in_events = False
@@ -123,8 +185,11 @@ def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[
         raise ValueError("Media duration must be finite and positive")
     if bool(ranges) == (highlight_count is not None):
         raise ValueError("Choose explicit ranges or highlights")
-    if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e <= duration for s, e in ranges):
-        raise ValueError("Clip bounds must satisfy 0 <= start < end <= video duration")
+    if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e for s, e in ranges):
+        raise ValueError("Clip bounds must be finite and satisfy 0 <= start < end")
+    for index, (s, e) in enumerate(ranges, start=1):
+        if e > duration:
+            raise ValueError(f"第 {index} 段时间超出视频总长（视频总长 {duration:.1f} 秒，该段结束于 {e:.1f} 秒）")
     if ranges:
         return [{"start": float(s), "end": float(e), "score": None, "reasons": ["manual"]} for s, e in dict.fromkeys(ranges)]
     if highlight_count is None or highlight_count <= 0:
@@ -178,11 +243,18 @@ def download_video(url: str, directory: Path) -> Path:
     if (directory / "source.mp4").exists():
         raise FileExistsError("Download destination already exists")
     downloader = [tool_path("yt-dlp")]
-    result = subprocess.run([*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
-                             "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
-                             "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
-                             "-o", str(directory / "source.%(ext)s"), "--", url],
-                            capture_output=True, text=True, timeout=7200, check=False)
+    # B 站登录态 cookie（需要登录的视频）
+    cookie_path = os.environ.get("APP_BILIBILI_COOKIE_PATH", "").strip()
+    cookie_args: list[str] = []
+    if cookie_path and ("bilibili.com" in (parsed.hostname or "") or "b23.tv" in (parsed.hostname or "")):
+        cookie_file = Path(cookie_path).expanduser()
+        if cookie_file.is_file():
+            cookie_args = ["--cookies", str(cookie_file)]
+    result = run_managed([*downloader, *cookie_args, "--no-playlist", "--no-progress", "--no-overwrites",
+                          "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
+                          "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
+                          "-o", str(directory / "source.%(ext)s"), "--", url],
+                         text=True, timeout=7200)
     if result.returncode:
         raise RuntimeError("yt-dlp download failed; check URL access and downloader configuration")
     path = directory / "source.mp4"

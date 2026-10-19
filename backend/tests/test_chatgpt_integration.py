@@ -147,7 +147,7 @@ def subscription_pipeline(tmp_path, monkeypatch):
         def identity(self):
             return {'engine': 'subscription-wire-fixture'}
 
-        def transcribe(self, path, directory, duration):
+        def transcribe(self, path, directory, duration, **kwargs):
             return [SubtitleSegment(str(i), float(i), min(i + 9.5, duration), 'こんにちは、段落です。')
                     for i in range(0, int(duration), 10)]
 
@@ -246,7 +246,7 @@ def legacy_manager(tmp_path, monkeypatch):
     manager.api_key = SecretStr('synthetic-flash-key')
     monkeypatch.setattr(manager.chatgpt, 'status', lambda: {'connected': True, 'sharing': True})
     submitted = []
-    monkeypatch.setattr(manager.executor, 'submit', lambda fn, *args: submitted.append((fn, args)))
+    monkeypatch.setattr(manager.executor, 'submit', lambda fn, *args, **kwargs: submitted.append((fn, args, kwargs)))
     identity = 'abcdef012345'
     directory = tmp_path / identity
     directory.mkdir()
@@ -273,13 +273,13 @@ def test_resume_uses_saved_identity_or_legacy_flash(legacy_manager, monkeypatch,
     (directory / 'job.json').write_text(json.dumps(job))
     expected = 'chatgpt:saved-model' if saved else 'deepseek-flash'
     manager.submit(None, identity)
-    _, args = submitted.pop()
+    _, args, kwargs = submitted.pop()
     assert args[-1] == expected
     seen = []
-    monkeypatch.setattr(workflow, 'resume_run', lambda path, adapter, *, progress, selector:
+    monkeypatch.setattr(workflow, 'resume_run', lambda path, adapter, *, progress, selector, **kwargs:
                         (seen.append(selector.model) or job))
     monkeypatch.setattr(saozi_translation, 'translate', lambda path, key, **kwargs: seen.append(kwargs['model']))
-    manager.run(*args)
+    manager.run(*args, **kwargs)
     assert seen == [expected, expected]
 
 
@@ -297,11 +297,11 @@ def test_translation_uses_saved_identity_or_checkpoint_or_legacy_flash(legacy_ma
     if checkpoint:
         (directory / 'translation.json').write_text(json.dumps(checkpoint))
     manager.submit_translation(identity)
-    _, args = submitted.pop()
+    _, args, kwargs = submitted.pop()
     assert args[-1] == expected
     seen = []
     monkeypatch.setattr(saozi_translation, 'translate', lambda path, key, **kwargs: seen.append(kwargs['model']))
-    manager.run_translation(*args)
+    manager.run_translation(*args, **kwargs)
     assert seen == [expected]
 
 
@@ -310,5 +310,5 @@ def test_new_request_keeps_current_subscription_default(legacy_manager):
     manager, _, _, submitted = legacy_manager
     identity = manager.submit(JobInput(url='https://example.test/video', saozi=True))
     assert identity != 'abcdef012345'
-    _, args = submitted.pop()
+    _, args, kwargs = submitted.pop()
     assert args[-1] == 'chatgpt:new-default'

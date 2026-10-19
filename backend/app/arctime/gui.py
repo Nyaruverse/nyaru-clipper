@@ -14,6 +14,7 @@ from app.arctime.chatgpt_api import chatgpt_router
 from app.arctime.companion_models import JobInput, TranslationConfig, validated_api_key
 from app.arctime.companion_manager import JobManager
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
+from app.arctime.local_features_api import local_features_router
 from app.arctime.subtitle_api import subtitle_router
 from app.arctime.subtitle_exports import SubtitleExports
 from app.arctime.saozi_api import saozi_router
@@ -38,6 +39,7 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
     app.include_router(subtitle_router(manager, exports))
     app.include_router(saozi_router(manager))
     app.include_router(chatgpt_router(manager))
+    app.include_router(local_features_router(manager))
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
 
     @app.middleware("http")

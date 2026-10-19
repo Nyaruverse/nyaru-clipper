@@ -14,7 +14,7 @@ class FakeASR:
     def identity(self):
         return {"engine": "local-test", "model_sha256": "test"}
 
-    def transcribe(self, video, directory, duration):
+    def transcribe(self, video, directory, duration, **kwargs):
         self.calls += 1
         if self.failure:
             raise RuntimeError("local engine failed")
@@ -114,7 +114,7 @@ def test_manifest_path_traversal_is_rejected(tmp_path, fake_media):
 def test_subtitle_source_beyond_video_is_rejected(tmp_path, fake_media):
     asr = FakeASR()
     directory = new_run(tmp_path, asr)
-    asr.transcribe = lambda *args: [SubtitleSegment("1", 1, 15, "wrong video")]
+    asr.transcribe = lambda *args, **kwargs: [SubtitleSegment("1", 1, 15, "wrong video")]
     with pytest.raises(ValueError, match="duration"):
         workflow.resume_run(directory, asr)
 

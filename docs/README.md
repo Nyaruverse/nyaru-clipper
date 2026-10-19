@@ -12,15 +12,8 @@ Available documents:
 - [project-handoff.md](project-handoff.md): Browser companion handoff, branch separation, evidence and next actions
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md): Chinese handoff
 
-- [task-sources-acceptance-2026-10-16.md](task-sources-acceptance-2026-10-16.md): Direct room/BV inputs, local video, build17 installation and data preservation
-
-- [subtitle-editor.md](subtitle-editor.md): Per-cue content, pixel positioning, styles, timing and export
-- [subtitle-editor-acceptance-2026-10-16.md](subtitle-editor-acceptance-2026-10-16.md): Web/macOS tests, preview/ASS/burn consistency and build16 installation
-
 - `local-companion.md`: Local URL download, offline ASR, range/highlight clipping and recovery
 - `local-companion.zh-CN.md`: Chinese local companion guide
-- [openai-subscription.md](openai-subscription.md): ChatGPT subscription authorization and provider selection
-- [openai-subscription-acceptance-2026-10-15.md](openai-subscription-acceptance-2026-10-15.md): Actual subscription and bilingual acceptance
 
 - `user-manual.md`: English user manual
 - `operator-manual.md`: English operator manual

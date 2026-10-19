@@ -15,7 +15,7 @@ class Adapter:
     def identity(self):
         return {'engine': 'fixture'}
 
-    def transcribe(self, source, directory, duration):
+    def transcribe(self, source, directory, duration, **kwargs):
         return [SubtitleSegment('1', 0, duration, '段落。')]
 
 

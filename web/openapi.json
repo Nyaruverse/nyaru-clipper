@@ -351,6 +351,56 @@
         "title": "CreateWorkstationTaskResponse",
         "type": "object"
       },
+      "DeepSeekConfigStatus": {
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "configured",
+          "source"
+        ],
+        "title": "DeepSeekConfigStatus",
+        "type": "object"
+      },
+      "DeepSeekConfigUpdate": {
+        "properties": {
+          "api_key": {
+            "minLength": 1,
+            "title": "Api Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key"
+        ],
+        "title": "DeepSeekConfigUpdate",
+        "type": "object"
+      },
       "DownloadAsrModelRecoveryAction": {
         "additionalProperties": false,
         "description": "Download the ASR models required to recover a missing-model failure.",
@@ -1668,6 +1718,88 @@
           }
         },
         "summary": "Runtime Capabilities",
+        "tags": [
+          "runtime"
+        ]
+      }
+    },
+    "/api/runtime/config/deepseek": {
+      "delete": {
+        "description": "Remove the WebUI-managed DeepSeek API key.",
+        "operationId": "delete_deepseek_config_api_runtime_config_deepseek_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepSeekConfigStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete Deepseek Config",
+        "tags": [
+          "runtime"
+        ]
+      },
+      "get": {
+        "description": "Report whether DeepSeek proofreading is configured, never exposing the key.",
+        "operationId": "get_deepseek_config_api_runtime_config_deepseek_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepSeekConfigStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Deepseek Config",
+        "tags": [
+          "runtime"
+        ]
+      },
+      "put": {
+        "description": "Store a WebUI-managed DeepSeek API key used when the environment has none.",
+        "operationId": "put_deepseek_config_api_runtime_config_deepseek_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeepSeekConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepSeekConfigStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Deepseek Config",
         "tags": [
           "runtime"
         ]

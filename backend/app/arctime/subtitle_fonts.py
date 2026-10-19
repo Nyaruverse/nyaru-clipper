@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -53,6 +54,43 @@ def _macos_families() -> list[str]:
         foundation.CFRelease(array)
 
 
+def _windows_families() -> list[str]:
+    """用 fontTools 读取系统字体文件的 name 表，收集 family 名（中英文都收录，浏览器/ASS 均可按名解析）。"""
+    from fontTools.ttLib import TTCollection, TTFont
+
+    directories = [Path('C:/Windows/Fonts'), Path.home() / 'AppData' / 'Local' / 'Microsoft' / 'Windows' / 'Fonts']
+    names: set[str] = set()
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for path in sorted(directory.iterdir()):
+            if path.suffix.lower() not in {'.ttf', '.otf', '.ttc'}:
+                continue
+            try:
+                if path.suffix.lower() == '.ttc':
+                    fonts = TTCollection(str(path), lazy=True).fonts
+                else:
+                    fonts = [TTFont(str(path), lazy=True)]
+                for font in fonts:
+                    table = font['name']
+                    # 优先排版 family(16)，回退 family(1)；中文(0x0804)与英文(0x0409)名称都收录
+                    for name_id in (16, 1):
+                        records = [table.getName(name_id, 3, 1, 0x0804), table.getName(name_id, 3, 1, 0x0409)]
+                        found = False
+                        for record in records:
+                            if record is None:
+                                continue
+                            value = record.toUnicode().strip()
+                            if value:
+                                names.add(value)
+                                found = True
+                        if found:
+                            break
+            except Exception:
+                continue
+    return list(names)
+
+
 @lru_cache(maxsize=1)
 def font_catalog() -> FontCatalog:
     try:
@@ -65,8 +103,10 @@ def font_catalog() -> FontCatalog:
             result = subprocess.run([binary, '--format', '%{family}\n'], capture_output=True, text=True,
                                     timeout=10, check=True)
             names = [name for line in result.stdout.splitlines() for name in line.split(',')]
+        elif sys.platform == 'win32':
+            names = _windows_families()
         else:
             return FontCatalog(available=False)
-    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+    except (ImportError, OSError, ValueError, AttributeError, subprocess.SubprocessError):
         return FontCatalog(available=False)
     return FontCatalog(available=True, families=tuple(sorted({name.strip() for name in names if name.strip()}, key=str.casefold)))

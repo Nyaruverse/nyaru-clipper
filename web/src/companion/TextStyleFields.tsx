@@ -1,6 +1,6 @@
 import { advancedDefaults } from './subtitleDocument';
 import type { TextStyle } from './subtitleStyle';
-import { useId } from 'react';
+import { FontPicker } from './FontPicker';
 
 export interface FontCatalog { readonly available: boolean; readonly families: readonly string[] }
 interface Props { readonly style: TextStyle; readonly onChange: (patch: Partial<TextStyle>) => void; readonly advancedOnly?: boolean; readonly fonts?: FontCatalog }
@@ -22,12 +22,9 @@ const numericFields = [
 
 export function TextStyleFields({ style, onChange, advancedOnly = false, fonts }: Props) {
   const value = { ...advancedDefaults, ...style };
-  const fontList = useId();
   const missing = fonts?.available && !fonts.families.some(name => name.toLocaleLowerCase() === style.font.trim().toLocaleLowerCase());
   return <div className="cue-style-fields">
-    {!advancedOnly && <label className="ny-field cue-wide">字体<input className="ny-input" list={fontList} maxLength={100} value={style.font} onChange={event => {
-      if (!/[,{}\\\x00-\x1f\x7f-\x9f]/.test(event.target.value)) onChange({ font: event.target.value });
-    }} /><datalist id={fontList}>{fonts?.families?.map(font => <option key={font} value={font} />)}</datalist></label>}
+    {!advancedOnly && <label className="ny-field cue-wide">字体<FontPicker value={style.font} fonts={fonts?.families ?? []} onChange={font => onChange({ font })} /></label>}
     {missing && <p role="status" className="companion-error cue-wide">未检测到字体“{style.font}”，渲染时可能使用替代字体；请选择已安装字体并核对预览。</p>}
     {fonts?.available === false && <p className="companion-footnote cue-wide">当前系统无法列出字体，请通过精确预览核对字体替代情况。</p>}
     <div className="cue-checks cue-wide">{([{ key: 'bold', label: '粗体' }, { key: 'italic', label: '斜体' }, { key: 'underline', label: '下划线' }, { key: 'hidden', label: '隐藏此语言' }] as const).map(field => <label key={field.key}><input type="checkbox" checked={value[field.key]} onChange={event => onChange({ [field.key]: event.target.checked })} />{field.label}</label>)}</div>

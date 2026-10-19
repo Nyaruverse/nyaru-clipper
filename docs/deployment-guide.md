@@ -19,9 +19,10 @@ This project does not target cloud deployment, public internet exposure, multi-u
 
 Unsupported or out of scope for this document:
 
-- native Windows GPU deployment
 - native macOS GPU deployment
 - public internet exposure
+
+Native Windows + NVIDIA GPU deployment is covered by the "Quick Start (Windows)" section in the root README, using `scripts/setup.ps1` + `start-all.bat` in two steps. It is not expanded here.
 
 ## Shared requirements
 
@@ -148,7 +149,7 @@ VITE_API_BASE_URL=http://192.168.1.50:8000/api ./scripts/dev_web.sh
 
 Use this path only inside WSL2 Ubuntu 22.04 or 24.04 after following the official AMD ROCm setup for WSL.
 
-This document does not claim support for native Windows GPU execution, native Linux ROCm, Docker ROCm, or any broader WSL distro matrix.
+This document does not claim support for native Linux ROCm, Docker ROCm, or any broader WSL distro matrix. For native Windows GPU execution, see the "Quick Start (Windows)" section in the root README.
 
 ### Supported WSL flow
 
