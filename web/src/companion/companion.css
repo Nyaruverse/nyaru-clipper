@@ -168,6 +168,8 @@ body { margin: 0; }
 .cue-wide { grid-column: 1 / -1; }
 .cue-checks { display: flex; flex-wrap: wrap; gap: var(--ny-space-2) var(--ny-space-3); }
 .cue-checks label, .cue-toggle { display: flex; align-items: center; gap: var(--ny-space-2); min-height: 44px; }
+.translate-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--ny-space-3); }
+.glossary-collect-toggle { min-height: 0; font-size: var(--ny-text-sm); cursor: pointer; }
 .cue-anchor-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: var(--ny-space-2); max-width: 220px; }
 .cue-session-status { margin-bottom: var(--ny-space-4); overflow-wrap: anywhere; }
 .cue-global-style { border-top: 1px solid var(--ny-border); margin-top: var(--ny-space-4); padding-top: var(--ny-space-3); }
@@ -328,3 +330,4 @@ button.glossary-text { border: 0; background: none; padding: 0; cursor: pointer;
 .companion-transcript .transcript-editing { display: flex; gap: var(--ny-space-3); align-items: flex-start; padding: var(--ny-space-3) var(--ny-space-2); border-top: 1px solid var(--ny-accent); background: var(--ny-surface-muted); }
 .companion-transcript .transcript-editing textarea { flex: 1; min-width: 0; font: inherit; line-height: 1.6; padding: var(--ny-space-2); border: 1px solid var(--ny-border); border-radius: var(--ny-radius-2); resize: vertical; background: var(--ny-surface); color: var(--ny-ink); }
 .companion-transcript .transcript-edit-actions { display: grid; gap: var(--ny-space-1); }
+

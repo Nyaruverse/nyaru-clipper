@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,7 +12,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.arctime import companion_llm, media, translation, workflow
 from app.arctime.chatgpt_api import chatgpt_router
-from app.arctime.companion_models import JobInput, TranslationConfig, validated_api_key
+from app.arctime.companion_models import GlossarySettings, JobInput, TranslationConfig, validated_api_key
 from app.arctime.companion_manager import JobManager
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
 from app.arctime.local_features_api import local_features_router
@@ -65,7 +66,8 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
                 "translation_config_error": manager.config_error,
                 'llm_provider': manager.llm_provider,
                 'llm_model': manager.chatgpt_model if manager.llm_provider == 'chatgpt' else manager.translation_model,
-                'llm_configured': companion_llm.configured(manager), 'chatgpt': manager.chatgpt.status()}
+                'llm_configured': companion_llm.configured(manager), 'chatgpt': manager.chatgpt.status(),
+                'glossary_collect_candidates': manager.glossary_collect_candidates}
 
     @app.post("/companion-api/translation-config")
     def translation_config(payload: TranslationConfig):
@@ -93,6 +95,24 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
             manager.translation_model = selected_model
             manager.config_error = None
         return {"translation_configured": manager.api_key is not None, "translation_model": manager.translation_model}
+
+    @app.post("/companion-api/glossary-settings")
+    def glossary_settings(payload: GlossarySettings):
+        with manager.lock:
+            if manager.config_path.is_symlink():
+                raise HTTPException(409, "配置文件不能是符号链接，请检查 runs/config.json")
+            try:
+                config = {}
+                if manager.config_path.exists():
+                    loaded = json.loads(manager.config_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        config = loaded
+                config["glossary_collect_candidates"] = payload.collect_candidates
+                media.write_json(manager.config_path, config)
+            except (OSError, UnicodeError):
+                raise HTTPException(500, "配置保存失败，请检查数据目录权限后重试") from None
+            manager.glossary_collect_candidates = payload.collect_candidates
+        return {"glossary_collect_candidates": manager.glossary_collect_candidates}
 
     @app.post("/companion-api/jobs/{job_id}/translate", status_code=202)
     def translate(job_id: str):
@@ -149,3 +169,4 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         return FileResponse(web_dist / "companion.html")
 
     return app
+

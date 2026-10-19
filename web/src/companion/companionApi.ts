@@ -17,6 +17,7 @@ export interface CompanionConfig {
   readonly llm_model?: string;
   readonly llm_configured?: boolean;
   readonly chatgpt?: ChatGPTStatus;
+  readonly glossary_collect_candidates?: boolean;
 }
 export interface ChatGPTModel { readonly slug: string; readonly display_name: string }
 
@@ -160,3 +161,4 @@ export interface TopicClipStore {
   combined?: { file: string; state: string; error: string | null } | null;
   created_at?: number;
 }
+

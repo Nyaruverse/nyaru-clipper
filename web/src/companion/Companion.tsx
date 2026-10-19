@@ -90,6 +90,9 @@ export function Companion() {
     onSuccess: () => { setEditCue(null); void queryClient.invalidateQueries({ queryKey: ["companion", "job", selectedId] }); },
     onError: err => setError(err.message) });
   const shapesQuery = useShapes();
+  const glossarySettings = useMutation({ mutationFn: (collect: boolean) => api("/glossary-settings", { collect_candidates: collect }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion", "config"] }); },
+    onError: err => setError(err.message) });
 
   useEffect(() => { if (!selectedId && history.data?.length) setSelectedId(history.data[0].id); }, [selectedId, history.data]);
   useEffect(() => { setPreview("source.mp4"); setSeek(null); setEditCue(null); }, [selectedId]);
@@ -301,7 +304,13 @@ export function Companion() {
           {job?.can_resume && <button className="ny-button" disabled={!!busy || resume.isPending} onClick={() => { setError(null); resume.mutate(job.id); }}>恢复处理</button>}
           {cancellable(job ?? undefined) && <button className="ny-button" disabled={cancel.isPending || job?.state === "cancelling"} onClick={() => { setError(null); cancel.mutate(job!.id); }}>{job?.state === "cancelling" ? "正在终止…" : "终止任务"}</button>}
           {job?.state === "completed" && <>
-            <button className="ny-button" disabled={!translationConfigured || !!busy || translate.isPending || !!hasBilingual || unavailable} onClick={() => { setError(null); translate.mutate(job.id); }}>{hasBilingual ? "中日双语字幕已生成" : ["failed", "interrupted"].includes(job.translation?.state) ? "继续生成中日双语字幕" : "生成中日双语字幕"}</button>
+            <span className="translate-actions">
+              <button className="ny-button" disabled={!translationConfigured || !!busy || translate.isPending || !!hasBilingual || unavailable} onClick={() => { setError(null); translate.mutate(job.id); }}>{hasBilingual ? "中日双语字幕已生成" : ["failed", "interrupted"].includes(job.translation?.state) ? "继续生成中日双语字幕" : "生成中日双语字幕"}</button>
+              <label className="cue-toggle glossary-collect-toggle" title="翻译完成后自动识别未收录词条，加入术语表待确认候选">
+                <input type="checkbox" checked={config.data?.glossary_collect_candidates ?? true} disabled={glossarySettings.isPending || unavailable}
+                  onChange={event => glossarySettings.mutate(event.target.checked)} />收集术语候选词
+              </label>
+            </span>
             {job.translation && job.translation.state !== "not_started" && <p role="status">{job.translation.message ?? `翻译 ${job.translation.done}/${job.translation.total} 条`}{hasBilingual ? " · 已完成" : job.translation.state === "interrupted" ? " · 已中断，可继续" : ""}</p>}
             {job.translation?.error && <p className="companion-error" role="alert">{job.translation.error}</p>}
           </>}
@@ -337,3 +346,4 @@ export function Companion() {
     </main>
   </div>;
 }
+

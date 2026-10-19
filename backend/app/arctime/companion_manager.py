@@ -40,6 +40,8 @@ class JobManager:
         self.chatgpt = ChatGPTAuth(self.root)
         self.config_path = self.root / "config.json"
         self.config_error: str | None = None
+        # 术语表候选词收集开关（翻译完成后自动识别未收录词条），默认开启
+        self.glossary_collect_candidates = True
         try:
             if self.config_path.is_symlink():
                 raise ValueError("配置文件不能是符号链接")
@@ -63,6 +65,7 @@ class JobManager:
                 if not isinstance(chatgpt_model, str) or (chatgpt_model and not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', chatgpt_model)):
                     raise ValueError('订阅模型配置无效')
                 self.chatgpt_model = chatgpt_model
+                self.glossary_collect_candidates = bool(config.get("glossary_collect_candidates", True))
         except (OSError, ValueError, UnicodeError):
             self.config_error = "无法读取翻译配置；请检查 runs/config.json 或重新保存 Key／模型"
 
@@ -165,7 +168,7 @@ class JobManager:
                 store = None if request_json is not None else self._load_glossary()
                 terms = store.terms if store is not None else None
                 translation.translate_run(directory, key, progress=progress, model=model, terms=terms, **options)
-                if request_json is None and store is not None:
+                if request_json is None and store is not None and self.glossary_collect_candidates:
                     self._collect_glossary_candidates(directory, key, model, store, progress)
             with workflow.exclusive_lock(directory / '.lock'):
                 saved = self.read_json(directory / 'job.json')
@@ -396,3 +399,4 @@ class JobManager:
         if name.endswith(".ja-zh.srt") and media.fingerprint(path) != translated["artifacts"][name]:
             raise HTTPException(409, "双语字幕校验失败，原文件已保留")
         return path
+

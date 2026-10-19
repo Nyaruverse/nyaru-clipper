@@ -14,6 +14,16 @@ export function GlossaryPanel() {
   const [formError, setFormError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const srcInputRef = useRef<HTMLInputElement>(null);
+  /** 点击词条：填入编辑表单并平滑滚动回编辑栏、聚焦原文输入框 */
+  function editTerm(term: GlossaryTerm) {
+    setSrcDraft(term.src);
+    setDstDraft(term.dst);
+    setCategoryDraft(term.category);
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    srcInputRef.current?.focus({ preventScroll: true });
+  }
   const apply = (data: GlossaryStore) => queryClient.setQueryData(["companion", "glossary"], data);
   const saveTerms = useMutation({ mutationFn: (terms: GlossaryTerm[]) => api<GlossaryStore>("/glossary", { terms }, "PUT"), onSuccess: apply,
     onError: err => setFormError(err.message) });
@@ -76,9 +86,9 @@ export function GlossaryPanel() {
         </span>
       </div>)}
     </div>}
-    <form className="glossary-form" onSubmit={submitTerm}>
+    <form className="glossary-form" ref={formRef} onSubmit={submitTerm}>
       <div className="style-grid">
-        <label>原文<input className="ny-input" required maxLength={64} placeholder="日文原文" value={srcDraft} onChange={event => setSrcDraft(event.target.value)} /></label>
+        <label>原文<input className="ny-input" ref={srcInputRef} required maxLength={64} placeholder="日文原文" value={srcDraft} onChange={event => setSrcDraft(event.target.value)} /></label>
         <label>统一译名<input className="ny-input" required maxLength={64} placeholder="中文译名" value={dstDraft} onChange={event => setDstDraft(event.target.value)} /></label>
       </div>
       <div className="glossary-form-actions">
@@ -91,7 +101,7 @@ export function GlossaryPanel() {
     {formError && <p className="companion-error" role="alert">{formError}</p>}
     <input className="ny-input glossary-search" type="search" placeholder="搜索词条…" value={termQuery} onChange={event => setTermQuery(event.target.value)} />
     {shownTerms.map(term => <div className="glossary-row" key={term.src}>
-      <button className="glossary-text glossary-edit" type="button" title="点击编辑该词条" onClick={() => { setSrcDraft(term.src); setDstDraft(term.dst); setCategoryDraft(term.category); }}>
+      <button className="glossary-text glossary-edit" type="button" title="点击编辑该词条" onClick={() => editTerm(term)}>
         <strong>{term.src}</strong><small>{term.dst}</small>
       </button>
       <span className="glossary-badge">{term.category}</span>
@@ -103,3 +113,4 @@ export function GlossaryPanel() {
     {terms.length > 0 && !shownTerms.length && <p className="companion-muted">无匹配词条。</p>}
   </section>;
 }
+

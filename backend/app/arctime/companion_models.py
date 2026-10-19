@@ -11,6 +11,10 @@ class TranslationConfig(BaseModel):
     model: str | None = Field(default=None, max_length=128)
 
 
+class GlossarySettings(BaseModel):
+    collect_candidates: bool
+
+
 def validated_api_key(value: object) -> SecretStr:
     if not isinstance(value, str):
         raise ValueError("请输入有效 API Key")
@@ -53,3 +57,4 @@ class JobInput(BaseModel):
             if media.parse_time(start) >= media.parse_time(end):
                 raise ValueError("结束时间必须大于开始时间")
         return self
+
