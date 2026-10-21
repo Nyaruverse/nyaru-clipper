@@ -9,8 +9,21 @@
 
 当前中文文档对应关系如下：
 
+- [八阶段累计修改与提交交接](/Users/drm/project/nyaru-clipper/docs/code-improvement-rollup-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/code-improvement-rollup-2026-10-21.md)：44／44限定验收、累计修改、可携带证据摘要与明确提交排除项
+
 - [project-handoff.zh-CN.md](project-handoff.zh-CN.md)：当前项目交接，含本地工具／macOS App、验收、运行状态及待办
 - [project-handoff.md](project-handoff.md)：对应英文交接
+
+- [代码与架构改进计划（2026-10-20）](/Users/drm/project/nyaru-clipper/docs/code-improvement-plan-2026-10-20.zh-CN.md)：六轮审阅 44 项问题、优先级、工作包、逐项验收、清理边界及当前实施状态
+- [对应英文改进计划](/Users/drm/project/nyaru-clipper/docs/code-improvement-plan-2026-10-20.md)
+- [第一阶段结果](/Users/drm/project/nyaru-clipper/docs/phase1-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase1-improvement-results-2026-10-21.md)
+- [第二阶段与合并结果](/Users/drm/project/nyaru-clipper/docs/phase2-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase2-improvement-results-2026-10-21.md)：当前实现、验收证据和平台限制
+- [第三阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase3-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase3-improvement-results-2026-10-21.md)：第三阶段历史总账 18 项已验收／26 项待处理
+- [第四阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase4-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase4-improvement-results-2026-10-21.md)：第四阶段历史总账23项已验收／21项待处理
+- [第五阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase5-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase5-improvement-results-2026-10-21.md)：第五阶段历史总账28项已验收／16项待处理，含旧稿兼容和平台限制
+- [第六阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase6-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase6-improvement-results-2026-10-21.md)：第六阶段历史总账33项已验收／11项待处理，八行字幕／5000条预览和平台限制
+- [第七阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase7-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase7-improvement-results-2026-10-21.md)：该阶段结束时38项已验收／6项待处理，保留当轮累计与原生验收证据
+- [第八阶段与44项累计结果](/Users/drm/project/nyaru-clipper/docs/phase8-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase8-improvement-results-2026-10-21.md)：最新总账44项在记录范围内已验收／0项待处理，六项收尾、当前累计检查、最新原生App双任务保存／退出／重开、最终gate与限制
 
 - `macos-app.zh-CN.md`：本地工具的 macOS App、数据目录与构建说明
 - `macos-app.md`：对应英文说明

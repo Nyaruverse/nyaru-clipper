@@ -303,6 +303,8 @@ Operators should look at four places:
 
 Warnings do not stop startup. They stay visible in API responses, the UI, and logs so operators can correct degraded environments before running important jobs.
 
+`/api/health` checks the configured persistent SQLite database through an independent read-only connection and a query of the task table. A readable database returns HTTP 200 with `status=ok,database=ok`; an unavailable, locked, missing, or unsupported database returns HTTP 503 with `status=error,database=error`. The SQLite lock wait is limited to one second. This checks read readiness, not write capacity or available disk space. Development startup, release smoke, and the Compose API healthcheck use this endpoint; startup and smoke also require both `ok` fields. Restore database access before retrying startup. GPU capability warnings remain non-blocking.
+
 ### What the compact summary should tell you
 
 `/api/health` keeps the response compact, but operators should still expect:

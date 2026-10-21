@@ -34,7 +34,7 @@
 - 主机 `PATH` 上可用的媒体工具：`BBDown`、`yt-dlp`、`ffmpeg`、`ffprobe`
 - Linux 或 WSL 的浏览器主机需安装 CJK 字体包（例如 `fonts-noto-cjk`），以保证工作台中的中文和日文可读
 
-后端依赖的唯一事实来源是 `backend/pyproject.toml`。仓库中的 `backend/requirements.txt` 由 `./scripts/export_backend_requirements.sh` 生成，不应手工修改。
+`backend/pyproject.toml` 定义后端需求与平台配置，三份生成的 `backend/requirements*.txt` 固定对应安装路径的运行版本，不应手工修改。`backend/uv.lock` 保留开发环境用途；安装检查不会用它的不同版本覆盖运行产物。
 
 ### 共用初始化
 
@@ -319,15 +319,28 @@ ls -l /dev/dxg /dev/kfd
 
 ### 校验并生成后端 requirements 文件
 
+只检查基础运行环境时：
+
 ```bash
-./scripts/export_backend_requirements.sh --check
+./scripts/export_backend_requirements.sh --check --profile base
 ```
 
-如果需要刷新文件：
+GPU 安装脚本自动检查 `linux-cuda` 或 `wsl-rocm` 的基础与对应平台产物，不求解另一平台。省略 `--profile` 仍检查全部三份。校验受已有版本约束，不因索引出现新版本而升级；固定包元数据可能仍需缓存或网络。
+
+仅按现有固定版本重新生成时：
 
 ```bash
 ./scripts/export_backend_requirements.sh
 ```
+
+新增、删除或改选依赖版本必须显式更新，先审阅三份产物差异再安装：
+
+```bash
+./scripts/export_backend_requirements.sh --upgrade --profile all
+./scripts/export_backend_requirements.sh --check --profile all
+```
+
+普通生成和检查都在写文件前拒绝 pin 集合变化；`--check` 不写产物，不能与 `--upgrade` 合用。`--output PATH` 仍只生成／检查基础产物，不能与非基础 profile 合用。解释器优先级为 `BACKEND_PYTHON`、已有 `backend/.venv/bin/python`、PATH 中的 `python3`；使用 Python 3.11。生成目标固定为 Linux x86_64，不让 macOS 检查丢掉 Linux 依赖。
 
 ### 用 pip 安装后端依赖
 
@@ -343,7 +356,7 @@ python -m pip install -r backend/requirements.txt
 这条路径有几个边界：
 
 - 只把它当作后端兼容安装路径
-- 后端依赖的唯一事实来源仍是 `backend/pyproject.toml`
+- 需求／平台声明仍来自 `backend/pyproject.toml`，安装版本来自对应固定运行产物
 - 不要把它当作完整替代 `uv` 的项目主流程
 - 也不要假设它单独就能保证 WSL 加 ROCm 的完整等价能力
 
@@ -352,6 +365,23 @@ python -m pip install -r backend/requirements.txt
 ```bash
 pnpm --dir web install --frozen-lockfile
 ```
+
+## 浏览器检查
+
+在已有 Chrome 的主机上做浏览器检查时，可将 `PLAYWRIGHT_CHROME_EXECUTABLE` 设为其可执行文件路径。Playwright 配置通过 `use.launchOptions.executablePath` 传递该值，错误路径会使运行失败。未设置时使用匹配当前 Playwright 的 bundled Chromium，可在 `web/` 中运行 `corepack pnpm exec playwright install chromium` 安装。Corepack 命令应在 `web/` 中执行，以选择该目录固定的 pnpm 版本。
+
+工作站共用发布套件使用已准备的解释器（`BACKEND_PYTHON`，未指定则为 `backend/.venv/bin/python`）运行 `test_e2e_pipeline.py`，随后运行全部前端单元测试、构建，以及当前五个浏览器 spec：工作站 shell、任务创建、队列、任务概览和素材库控件。任一步失败即停止并保留退出码，不隐式同步后端依赖。浏览器 API 夹具和后端流水线 smoke 使用受控替身，不能据此声称真实下载、ASR 或供应商已验收。
+
+Companion 使用独立同源 smoke 入口。先构建 `web/`，再从仓库根目录指定一个已存在的临时父目录：
+
+```bash
+smoke_parent="$(mktemp -d)"
+BACKEND_PYTHON="$PWD/backend/.venv/bin/python" ./scripts/release_smoke_companion.sh "$smoke_parent"
+```
+
+可选第二参数是候选冻结 `nyaru-backend` 可执行文件的绝对路径。脚本以自有 `--data`、`--ready`、`--parent-pid` 启动该候选；不传时在分配的回环端口启动 `python -m app.arctime.cli gui`。脚本只创建／删除自己的子目录，退出时终止并等待自己的子进程，保留调用方父目录及既有内容，清理前输出后端日志。这不会打开或安装现有 App。
+
+独立 Companion Playwright 配置不启动 Vite，访问真实后端根页面，检查空 jobs 和 studio-settings API，并完成设置页面往返；工作站主配置排除此场景。不创建任务或请求模型、供应商、登录。既有 Linux／WSL 发布入口仍需要 `setsid` 及对应平台工具，不能用 macOS 组件或 Companion 的结果代替完整平台验收。
 
 ## Docker 回退
 
@@ -393,7 +423,7 @@ Docker 的验证脚本也只应作为回退验证路径：
 
 这些信息会出现在以下位置：
 
-- API 就绪接口仍然是 `/api/health`
+- API 就绪接口 `/api/health` 使用独立只读连接查询配置的持久 SQLite 任务表，等锁超时为 1 秒。成功返回 HTTP 200 和 `status=ok,database=ok`，失败返回 HTTP 503 和 `status=error,database=error`。启动与 smoke 同时检查 HTTP 成功及两个字段，Compose 也探测该接口。这不检查数据库写入或磁盘容量。
 - `/api/health` 会附带 `runtime_capabilities`，其中包含 `status`、`detected_profile`、`warnings`、`issue_codes`，以及精简后的 `accelerator` 快照
 - 完整能力信息由 `/api/runtime/capabilities` 提供
 - API 启动时会在 `app.runtime` logger 写入一条 `runtime_capabilities_startup` JSON 日志

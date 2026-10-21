@@ -303,6 +303,8 @@ DeepSeek Key 仅供后端使用。请在启动 API/worker 前写入被 Git 忽�
 
 warning 不会阻止启动，但会持续暴露在 API、UI 和日志中，方便在执行关键任务前修复降级环境。
 
+`/api/health` 通过独立只读连接查询配置的持久 SQLite 任务表。数据库可读时返回 HTTP 200 和 `status=ok,database=ok`；不可访问、被锁定、缺失或不受支持时返回 HTTP 503 和 `status=error,database=error`。SQLite 等锁上限为 1 秒。这只检查读取就绪，不承诺写入能力或剩余磁盘空间。开发启动、发布 smoke 和 Compose API healthcheck 均使用该接口；启动与 smoke 还要求两个字段同时为 `ok`。应先恢复数据库访问，再重试启动。GPU 能力 warning 仍不阻塞启动。
+
 ### 精简摘要里应该看到什么
 
 `/api/health` 仍然保持精简，但运维侧应该能直接看到：
