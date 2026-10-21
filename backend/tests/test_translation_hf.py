@@ -174,6 +174,9 @@ def _prepare_chunked_asr_fixture(data_dir: Path, task_id: str) -> Path:
 
 def _write_verified_asr_chunk_outputs(*, work_dir: Path, manifest, segments: list[dict]) -> None:
     """Create the same durable per-chunk ASR contract produced by the ASR stage."""
+    from app.services.asr_whisperx import build_asr_cache_identity
+    from app.settings import get_settings
+
     aggregate_manifest_path = work_dir / "asr-aggregate-manifest.json"
     aggregate_manifest_path.write_text(
         json.dumps(
@@ -236,6 +239,7 @@ def _write_verified_asr_chunk_outputs(*, work_dir: Path, manifest, segments: lis
                         "raw_alignment_path": str(chunk_raw_alignment_path.resolve()),
                     },
                     "model_metadata": {"provider": "whisperx", "model_name": "large-v3"},
+                    "cache_identity": build_asr_cache_identity(chunk.audio_path, get_settings()),
                     "error": None,
                 },
                 ensure_ascii=False,

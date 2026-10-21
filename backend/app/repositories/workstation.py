@@ -38,6 +38,7 @@ from app.models import (
     TaskStage,
     TaskTagLink,
 )
+from app.repositories.artifact_kinds import EXPECTED_ARTIFACT_KINDS as _EXPECTED_ARTIFACTS
 from app.repositories.tasks import _redact_log_summary
 from app.services.recovery_actions import serialize_recovery_actions, stage_display_label
 from app.services.storage import build_artifact_content_path, summarize_stage_log
@@ -54,15 +55,6 @@ _HOST_PATH_IN_TEXT: Final = re.compile(
 )
 _JSON_VALUE_ADAPTER: Final = TypeAdapter(JsonValue)
 _RECOVERY_ACTION_ADAPTER: Final = TypeAdapter(RecoveryAction)
-_EXPECTED_ARTIFACTS: Final[dict[str, tuple[str, tuple[str, ...]]]] = {
-    "ingest": ("source_video", ("source_video",)),
-    "media_prep": ("prepared_audio", ("prepared_audio", "asr_audio")),
-    "asr": ("transcript_json", ("transcript_json",)),
-    "translation": ("translated_segments", ("translated_segments", "bilingual_transcript_json")),
-    "highlight": ("highlight_candidates", ("highlight_candidates", "highlight_candidates_json")),
-    "export": ("clip_video", ("clip_video", "exported_clip")),
-    "report": ("report", ("report", "task_report_markdown")),
-}
 
 
 def list_workstation_tasks(session: Session, query: TaskListQuery) -> TaskListPage:
@@ -133,6 +125,7 @@ def get_workstation_task_overview(session: Session, task_id: str) -> TaskOvervie
     pipeline_run = session.exec(
         select(PipelineRun)
         .where(PipelineRun.task_id == task_id)
+        .where(PipelineRun.trigger != "manual_export")
         .where(or_(PipelineRun.status == "pending", PipelineRun.started_at.is_not(None)))
         .order_by(case((PipelineRun.status == "pending", 0), else_=1), PipelineRun.created_at.desc(), PipelineRun.id.desc())
     ).first()
@@ -141,6 +134,15 @@ def get_workstation_task_overview(session: Session, task_id: str) -> TaskOvervie
     ).all()
     planned = pipeline_run is None
     stage_records = _stage_records(session, pipeline_run, legacy_stages, planned=planned)
+    manual_run = session.exec(
+        select(PipelineRun).where(PipelineRun.task_id == task_id).where(PipelineRun.trigger == "manual_export")
+        .order_by(PipelineRun.created_at.desc(), PipelineRun.id.desc())
+    ).first()
+    canonical_boundary = max(pipeline_run.created_at, pipeline_run.started_at or pipeline_run.created_at) if pipeline_run else None
+    if manual_run is not None and (canonical_boundary is None or manual_run.created_at > canonical_boundary):
+        manual_stages = _stage_records(session, manual_run, [], planned=False)
+        by_name = {stage.name: stage for stage in manual_stages}
+        stage_records = [by_name.get(stage.name, stage) for stage in stage_records]
     artifacts = session.exec(select(Artifact).where(Artifact.task_id == task_id).order_by(Artifact.id)).all()
     execution_progress = session.get(TaskExecutionProgress, task_id)
     item = _task_list_item(task, source, tags, legacy_stages, execution_progress)

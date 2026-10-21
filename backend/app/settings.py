@@ -38,7 +38,6 @@ class Settings(BaseSettings):
     whisperx_model_cache_dir: Path | None = None
     translation_provider: str = "hf"
     translation_model_name: str = "facebook/nllb-200-distilled-600M"
-    translation_fallback_model_name: str | None = None
     translation_device: str = "cuda"
     translation_source_language_code: str = "zho_Hans"
     translation_target_language_code: str = "jpn_Jpan"

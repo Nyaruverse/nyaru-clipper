@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -63,11 +64,11 @@ def score_candidate_windows(
     if not scene_windows:
         return []
 
-    effective_media_end = media_end_s
-    if effective_media_end is None and scene_windows:
-        effective_media_end = max(window.end_s for window in scene_windows)
-    if effective_media_end is None and subtitle_segments:
-        effective_media_end = max(segment.end_seconds for segment in subtitle_segments)
+    effective_media_end = (
+        media_end_s
+        if media_end_s is not None and not isinstance(media_end_s, bool) and math.isfinite(media_end_s) and media_end_s > 0
+        else None
+    )
 
     candidates: list[dict[str, Any]] = []
     for rank_index, scene in enumerate(scene_windows, start=1):
@@ -115,9 +116,11 @@ def score_candidate_windows(
             continue
 
         default_range = {
-            "start_s": round(max(0.0, scene.start_s - 2.0), 3),
-            "end_s": round(min(effective_media_end or scene.end_s, scene.end_s + 2.0), 3),
+            "start_s": round(max(0.0, scene.start_s - 2.0 if effective_media_end is not None else scene.start_s), 3),
+            "end_s": round(min(effective_media_end, scene.end_s + 2.0) if effective_media_end is not None else scene.end_s, 3),
         }
+        if default_range["end_s"] <= default_range["start_s"]:
+            continue
         candidates.append(
             {
                 "rank": rank_index,
@@ -129,6 +132,7 @@ def score_candidate_windows(
                 "reasons": reasons,
                 "status": "candidate",
                 "source_signals": {
+                    "media_end_s": effective_media_end,
                     "segment_count": len(window_segments),
                     "subtitle_char_count": char_count,
                     "subtitle_density": subtitle_density,

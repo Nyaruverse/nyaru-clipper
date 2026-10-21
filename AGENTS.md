@@ -67,7 +67,7 @@ Grounded in source and ast-grep. Python/TypeScript LSP servers are unavailable; 
 | `upgrade_database` | migration function | `backend/app/db_migrations.py` | Alembic head + retryable metadata backfill |
 | `run_task_pipeline` | orchestrator | `backend/app/services/task_runner.py` | executes/resumes stages, persists statuses |
 | `run_tracked_structured_process_group_command` | process runner | `backend/app/services/pipeline_support.py` | JSONL progress, heartbeat, cancel/kill escalation |
-| `transcribe_task_audio` / ASR helpers | ML service | `backend/app/services/asr_whisperx.py` | aligned transcript, subtitles, recovery metadata |
+| `execute_asr_pipeline` / ASR helpers | ML service | `backend/app/services/asr_whisperx.py` | child inference, aligned transcript, subtitles, recovery metadata |
 | `AppRouter` | UI route map | `web/src/router.tsx` | workstation entry + legacy task redirect |
 | `WorkstationRouter` | nested routes | `web/src/workstation/routes/WorkstationRouter.tsx` | library, queue, task overview, dev showcase |
 | `useWorkstationEvents` | React hook | `web/src/workstation/api/useWorkstationEvents.ts` | SSE invalidation, reconnect, polling fallback |

@@ -1,22 +1,70 @@
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import math
 import os
 import re
+import shutil
+import stat
 import tempfile
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 from app.arctime import media
 from app.arctime.local_asr import LocalASR
 from app.services.subtitles import render_srt
 
+if TYPE_CHECKING:
+    from app.arctime.saozi import SaoziSelector
+
 fingerprint = media.fingerprint
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedUpload:
+    """Identity captured from the server's open upload, never from a filename."""
+
+    path: Path
+    root: Path
+    device: int
+    inode: int
+
+    @classmethod
+    def from_descriptor(cls, path: Path, root: Path, descriptor: int) -> OwnedUpload:
+        info = os.fstat(descriptor)
+        upload = cls(path, root.resolve(), info.st_dev, info.st_ino)
+        upload.validate(root)
+        return upload
+
+    def validate(self, root: Path) -> None:
+        info = self.path.lstat()
+        if (self.root != root.resolve() or self.path.parent.resolve() != self.root
+                or not stat.S_ISREG(info.st_mode)
+                or (info.st_dev, info.st_ino) != (self.device, self.inode)):
+            raise OSError(errno.EINVAL, "Upload ownership changed; original file was preserved")
+
+    def move_to(self, target: Path, root: Path) -> None:
+        self.validate(root)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(errno.EEXIST, "Upload destination already exists")
+        try:
+            self.path.rename(target)
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise OSError(errno.EXDEV, "Upload and task must share a filesystem; no copy attempted") from exc
+            raise
+
+    def cleanup(self) -> None:
+        try:
+            self.validate(self.root)
+        except FileNotFoundError:
+            return
+        self.path.unlink()
 
 
 @contextmanager
@@ -38,11 +86,15 @@ def write_manifest(directory: Path, job: dict) -> None:
 
 def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highlight_count: int | None,
                transcriber: LocalASR | None = None, *, run_id: str | None = None,
-               progress: Callable[[str], None] | None = None) -> Path:
-    if bool(ranges) == (highlight_count is not None) or (highlight_count is not None and highlight_count <= 0):
+               progress: Callable[[str], None] | None = None, saozi: bool = False,
+               local_source: Path | None = None, llm_model: str | None = None,
+               owned_upload: OwnedUpload | None = None) -> Path:
+    if sum((bool(ranges), highlight_count is not None, saozi)) != 1 or (highlight_count is not None and highlight_count <= 0):
         raise ValueError("Choose at least one explicit range or a positive highlight count")
     if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e for s, e in ranges):
         raise ValueError("Clip bounds must be finite and satisfy 0 <= start < end")
+    if local_source is not None and owned_upload is not None:
+        raise OSError(errno.EINVAL, "Choose one local input")
     identity = (transcriber or LocalASR()).identity()
     run_id = run_id or uuid.uuid4().hex[:12]
     if not re.fullmatch(r"[0-9a-f]{12}", run_id):
@@ -52,16 +104,30 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
     directory.mkdir(mode=0o700)
     job = {"version": 2, "state": "downloading", "ranges": ranges, "highlight_count": highlight_count,
            "asr": identity, "completed_clips": []}
+    if saozi:
+        job["saozi"] = True
+    if llm_model is not None:
+        job.update(llm_model=llm_model, llm_provider='chatgpt' if llm_model.startswith('chatgpt:') else 'deepseek')
     write_manifest(directory, job)
     try:
-        if progress:
-            progress("正在下载视频，完成后开始识别")
-        source = media.download_video(url, directory)
         video = directory / "source.mp4"
+        if progress:
+            progress("正在导入本地录像" if local_source or owned_upload else "正在下载视频，完成后开始识别")
+        if owned_upload is not None:
+            owned_upload.move_to(video, root)
+            source = video
+        elif local_source:
+            if local_source.is_symlink() or not local_source.is_file():
+                raise ValueError("请选择有效的本地录像文件")
+            shutil.copyfile(local_source, video)
+            source = video
+        else:
+            source = media.download_video(url, directory)
         if source != video:
             source.rename(video)
         duration = media.probe_video(video)
-        media.select_clips([], duration, ranges, highlight_count)
+        if not saozi:
+            media.select_clips([], duration, ranges, highlight_count)
         job.update(state="downloaded", video=video.name, video_sha256=fingerprint(video), duration=duration)
         write_manifest(directory, job)
         return directory
@@ -89,7 +155,10 @@ def _verify(directory: Path, job: dict) -> Path:
     video = _path(directory, job["video"])
     if fingerprint(video) != job["video_sha256"]:
         raise ValueError("Source video changed; create a new run")
-    media.select_clips([], float(job["duration"]), [tuple(r) for r in job["ranges"]], job["highlight_count"])
+    if not math.isfinite(float(job["duration"])) or float(job["duration"]) <= 0:
+        raise ValueError("Invalid media duration")
+    if not job.get("saozi"):
+        media.select_clips([], float(job["duration"]), [tuple(r) for r in job["ranges"]], job["highlight_count"])
     return video
 
 
@@ -106,13 +175,25 @@ def _publish_text(path: Path, content: str) -> None:
 
 
 def resume_run(directory: Path, transcriber: LocalASR | None = None,
-               *, progress: Callable[[str], None] | None = None) -> dict:
+               *, progress: Callable[[str], None] | None = None,
+               selector: SaoziSelector | None = None) -> dict:
     directory = directory.resolve()
     notify = progress or (lambda message: None)
     with exclusive_lock(directory / ".lock"):
         job = json.loads((directory / "job.json").read_text(encoding="utf-8"))
         video = _verify(directory, job)
-        if job["state"] not in {"downloaded", "transcribing", "subtitles_ready", "exporting", "completed"}:
+        if job.get("saozi"):
+            if selector is None:
+                raise ValueError("臊子需要已授权的模型配置")
+            pinned_model = job.get('saozi_model') or job.get('llm_model')
+            if pinned_model and pinned_model != selector.model:
+                raise ValueError("臊子恢复必须沿用原供应商和模型")
+            job["saozi_model"] = selector.model
+            if not pinned_model:
+                job.update(llm_model=selector.model,
+                           llm_provider='chatgpt' if selector.model.startswith('chatgpt:') else 'deepseek')
+                write_manifest(directory, job)
+        if job["state"] not in {"downloaded", "transcribing", "subtitles_ready", "analyzing", "exporting", "completed"}:
             raise ValueError("Unknown or incomplete job state")
         if job["state"] in {"downloaded", "transcribing"}:
             adapter = transcriber or LocalASR(Path(job["asr"]["model"]), job["asr"]["language"], job["asr"]["threads"])
@@ -121,8 +202,13 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
             job["state"] = "transcribing"
             write_manifest(directory, job)
             notify("正在本地识别并生成时间轴")
-            cues = adapter.transcribe(video, directory, job["duration"])
-            if not cues or any(not math.isfinite(c.start_seconds) or not math.isfinite(c.end_seconds)
+            try:
+                cues = adapter.transcribe(video, directory, job["duration"])
+            except ValueError as exc:
+                if not job.get("saozi") or str(exc) != "No speech was recognized; check the source audio and language":
+                    raise
+                cues = []
+            if (not cues and not job.get("saozi")) or any(not math.isfinite(c.start_seconds) or not math.isfinite(c.end_seconds)
                                or not 0 <= c.start_seconds < c.end_seconds <= job["duration"] or not c.text.strip()
                                for c in cues):
                 raise ValueError("Local subtitles must be nonempty and within video duration")
@@ -137,8 +223,15 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
         for name, digest in job["artifacts"].items():
             if fingerprint(_path(directory, name)) != digest:
                 raise ValueError("Managed transcript changed; create a new run rather than mixing results")
-        cues = media.read_subtitles(_path(directory, job["subtitles"]))
-        selection = media.select_clips(cues, job["duration"], [tuple(r) for r in job["ranges"]], job["highlight_count"])
+        subtitle_path = _path(directory, job["subtitles"])
+        cues = media.read_subtitles(subtitle_path) if subtitle_path.read_text().strip() else []
+        if job.get("saozi") and selector is not None:
+            if job["state"] != "completed":
+                job["state"] = "analyzing"
+                write_manifest(directory, job)
+            selection = selector.plan(directory, cues, job["duration"], progress=notify)
+        else:
+            selection = media.select_clips(cues, job["duration"], [tuple(r) for r in job["ranges"]], job["highlight_count"])
         if "selection" in job and selection != job["selection"]:
             raise ValueError("Clip selection changed during recovery")
         if job["state"] != "completed":

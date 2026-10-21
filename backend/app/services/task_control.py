@@ -204,6 +204,11 @@ def get_control_requests(session: Session, *, task_id: str) -> TaskControlReques
 
 
 def finalize_cancelled(session: Session, *, task_id: str, execution_token: str) -> None:
+    from app.services.workstation_queue import begin_queue_mutation, finish_queue_entry
+    from app.services.workstation_runs import finish_pipeline_run, get_active_pipeline_run, sync_stage_run
+
+    session.commit()
+    begin_queue_mutation(session)
     ensure_current_execution_context(session, task_id=task_id)
     control = session.get(TaskExecutionControl, task_id)
     if control is None:
@@ -247,6 +252,12 @@ def finalize_cancelled(session: Session, *, task_id: str, execution_token: str) 
     control.heartbeat_at = None
     control.updated_at = now
     session.add(control)
+    run = get_active_pipeline_run(session, task_id)
+    if run is not None:
+        if stage is not None:
+            sync_stage_run(session, run.id, stage)
+        finish_pipeline_run(session, run, "cancelled")
+    finish_queue_entry(session, task_id)
 
 
 def finalize_execution(session: Session, *, task_id: str, execution_token: str) -> None:

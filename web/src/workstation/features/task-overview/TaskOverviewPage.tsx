@@ -59,7 +59,7 @@ function StatusIcon({ tone }: { readonly tone: "failed" | "running" | "success" 
 
 export function TaskOverviewPage({ taskId }: TaskOverviewPageProps): ReactNode {
   const [searchParams, setSearchParams] = useSearchParams();
-  const overviewQuery = useQuery({ queryKey: workstationKeys.detail(taskId), queryFn: () => getWorkstationTaskOverview(taskId) });
+  const overviewQuery = useQuery({ queryKey: workstationKeys.detail(taskId), queryFn: ({ signal }) => getWorkstationTaskOverview(taskId, signal) });
 
   if (overviewQuery.isPending) {
     return <section className="ny-workstation-page"><p className="ny-workstation__eyebrow">任务概览</p><h1 className="ny-workstation-page__title">正在读取任务概览</h1><p className="ny-feedback ny-feedback--loading">正在获取阶段、产物与安全日志。</p></section>;
@@ -87,7 +87,7 @@ export function TaskOverviewPage({ taskId }: TaskOverviewPageProps): ReactNode {
         </div>
         <p className={`ny-stamp ny-stamp--${status.tone}`}><StatusIcon tone={status.tone} />{status.label}</p>
       </header>
-      <StageRail executionProgress={task.execution_progress} onSelectStage={selectStage} selectedStage={selectedStage} stages={task.stages} />
+      <StageRail executionProgress={task.status === "running" ? task.execution_progress : null} onSelectStage={selectStage} selectedStage={selectedStage} stages={task.stages} />
       <RecoveryPanel actions={task.recovery_actions} taskId={task.task_id} />
       <ExistingReviewWorkspace artifactReadiness={overviewReadiness(task)} artifacts={overviewArtifacts(task)} taskId={task.task_id} />
     </section>

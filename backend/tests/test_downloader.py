@@ -242,3 +242,77 @@ def test_classifies_access_failures_without_fallback(
 
     assert ingest_status == "failed"
     assert expected_code in (ingest_summary or "")
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("cookie_format", ["header", "netscape", "encoded"])
+def test_cookie_redacted_through_download_logs_and_errors(backend_env, monkeypatch, tmp_path, fallback, cookie_format):
+    from app.db import session_scope
+    from app.services.downloader import DownloaderFailure, download_bilibili_vod
+    from app.services.storage import log_file_for_stage
+
+    secret = "synthetic-session-782491"
+    cookie = f"SESSDATA={secret}; other=synthetic-secondary-219"
+    if cookie_format == "netscape":
+        cookie = f"#HttpOnly_.bilibili.com\tTRUE\t/\tFALSE\t0\tSESSDATA\t{secret}"
+    elif cookie_format == "encoded":
+        cookie = "SESSDATA=" + secret.replace("-", "%2D")
+    cookie_path = tmp_path / "synthetic-cookies.txt"
+    cookie_path.write_text(cookie)
+    monkeypatch.setenv("APP_BILIBILI_COOKIE_PATH", str(cookie_path))
+    task_id = _create_task("https://www.bilibili.com/video/BV1xx411c7mD")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[0] == "BBDown":
+            assert args[args.index("-c") + 1] == cookie
+        message = "network failure" if fallback else "login required"
+        return subprocess.CompletedProcess(args, 1, f"{message}: {cookie}", f"{message}: {secret}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with session_scope() as session, pytest.raises(DownloaderFailure) as error:
+        download_bilibili_vod(session, task_id)
+    output = log_file_for_stage(task_id, "ingest").read_text() + str(error.value)
+    assert secret not in output
+    assert "synthetic-secondary-219" not in output
+    assert ("network failure" if fallback else "login required") in output
+    assert len(calls) == (2 if fallback else 1)
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("case", ["numeric_flag", "escaped_secret"])
+def test_cookie_redaction_preserves_success_metadata(backend_env, monkeypatch, tmp_path, fallback, case):
+    from app.db import session_scope
+    from app.services.downloader import download_bilibili_vod
+    from app.services.storage import log_file_for_stage
+
+    cookie = "SESSDATA=synthetic-secret; CURRENT_FNVAL=16"
+    stdout = '{"title":"good", "duration":216}'
+    expected_title = "good"
+    if case == "escaped_secret":
+        cookie = "SESSDATA=synthetic%2Fsecret"
+        stdout = '{"title":"synthetic\\/secret", "duration":216}'
+        expected_title = "[REDACTED]"
+    cookie_path = tmp_path / "synthetic-cookies.txt"
+    cookie_path.write_text(cookie)
+    monkeypatch.setenv("APP_BILIBILI_COOKIE_PATH", str(cookie_path))
+    task_id = _create_task("https://www.bilibili.com/video/BV1xx411c7mD")
+
+    def fake_run(args, **kwargs):
+        if fallback and args[0] == "BBDown":
+            return subprocess.CompletedProcess(args, 1, "", "network error")
+        output = Path(backend_env["data_dir"]) / "tasks" / task_id / "raw" / "source.mp4"
+        output.write_bytes(b"test-video")
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with session_scope() as session:
+        result = download_bilibili_vod(session, task_id)
+    assert result.source_metadata["title"] == expected_title
+    assert result.source_metadata["duration_seconds"] == 216
+    assert result.fallback_used is fallback
+    persisted = (result.output_path.parent / "source-metadata.json").read_text()
+    assert json.loads(persisted)["duration_seconds"] == 216
+    assert "synthetic/secret" not in persisted
+    assert "synthetic\\/secret" not in log_file_for_stage(task_id, "ingest").read_text()

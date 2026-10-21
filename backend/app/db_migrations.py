@@ -10,7 +10,8 @@ from sqlalchemy import text
 from sqlmodel import Session, create_engine, select
 
 from app.models import Task, utc_now
-from app.services.storage import get_tasks_root
+from app.paths import ensure_data_dir
+from app.services.storage import directory_size as _directory_size, get_tasks_root
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,7 @@ def upgrade_database(database_url: str | None = None) -> None:
     """Upgrade a database and complete any pending metadata backfill."""
     from app.db import get_database_url
 
+    ensure_data_dir()
     resolved_url = database_url or get_database_url()
     backend_dir = Path(__file__).resolve().parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
@@ -103,8 +105,3 @@ def _metadata_title(metadata_path: Path) -> str | None:
         return None
     return title.strip() or None
 
-
-def _directory_size(task_root: Path) -> int:
-    if not task_root.is_dir():
-        return 0
-    return sum(path.stat().st_size for path in task_root.rglob("*") if path.is_file())

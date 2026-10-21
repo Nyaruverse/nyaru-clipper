@@ -21,6 +21,7 @@ from app.models import (
     TERMINAL_STATUSES,
     utc_now,
 )
+from app.repositories.artifact_kinds import EXPECTED_ARTIFACT_KINDS as _EXPECTED_ARTIFACT_KINDS
 from app.services.failure_codes import failure_code_from_stage
 from app.services.recovery_actions import serialize_recovery_actions, stage_display_label
 from app.services.storage import build_artifact_content_path, ensure_task_dirs, summarize_stage_log
@@ -153,17 +154,6 @@ def _task_failure_code(task: Task, stages: list[TaskStage]) -> str | None:
     if failed_stage is None:
         return "unknown_failure"
     return failure_code_from_stage(failed_stage) or "unknown_failure"
-
-
-_EXPECTED_ARTIFACT_KINDS = {
-    "ingest": ("source_video", ("source_video",)),
-    "media_prep": ("prepared_audio", ("prepared_audio", "asr_audio")),
-    "asr": ("transcript_json", ("transcript_json",)),
-    "translation": ("translated_segments", ("translated_segments", "bilingual_transcript_json")),
-    "highlight": ("highlight_candidates", ("highlight_candidates", "highlight_candidates_json")),
-    "export": ("clip_video", ("clip_video", "exported_clip")),
-    "report": ("report", ("report", "task_report_markdown")),
-}
 
 
 def _artifact_readiness_status(stage: TaskStage, *, artifact: Artifact | None) -> str:
@@ -428,32 +418,22 @@ def _redact_log_summary(summary: str | None) -> str | None:
 
 
 def retry_task_from_stage(session: Session, task_id: str, stage_name: str) -> dict[str, Any] | None:
+    from app.models import QueueEntry
+    from app.services.workstation_queue import begin_queue_mutation, QueueConflict, get_queue_snapshot
+
+    begin_queue_mutation(session)
     record = get_task_record(session, task_id)
     if record is None:
         return None
     if stage_name not in CANONICAL_STAGES:
         raise ValueError(f"Unknown stage: {stage_name}")
     if not _retry_is_allowed(record, stage_name):
-        from app.services.workstation_queue import QueueConflict, get_queue_snapshot
-
         raise QueueConflict(get_queue_snapshot(session), "Task must be terminal before retry")
-
-    from app.services.workstation_queue import begin_queue_mutation
-
-    begin_queue_mutation(session)
-    record = get_task_record(session, task_id)
-    if record is None:
-        return None
-    if not _retry_is_allowed(record, stage_name):
-        from app.services.workstation_queue import QueueConflict, get_queue_snapshot
-
-        raise QueueConflict(get_queue_snapshot(session), "Task must be terminal before retry")
+    entry = session.get(QueueEntry, task_id)
+    if entry is not None and entry.state == "running":
+        raise QueueConflict(get_queue_snapshot(session), "Active task cannot be requeued")
 
     reset_index = CANONICAL_STAGES.index(stage_name)
-    if reset_index <= CANONICAL_STAGES.index("translation"):
-        from app.services.storage import invalidate_translation_artifacts
-
-        invalidate_translation_artifacts(session, task_id=task_id)
     for stage in record.stages:
         stage_index = CANONICAL_STAGES.index(stage.name)
         if stage_index >= reset_index:
@@ -486,7 +466,7 @@ def retry_task_from_stage(session: Session, task_id: str, stage_name: str) -> di
     from app.services.workstation_queue import requeue_task
     from app.services.workstation_runs import create_pipeline_run
 
-    create_pipeline_run(session, task_id, "retry")
+    run = create_pipeline_run(session, task_id, "retry")
     requeue_task(session, task_id)
     publish_event(
         session,
@@ -509,6 +489,10 @@ def retry_task_from_stage(session: Session, task_id: str, stage_name: str) -> di
                 },
             )
     session.flush()
+    if reset_index <= CANONICAL_STAGES.index("translation"):
+        from app.services.storage import schedule_retry_cleanup
+
+        schedule_retry_cleanup(session, run.id)
     return {"task_id": task_id, "retry_stage": stage_name, "status": "pending"}
 
 

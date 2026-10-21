@@ -9,7 +9,7 @@ from typing import Iterator
 
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.paths import get_data_dir
+from app.paths import ensure_data_dir, get_data_dir
 
 
 def _artifact_path_exists(path: str) -> int:
@@ -23,11 +23,13 @@ def _register_sqlite_functions(dbapi_connection, _connection_record) -> None:
 
 
 def get_database_url() -> str:
-    return os.getenv("APP_DATABASE_URL", f"sqlite:///{get_data_dir() / 'tasks.sqlite3'}")
+    configured = os.getenv("APP_DATABASE_URL")
+    return configured if configured is not None else f"sqlite:///{get_data_dir() / 'tasks.sqlite3'}"
 
 
 @lru_cache(maxsize=1)
 def get_engine():
+    ensure_data_dir()
     database_url = get_database_url()
     if database_url.startswith("sqlite:///"):
         db_path = Path(database_url.replace("sqlite:///", "", 1))
@@ -46,7 +48,7 @@ def init_db() -> None:
     from app import models  # noqa: F401
     from app.db_migrations import upgrade_database
 
-    upgrade_database(get_database_url())
+    upgrade_database()
     engine = get_engine()
     SQLModel.metadata.create_all(engine)
     _run_lightweight_schema_migrations(engine)

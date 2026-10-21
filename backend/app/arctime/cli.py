@@ -3,12 +3,22 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import signal
 import subprocess
 import sys
+import threading
+import uuid
 from pathlib import Path
 
-from app.arctime import media, workflow
+from app.arctime import companion_llm, media, workflow
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
+
+
+def _selector(config: companion_llm.LLMConfig, saved: dict):
+    from app.arctime.saozi import SaoziSelector
+    model = companion_llm.job_model(config, saved)
+    key = companion_llm.require_key(config, model)
+    return SaoziSelector(key, model, request_json=companion_llm.requester(config, model))
 
 
 def _asr_options(parser: argparse.ArgumentParser) -> None:
@@ -29,6 +39,9 @@ def main(argv: list[str] | None = None) -> int:
     selection.add_argument("--range", dest="ranges", action="append", nargs=2, metavar=("START", "END"),
                            help="秒数或 HH:MM:SS.mmm，可重复指定")
     selection.add_argument("--highlights", type=int, help="按本地规则选择最多 N 个非重叠高光")
+    selection.add_argument("--saozi", action="store_true", help="臊子：使用已配置供应商连续语义切片，每片约1–2分钟")
+    run.add_argument("--local", action="store_true", help="将输入作为本地录像路径（仅臊子）")
+    run.add_argument("--live", action="store_true", help="Bilibili 实时臊子；Ctrl+C停止录制并导出尾段")
     _asr_options(run)
     resume = commands.add_parser("resume", help="恢复已下载的本地任务")
     resume.add_argument("directory", type=Path, help="含 job.json 的任务目录")
@@ -39,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     gui.add_argument("--threads", type=int, default=4)
     args = parser.parse_args(argv)
     directory: Path | None = None
+    config: companion_llm.LLMConfig | None = None
     try:
         if args.command == "gui":
             import uvicorn
@@ -49,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             if not 1 <= args.port <= 65535:
                 raise ValueError("端口必须在 1 到 65535 之间")
             print(f"本地界面：http://127.0.0.1:{args.port}", file=sys.stderr, flush=True)
-            uvicorn.run(create_app(args.output_dir, args.model, args.threads), host="127.0.0.1", port=args.port)
+            uvicorn.run(create_app(args.output_dir, args.model, args.threads), host="127.0.0.1", port=args.port, access_log=False)
             return 0
         if args.command == "doctor":
             checks = {}
@@ -71,20 +85,64 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ready": ready, "checks": checks}, ensure_ascii=False, indent=2))
             return 0 if ready else 1
         if args.command == "run":
+            if (args.local or args.live) and (not args.saozi or (args.local and args.live)):
+                raise ValueError("本地或实时输入需要臊子模式，且不能同时选择")
             ranges = [(media.parse_time(s), media.parse_time(e)) for s, e in (args.ranges or [])]
             adapter = LocalASR(args.model, args.language, args.threads)
+            config = companion_llm.LLMConfig(args.output_dir) if args.saozi else None
+            selector = _selector(config, {}) if config is not None else None
             print("正在检查环境并下载视频", file=sys.stderr, flush=True)
-            directory = workflow.create_run(args.url, args.output_dir, ranges, args.highlights, adapter)
+            if args.live:
+                from app.arctime.companion_models import JobInput
+                JobInput(url=args.url, saozi=True, live=True, language=args.language)
+                directory = args.output_dir.expanduser().resolve() / uuid.uuid4().hex[:12]
+                directory.mkdir(mode=0o700, parents=True)
+            else:
+                options = {"saozi":True,"local_source":Path(args.url).expanduser().resolve() if args.local else None,
+                           "llm_model": selector.model} if args.saozi else {}
+                directory = workflow.create_run(args.url, args.output_dir, ranges, args.highlights, adapter, **options)
         else:
             directory = args.directory.expanduser().resolve()
             adapter = None
+            saved = json.loads((directory / "job.json").read_text()) if (directory / "job.json").is_file() else {}
+            config = companion_llm.LLMConfig(directory.parent) if saved.get('saozi') else None
+            selector = _selector(config, saved) if config is not None else None
         print(f"任务目录：{directory}", file=sys.stderr, flush=True)
-        job = workflow.resume_run(directory, transcriber=adapter, progress=lambda message: print(message, file=sys.stderr, flush=True))
+        notify = lambda message: print(message, file=sys.stderr, flush=True)
+        saved = json.loads((directory / "job.json").read_text()) if (directory / "job.json").is_file() else {}
+        translation_failed = False
+        def bilingual(path: Path, final: bool, *, locked: bool = True):
+            nonlocal translation_failed
+            if translation_failed and not final:
+                return
+            from app.arctime.saozi_translation import translate
+            try:
+                options = {'request_json': selector.request_json} if selector.request_json is not None else {}
+                translate(path, selector.key, model=selector.model, final=final, locked=locked, progress=notify, **options)
+                translation_failed = False
+            except (ValueError, OSError):
+                translation_failed = True
+                notify("双语字幕未完成；保留原文切片并继续录制，可用 resume 重试")
+        if (args.command == "run" and args.live) or saved.get("live"):
+            from app.arctime.saozi_live import run_live
+            stop = threading.Event()
+            previous = signal.signal(signal.SIGINT, lambda *_: stop.set())
+            try:
+                if adapter is None:
+                    adapter = LocalASR(Path(saved["asr"]["model"]), saved["asr"]["language"], saved["asr"]["threads"])
+                job = run_live(directory, selector, adapter, stop, notify, url=args.url if args.command == "run" else None,
+                               bilingual=bilingual)
+            finally:
+                signal.signal(signal.SIGINT, previous)
+        else:
+            job = workflow.resume_run(directory, transcriber=adapter, progress=notify, selector=selector)
+            if job.get("saozi"):
+                bilingual(directory, True, locked=False)
         print(json.dumps({"state": job["state"], "directory": str(directory),
                           "clip_count": len(job["completed_clips"]), "clips": job["completed_clips"],
                           "subtitles": str(directory / "subtitles.srt"), "transcript": str(directory / "transcript.txt")},
                          ensure_ascii=False, indent=2))
-        return 0
+        return 1 if translation_failed else 0
     except KeyboardInterrupt:
         print("已停止本地处理；下载完成的任务可用 resume 恢复，下载中断需重新 run。", file=sys.stderr)
         return 130
@@ -95,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
         message = "外部工具执行超时" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
         print(json.dumps({"error": message, "directory": str(directory) if directory else None}, ensure_ascii=False), file=sys.stderr)
         return 1
+    finally:
+        if config is not None:
+            config.chatgpt.close()
 
 
 if __name__ == "__main__":

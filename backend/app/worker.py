@@ -12,7 +12,7 @@ from uuid import uuid4
 from sqlmodel import select
 
 from app.db import session_scope
-from app.models import Task, TaskJob, TaskStage, utc_now
+from app.models import QueueEntry, Task, TaskJob, TaskStage, utc_now
 from app.repositories.tasks import clear_task_execution_progress
 from app.services import capability_checks
 from app.services.pipeline_support import append_stage_log
@@ -142,21 +142,55 @@ def _recover_stale_running_jobs(session) -> None:
         job_updated_at = _normalize_comparable_datetime(job.updated_at)
         if job_updated_at is None or job_updated_at > stale_before:
             continue
-        if job.stage_name == "asr":
-            terminated_process_group_id = best_effort_kill_active_process_group(session, task_id=job.task_id)
-            if terminated_process_group_id is not None:
-                append_stage_log(
-                    log_file_for_stage(job.task_id, job.stage_name),
-                    f"worker:terminated stale asr process group={terminated_process_group_id}",
-                )
-            clear_execution_control(session, task_id=job.task_id)
-            clear_task_execution_progress(session, task_id=job.task_id)
+        deadline = time.monotonic() + 1.0
+        terminated_process_group_id = _signal_recovered_process_group(session, job.task_id, deadline)
+        if terminated_process_group_id is not None:
+            if not _wait_for_recovered_process_group(terminated_process_group_id, deadline=deadline):
+                worker_logger.warning("stale_process_group_still_active task_id=%s", job.task_id)
+                continue
+            append_stage_log(
+                log_file_for_stage(job.task_id, job.stage_name),
+                f"worker:terminated stale process group={terminated_process_group_id}",
+            )
+        clear_execution_control(session, task_id=job.task_id)
+        clear_task_execution_progress(session, task_id=job.task_id)
         _mark_job_stale_failed(session, job)
+
+
+def _signal_recovered_process_group(session, task_id: str, deadline: float) -> int | None:
+    while True:
+        try:
+            return best_effort_kill_active_process_group(session, task_id=task_id)
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+
+
+def _wait_for_recovered_process_group(process_group_id: int, *, deadline: float | None = None) -> bool:
+    if deadline is None:
+        deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            os.waitpid(process_group_id, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
 
 
 def claim_next_job() -> ClaimedJob | None:
     with session_scope() as session:
         begin_queue_mutation(session)
+        _recover_terminal_queue_entries(session)
         _recover_stale_running_jobs(session)
         running_gpu_job = session.exec(
             select(TaskJob).where(TaskJob.gpu_bound.is_(True)).where(TaskJob.status == "running")
@@ -182,6 +216,11 @@ def claim_next_job() -> ClaimedJob | None:
             finish_queue_entry(session, queue_entry.task_id)
             return None
 
+        pending_run = get_pending_pipeline_run(session, queue_entry.task_id)
+        if pending_run is not None:
+            from app.services.storage import cleanup_pending_retry
+
+            cleanup_pending_retry(session, pending_run)
         now = utc_now()
         job.status = "running"
         job.started_at = now
@@ -198,6 +237,39 @@ def claim_next_job() -> ClaimedJob | None:
         publish_task_updated(session, task)
         publish_stage_updated(session, stage)
         return ClaimedJob(task_id=job.task_id, stage_name=job.stage_name)
+
+
+def _recover_terminal_queue_entries(session) -> None:
+    entries = session.exec(select(QueueEntry).where(QueueEntry.state == "running")).all()
+    for entry in entries:
+        job = session.exec(select(TaskJob).where(TaskJob.task_id == entry.task_id)).first()
+        if job is None or job.status not in {"success", "failed", "cancelled"}:
+            continue
+        deadline = time.monotonic() + 1.0
+        process_group_id = _signal_recovered_process_group(session, entry.task_id, deadline)
+        if process_group_id is not None and not _wait_for_recovered_process_group(process_group_id, deadline=deadline):
+            continue
+        clear_execution_control(session, task_id=entry.task_id)
+        clear_task_execution_progress(session, task_id=entry.task_id)
+        task = session.get(Task, entry.task_id)
+        if task is not None:
+            task.status = job.status
+            task.updated_at = utc_now()
+            session.add(task)
+            publish_task_updated(session, task)
+        run = get_active_pipeline_run(session, entry.task_id)
+        for stage in session.exec(select(TaskStage).where(TaskStage.task_id == entry.task_id)).all():
+            if stage.name == job.stage_name and stage.status in {"pending", "running"}:
+                stage.status = job.status
+                stage.finished_at = job.finished_at or utc_now()
+                stage.updated_at = utc_now()
+                session.add(stage)
+                publish_stage_updated(session, stage)
+            if run is not None:
+                sync_stage_run(session, run.id, stage)
+        if run is not None:
+            finish_pipeline_run(session, run, job.status)
+        finish_queue_entry(session, entry.task_id)
 
 
 def complete_job(task_id: str, *, success: bool) -> None:
@@ -248,23 +320,13 @@ def run_worker_iteration(processor: Callable[[ClaimedJob], bool] | None = None) 
         with session_scope() as session:
             activate_execution(session, task_id=claimed_job.task_id, execution_token=execution_token)
             try:
-                try:
-                    result = run_task_pipeline(
-                        session,
-                        claimed_job.task_id,
-                        start_stage_name=claimed_job.stage_name,
-                        claimed_stage_running=True,
-                        execution_token=execution_token,
-                    )
-                except Exception:
-                    begin_queue_mutation(session)
-                    finish_queue_entry(session, claimed_job.task_id)
-                    session.commit()
-                    raise
-                if result.final_status in {"success", "failed", "cancelled"}:
-                    begin_queue_mutation(session)
-                    finish_queue_entry(session, claimed_job.task_id)
-                    session.commit()
+                run_task_pipeline(
+                    session,
+                    claimed_job.task_id,
+                    start_stage_name=claimed_job.stage_name,
+                    claimed_stage_running=True,
+                    execution_token=execution_token,
+                )
             finally:
                 if preflight_runtime_summary is not None:
                     append_stage_log(log_file_for_stage(claimed_job.task_id, claimed_job.stage_name), preflight_runtime_summary)

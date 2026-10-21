@@ -3,9 +3,16 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from app.services.pipeline_support import append_stage_log, run_logged_command
-from app.settings import Settings
+from app.services.command_logging import append_stage_log, run_logged_command
+
+
+@dataclass(frozen=True, slots=True)
+class ExportEncodingConfig:
+    ffmpeg_binary: str
+    export_video_backend: Literal["cpu", "windows-amf"] = "cpu"
+    windows_ffmpeg_binary: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +45,7 @@ class WindowsPathConversionError(RuntimeError):
     pass
 
 
-def execute_video_export(invocation: ExportInvocation, settings: Settings, log_path: Path) -> ExportExecution:
+def execute_video_export(invocation: ExportInvocation, settings: ExportEncodingConfig, log_path: Path) -> ExportExecution:
     if settings.export_video_backend == "windows-amf":
         windows_ffmpeg_binary = settings.windows_ffmpeg_binary
         if windows_ffmpeg_binary is None:
@@ -73,7 +80,7 @@ def execute_video_export(invocation: ExportInvocation, settings: Settings, log_p
 
 def _run_cpu_export(
     invocation: ExportInvocation,
-    settings: Settings,
+    settings: ExportEncodingConfig,
     log_path: Path,
     *,
     fallback_reason: str | None = None,

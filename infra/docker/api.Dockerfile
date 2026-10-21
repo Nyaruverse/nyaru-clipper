@@ -43,6 +43,8 @@ COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/README.md ./README.md
 COPY backend/.python-version ./.python-version
 COPY backend/app ./app
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/alembic ./alembic
 
 RUN uv sync --no-dev
 

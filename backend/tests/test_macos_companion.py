@@ -1,10 +1,68 @@
 import signal
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from app.arctime import media
 from app.arctime.macos import prepare_model
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS AppKit and swiftc")
+def test_native_quit_marks_only_discard_as_destructive(tmp_path: Path) -> None:
+    source = (Path(__file__).resolve().parents[2] / "desktop/macos/App.swift").read_text()
+    start = source.index('            alert.addButton(withTitle: "保存并退出")')
+    end = source.index("            alert.beginSheetModal", start)
+    harness = tmp_path / "quit-buttons.swift"
+    harness.write_text(
+        "import AppKit\n"
+        "let app = NSApplication.shared\nlet alert = NSAlert()\n" + source[start:end] + "\n"
+        'print(alert.buttons.map { "\\($0.title): destructive=\\($0.hasDestructiveAction)" }.joined(separator: "\\n"))\n'
+        "guard alert.buttons.count == 3,\n"
+        '      alert.buttons[0].keyEquivalent == "\\r",\n'
+        "      !alert.buttons[0].hasDestructiveAction,\n"
+        "      !alert.buttons[1].hasDestructiveAction,\n"
+        "      alert.buttons[2].hasDestructiveAction else { exit(1) }\n"
+    )
+    executable = tmp_path / "quit-buttons"
+    subprocess.run(["/usr/bin/swiftc", str(harness), "-o", str(executable)], check=True, timeout=60)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Foundation and swiftc")
+@pytest.mark.parametrize("existing", [False, True], ids=["missing-log", "existing-log"])
+def test_native_log_retains_output_across_reopen(tmp_path: Path, existing: bool) -> None:
+    # Given the current production logging seam and an isolated log directory.
+    source = (Path(__file__).resolve().parents[2] / "desktop/macos/App.swift").read_text()
+    start = source.index('            let logURL = data.appendingPathComponent("app.log")')
+    end = source.index("            let process = Process()", start)
+    harness = tmp_path / "logging.swift"
+    harness.write_text(
+        "import Foundation\n"
+        "let data = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)\n"
+        "var log: FileHandle?\n" + source[start:end] + "\n"
+        "let process = Process()\n"
+        'process.executableURL = URL(fileURLWithPath: "/bin/sh")\n'
+        'process.arguments = ["-c", "printf \'stdout-marker\\n\'; printf \'stderr-marker\\n\' >&2"]\n'
+        "process.standardOutput = log\nprocess.standardError = log\n"
+        "try process.run()\nprocess.waitUntilExit()\n"
+        "try log?.close()\nexit(process.terminationStatus)\n"
+    )
+    executable = tmp_path / "logging"
+    subprocess.run(["/usr/bin/swiftc", str(harness), "-o", str(executable)], check=True, timeout=60)
+    log_path = tmp_path / "app.log"
+    previous = b"previous-failure-marker\n" if existing else b""
+    if existing:
+        log_path.write_bytes(previous)
+
+    # When the native logging seam is opened, written by a child, closed and reopened.
+    subprocess.run([str(executable), str(tmp_path)], check=True, timeout=10)
+    subprocess.run([str(executable), str(tmp_path)], check=True, timeout=10)
+
+    # Then both streams from both launches follow the original bytes exactly.
+    assert log_path.read_bytes() == previous + b"stdout-marker\nstderr-marker\n" * 2
 
 
 def test_frozen_tools_take_priority_and_missing_tools_do_not_fall_back(tmp_path, monkeypatch):

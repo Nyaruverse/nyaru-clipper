@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 import time
+import wave
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from sqlmodel import select
+
+from app.services.asr_whisperx import build_asr_cache_identity
+from app.services.cache_identity import content_sha256
+from app.settings import get_settings
 
 
 def _reset_runtime_state() -> None:
@@ -45,7 +52,16 @@ def _prepare_asr_input_audio(data_dir: Path, task_id: str) -> Path:
     manifest = build_media_chunk_manifest(1.0, work_dir=work_dir)
     audio_path = manifest.chunks[0].audio_path
     audio_path.parent.mkdir(parents=True, exist_ok=True)
-    audio_path.write_bytes(b"RIFFfixture")
+    with wave.open(str(audio_path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(b"\0\0" * 16000)
+    source = work_dir.parent / "raw" / "source.mp4"
+    source.write_bytes(b"source-fixture")
+    from app.services.media_prep import media_cache_identity
+    manifest = replace(manifest, cache_identity=media_cache_identity(source),
+                       audio_sha256={manifest.chunks[0].id: content_sha256(audio_path)})
     write_media_chunk_manifest_atomically(work_dir / "media-chunks.json", manifest)
     return audio_path
 
@@ -92,7 +108,16 @@ def test_asr_runner_executes_missing_chunks_sequentially_and_merges_global_times
     manifest = build_media_chunk_manifest(601.25, work_dir=work_dir)
     for chunk in manifest.chunks:
         chunk.audio_path.parent.mkdir(parents=True, exist_ok=True)
-        chunk.audio_path.write_bytes(b"RIFFfixture")
+        with wave.open(str(chunk.audio_path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16000)
+            audio.writeframes(b"\0\0" * round((chunk.end_seconds - chunk.start_seconds) * 16000))
+    source = work_dir.parent / "raw" / "source.mp4"
+    source.write_bytes(b"source-fixture")
+    from app.services.media_prep import media_cache_identity
+    manifest = replace(manifest, cache_identity=media_cache_identity(source),
+                       audio_sha256={chunk.id: content_sha256(chunk.audio_path) for chunk in manifest.chunks})
     write_media_chunk_manifest_atomically(work_dir / "media-chunks.json", manifest)
 
     def write_chunk(index: int) -> Path:
@@ -128,6 +153,7 @@ def test_asr_runner_executes_missing_chunks_sequentially_and_merges_global_times
                         "subtitle_path": str(subtitle_path.resolve()),
                         "raw_alignment_path": str(raw_path.resolve()),
                     },
+                    "cache_identity": build_asr_cache_identity(chunk.audio_path, get_settings()),
                     "model_metadata": {"language": "zh"},
                     "error": None,
                 },
@@ -664,6 +690,7 @@ def test_asr_stage_runs_via_child_and_parent_publishes_results(backend_env, monk
         {
             "status": "success",
             "elapsed_ms_total": 2500,
+            "cache_identity": build_asr_cache_identity(audio_path, get_settings()),
             "phases": [
                 {"name": "model_load", "status": "success", "elapsed_ms": 250},
                 {"name": "vad", "status": "success", "elapsed_ms": 250},
@@ -802,6 +829,90 @@ def test_asr_stage_runs_via_child_and_parent_publishes_results(backend_env, monk
     assert asr_stage_summary == "Generated aligned transcript and Chinese subtitles"
     assert artifact_kinds == {"alignment_raw", "subtitle_srt", "transcript_json"}
     assert execution_progress is None
+
+
+@pytest.mark.parametrize("outcome", ["success", "missing_model", "oom", "alignment_failed", "empty"])
+def test_real_asr_child_publishes_or_persists_terminal_failure(backend_env, monkeypatch, outcome):
+    from app.db import session_scope
+    from app.models import Artifact, Task, TaskExecutionProgress, TaskJob, TaskStage
+    from app.services.asr_whisperx import AsrFailure
+    import app.services.task_runner as task_runner
+
+    task_id = _create_task("https://www.bilibili.com/video/BV1asrretire035")
+    audio_path = _prepare_asr_input_audio(Path(backend_env["data_dir"]), task_id)
+    for name, value in {"MODEL_NAME": "large-v3", "LANGUAGE": "zh", "DEVICE": "cpu", "COMPUTE_TYPE": "int8"}.items():
+        monkeypatch.setenv(f"APP_WHISPERX_{name}", value)
+    child_script = '''
+import runpy, sys
+from app.services import asr_whisperx
+from app.services.asr_child_runner import run_asr_child
+fixtures = runpy.run_path(sys.argv[1])
+outcome = sys.argv[2]
+segments = [{"start": 0.0, "end": 0.5, "text": "你好", "words": [{"word": "你好", "start": 0.0, "end": 0.5, "score": 0.95}]},
+            {"start": 0.5, "end": 1.0, "text": "世界", "words": []}]
+aligned = [] if outcome == "empty" else [{"text": "missing timestamps"}] if outcome == "alignment_failed" else segments
+fake = fixtures["_FakeWhisperX"](transcription_result={"segments": segments}, aligned_result={"segments": aligned, "language": "zh"})
+if outcome in {"missing_model", "oom"}:
+    def fail_load(*args, **kwargs):
+        if outcome == "missing_model":
+            raise FileNotFoundError("missing model files")
+        raise RuntimeError("CUDA out of memory while loading model")
+    fake.load_model = fail_load
+asr_whisperx._load_whisperx_module = lambda: fake
+result = run_asr_child(sys.argv[3], int(sys.argv[4]))
+sys.exit(0 if result.status == "success" else 1)
+'''
+    monkeypatch.setattr(task_runner, "build_asr_child_command", lambda current_task_id, index: [
+        sys.executable, "-c", child_script, str(Path(__file__).with_name("test_asr_whisperx.py")),
+        outcome, current_task_id, str(index),
+    ])
+    downstream_calls = []
+    monkeypatch.setattr(task_runner, "STAGE_EXECUTORS", {
+        **task_runner.STAGE_EXECUTORS,
+        **{name: lambda session, current_task_id: downstream_calls.append(current_task_id)
+           for name in ("translation", "highlight", "export", "report")},
+    })
+    expected_code = "alignment_failed" if outcome == "empty" else outcome
+    with session_scope() as session:
+        if outcome == "success":
+            result = task_runner.run_task_pipeline(session, task_id, start_stage_name="asr")
+            assert result.final_status == "success"
+        else:
+            with pytest.raises(AsrFailure) as failure:
+                task_runner.run_task_pipeline(session, task_id, start_stage_name="asr")
+            assert failure.value.code == expected_code
+
+    work_dir = audio_path.parent.parent
+    manifest = json.loads((work_dir / "asr-chunks/chunk-0000/asr-result.json").read_text())
+    with session_scope() as session:
+        task = session.get(Task, task_id)
+        job = session.exec(select(TaskJob).where(TaskJob.task_id == task_id)).one()
+        stage = session.exec(select(TaskStage).where(TaskStage.task_id == task_id, TaskStage.name == "asr")).one()
+        artifacts = session.exec(select(Artifact).where(Artifact.task_id == task_id, Artifact.stage_name == "asr")).all()
+        assert session.get(TaskExecutionProgress, task_id) is None
+        assert task.status == job.status == stage.status == ("success" if outcome == "success" else "failed")
+        if outcome == "success":
+            assert len(downstream_calls) == 4
+            assert stage.summary == "Generated aligned transcript and Chinese subtitles"
+            assert {artifact.kind for artifact in artifacts} == {"alignment_raw", "subtitle_srt", "transcript_json"}
+            transcript = json.loads((work_dir / "asr-segments.json").read_text())
+            assert [segment["id"] for segment in transcript["segments"]] == ["seg-000001", "seg-000002"]
+            assert transcript["segments"][0]["words"][0]["text"] == "你好"
+            assert (work_dir / "subtitles.zh.srt").read_text() == "1\n00:00:00,000 --> 00:00:00,500\n你好\n\n2\n00:00:00,500 --> 00:00:01,000\n世界\n"
+            metadata = json.loads(next(artifact for artifact in artifacts if artifact.kind == "transcript_json").metadata_json)
+            assert metadata["elapsed_seconds"] == transcript["elapsed_seconds"] == round(manifest["elapsed_ms_total"] / 1000, 3)
+            assert metadata["model_metadata"]["provider"] == "whisperx"
+            assert metadata["model_metadata"]["model_name"] == "large-v3"
+            assert metadata["segment_count"] == 2
+            assert manifest["status"] == "success"
+        else:
+            assert downstream_calls == []
+            assert artifacts == []
+            assert stage.summary == expected_code
+            assert stage.failure_code == f"asr_{expected_code}"
+            assert job.stage_name == "asr"
+            assert manifest["status"] == "failed"
+            assert manifest["error"]["code"] == expected_code
 
 
 def test_asr_child_crash_does_not_leave_parent_half_updated(backend_env, monkeypatch) -> None:
@@ -995,3 +1106,74 @@ while True:
         assert execution_progress is None
         assert detail.get("status") == "failed"
         assert "execution_progress" not in detail
+
+@pytest.mark.parametrize("requested", ["translation", "export", "report", "asr"])
+def test_resume_rewinds_when_media_content_is_stale(backend_env, monkeypatch, requested):
+    from app.services import task_runner
+    from app.db import session_scope
+    task_id = _create_task("https://www.bilibili.com/video/BV1staleresume")
+    source = Path(backend_env["data_dir"]) / "tasks" / task_id / "raw" / "source.mp4"
+    source.write_bytes(b"new-source")
+    executed = []
+    for stage in task_runner.CANONICAL_STAGE_ORDER:
+        monkeypatch.setitem(task_runner.STAGE_EXECUTORS, stage, lambda session, task_id, name=stage: executed.append(name))
+    with session_scope() as session:
+        task_runner.run_task_pipeline(session, task_id, start_stage_name=requested)
+    assert executed[0] == "media_prep"
+
+@pytest.mark.parametrize("change,expected", [(None, "export"), ("model", "asr"), ("audio", "media_prep")])
+def test_resume_validates_media_and_asr_before_export(backend_env, monkeypatch, change, expected):
+    from app.services import task_runner
+    from app.services.asr_child_runner import run_asr_child
+    from app.services.asr_whisperx import merge_asr_chunk_artifacts
+    from app.services.media_chunks import load_media_chunk_manifest
+    from app.db import session_scope
+    from test_asr_whisperx import _FakeWhisperX
+    task_id = _create_task("https://www.bilibili.com/video/BV1exportidentity")
+    audio = _prepare_asr_input_audio(Path(backend_env["data_dir"]), task_id)
+    fake = _FakeWhisperX(transcription_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]}, aligned_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]})
+    monkeypatch.setattr("app.services.asr_whisperx._load_whisperx_module", lambda: fake)
+    monkeypatch.setenv("APP_WHISPERX_MODEL_NAME", "large-v3")
+    monkeypatch.setenv("APP_WHISPERX_DEVICE", "cpu")
+    monkeypatch.setenv("APP_WHISPERX_COMPUTE_TYPE", "int8")
+    assert run_asr_child(task_id, 0).status == "success"
+    work = audio.parent.parent
+    chunks = load_media_chunk_manifest(work / "media-chunks.json").chunks
+    merge_asr_chunk_artifacts(task_id, work_dir=work, chunks=chunks)
+    if change == "model":
+        monkeypatch.setenv("APP_WHISPERX_MODEL_NAME", "small")
+    elif change == "audio":
+        content = bytearray(audio.read_bytes())
+        content[-1] ^= 1
+        audio.write_bytes(content)
+    executed = []
+    for stage in task_runner.CANONICAL_STAGE_ORDER:
+        monkeypatch.setitem(task_runner.STAGE_EXECUTORS, stage, lambda session, task_id, name=stage: executed.append(name))
+    with session_scope() as session:
+        task_runner.run_task_pipeline(session, task_id, start_stage_name="export")
+    assert executed[0] == expected
+
+
+def test_asr_parent_rejects_source_changed_during_child(backend_env, monkeypatch):
+    from app.services import task_runner
+    from app.services.asr_child_runner import run_asr_child
+    from app.services.asr_whisperx import AsrFailure
+    from app.services.pipeline_support import StructuredProcessGroupResult
+    from app.db import session_scope
+    from test_asr_whisperx import _FakeWhisperX
+    task_id = _create_task("https://www.bilibili.com/video/BV1sourcechanged")
+    audio = _prepare_asr_input_audio(Path(backend_env["data_dir"]), task_id)
+    monkeypatch.setenv("APP_WHISPERX_MODEL_NAME", "large-v3")
+    monkeypatch.setenv("APP_WHISPERX_DEVICE", "cpu")
+    monkeypatch.setenv("APP_WHISPERX_COMPUTE_TYPE", "int8")
+    fake = _FakeWhisperX(transcription_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]}, aligned_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]})
+    monkeypatch.setattr("app.services.asr_whisperx._load_whisperx_module", lambda: fake)
+    def child(session, *, args, **kwargs):
+        result = run_asr_child(task_id, 0)
+        (audio.parent.parent.parent / "raw" / "source.mp4").write_bytes(b"changed-source")
+        event = {"event": "success", "manifest_path": str(result.manifest_path)}
+        return StructuredProcessGroupResult(completed_process=subprocess.CompletedProcess(args, 0, "", ""), events=[event], latest_event=event)
+    monkeypatch.setattr(task_runner, "run_tracked_structured_process_group_command", child)
+    with session_scope() as session, pytest.raises(AsrFailure, match="changed"):
+        task_runner._execute_asr_subprocess(session, task_id)
+    assert not (audio.parent.parent / "asr-aggregate-manifest.json").exists()

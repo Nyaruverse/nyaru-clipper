@@ -23,19 +23,19 @@ async function requireData<Result>(request: Promise<{ readonly data?: Result; re
   return data;
 }
 
-export function getTaskLibrarySummary(): Promise<TaskLibrarySummary> {
-  return requireData(workstationClient.GET("/api/v2/tasks/summary", { parseAs: "json" }), "任务库摘要无法读取");
+export function getTaskLibrarySummary(signal?: AbortSignal): Promise<TaskLibrarySummary> {
+  return requireData(workstationClient.GET("/api/v2/tasks/summary", { parseAs: "json", signal }), "任务库摘要无法读取");
 }
 
-export function getTaskLibraryPage(filters: TaskLibraryFilters): Promise<components["schemas"]["TaskListPage"]> {
+export function getTaskLibraryPage(filters: TaskLibraryFilters, signal?: AbortSignal): Promise<components["schemas"]["TaskListPage"]> {
   return requireData(
-    workstationClient.GET("/api/v2/tasks", { params: { query: toTaskListQuery(filters) }, parseAs: "json" }),
+    workstationClient.GET("/api/v2/tasks", { params: { query: toTaskListQuery(filters) }, parseAs: "json", signal }),
     "任务库无法读取",
   );
 }
 
-export function getTaskOverview(taskId: string): Promise<TaskOverview> {
-  return requireData(workstationClient.GET("/api/v2/tasks/{task_id}", { params: { path: { task_id: taskId } } }), "任务详情无法读取");
+export function getTaskOverview(taskId: string, signal?: AbortSignal): Promise<TaskOverview> {
+  return requireData(workstationClient.GET("/api/v2/tasks/{task_id}", { params: { path: { task_id: taskId } }, signal }), "任务详情无法读取");
 }
 
 export function updateTaskMetadata(taskId: string, metadata: components["schemas"]["TaskPatchRequest"]): Promise<TaskOverview> {

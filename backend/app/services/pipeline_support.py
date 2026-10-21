@@ -8,6 +8,8 @@ import signal
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +18,7 @@ from sqlmodel import Session, select
 
 import app.models as models
 from app.db import get_engine
+from app.services.command_logging import append_stage_log, run_logged_command
 from app.services.workstation_events import publish_stage_updated, publish_task_updated
 
 PROCESS_GROUP_POLL_INTERVAL_SECONDS = 0.2
@@ -35,6 +38,12 @@ class StructuredProgressProtocolError(RuntimeError):
         self.raw_line = raw_line
 
 
+class ProcessGroupCleanupError(RuntimeError):
+    def __init__(self, process_group_id: int):
+        super().__init__(f"Unable to reap process group {process_group_id}")
+        self.process_group_id = process_group_id
+
+
 def _task_control_module():
     return importlib.import_module("app.services.task_control")
 
@@ -51,128 +60,6 @@ def _stale_execution_token_error_type():
     if stale_error is None:
         raise RuntimeError("app.services.task_control.StaleExecutionTokenError is unavailable")
     return stale_error
-
-
-def append_stage_log(log_path: Path, message: str) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{message}\n")
-
-
-def run_logged_command(
-    args: list[str],
-    *,
-    log_path: Path,
-    redactions: dict[str, str] | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run a command while replacing sensitive runtime-only paths before persistence."""
-    def redact(message: str) -> str:
-        if redactions is None:
-            return message
-        for source_path, safe_locator in redactions.items():
-            message = message.replace(source_path, safe_locator)
-        return message
-
-    append_stage_log(log_path, redact(f"$ {' '.join(args)}"))
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
-    if result.stdout:
-        append_stage_log(log_path, redact(result.stdout.rstrip()))
-    if result.stderr:
-        append_stage_log(log_path, redact(result.stderr.rstrip()))
-    append_stage_log(log_path, f"exit_code={result.returncode}")
-    return result
-
-
-def run_tracked_process_group_command(
-    session: Session,
-    *,
-    task_id: str,
-    args: list[str],
-    log_path: Path,
-    poll_interval_seconds: float = PROCESS_GROUP_POLL_INTERVAL_SECONDS,
-) -> subprocess.CompletedProcess[str]:
-    context = _task_control_module().get_execution_context(session)
-    if context is None or context.get("task_id") != task_id:
-        return run_logged_command(args, log_path=log_path)
-
-    _task_control_module().ensure_current_execution_context(session, task_id=task_id)
-    _finalize_cancelled_before_launch_if_requested(session, task_id=task_id)
-    append_stage_log(log_path, f"$ {' '.join(args)}")
-    process = subprocess.Popen(
-        args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    process_group_id = process.pid
-    _set_active_process_group(
-        session,
-        task_id=task_id,
-        process_group_id=process_group_id,
-    )
-
-    term_sent = False
-    kill_sent = False
-    stdout = ""
-    stderr = ""
-
-    while True:
-        try:
-            stdout, stderr = process.communicate(timeout=poll_interval_seconds)
-            break
-        except subprocess.TimeoutExpired:
-            try:
-                _touch_active_process_group(session, task_id=task_id)
-            except Exception as exc:
-                if not isinstance(exc, _stale_execution_token_error_type()):
-                    raise
-                append_stage_log(
-                    log_path,
-                    f"task_control:stale_execution_terminating process_group={process_group_id}",
-                )
-                _terminate_process_group_and_wait(
-                    process,
-                    process_group_id=process_group_id,
-                    signal_number=signal.SIGKILL,
-                )
-                raise
-            cancel_requested, force_kill_requested = _load_control_requests(session, task_id=task_id)
-            if force_kill_requested and not kill_sent:
-                append_stage_log(
-                    log_path,
-                    f"task_control:force_kill_requested process_group={process_group_id}",
-                )
-                _terminate_process_group_and_wait(
-                    process,
-                    process_group_id=process_group_id,
-                    signal_number=signal.SIGKILL,
-                )
-                kill_sent = True
-            elif cancel_requested and not term_sent:
-                append_stage_log(
-                    log_path,
-                    f"task_control:cancel_requested process_group={process_group_id}",
-                )
-                _signal_process_group(process_group_id, signal.SIGTERM)
-                term_sent = True
-
-    if stdout:
-        append_stage_log(log_path, stdout.rstrip())
-    if stderr:
-        append_stage_log(log_path, stderr.rstrip())
-    append_stage_log(log_path, f"exit_code={process.returncode}")
-
-    if term_sent or kill_sent:
-        _finalize_cancelled_process_group(session, task_id=task_id)
-
-    _clear_active_process_group(session, task_id=task_id)
-    return subprocess.CompletedProcess(
-        args=args,
-        returncode=process.returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
 
 
 def run_tracked_structured_process_group_command(
@@ -200,37 +87,86 @@ def run_tracked_structured_process_group_command(
         bufsize=1,
         start_new_session=True,
     )
-    process_group_id = process.pid
-    _set_active_process_group(
-        session,
-        task_id=task_id,
-        process_group_id=process_group_id,
-    )
+    with _reap_process_group_on_error(process, session):
+        process_group_id = process.pid
+        _set_active_process_group(
+            session,
+            task_id=task_id,
+            process_group_id=process_group_id,
+        )
 
-    stdout_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
-    stdout_reader = _start_pipe_reader(process.stdout, stream_name="stdout", output_queue=stdout_queue)
-    stderr_reader = _start_pipe_reader(process.stderr, stream_name="stderr", output_queue=stdout_queue)
+        stdout_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
+        stdout_reader = _start_pipe_reader(process.stdout, stream_name="stdout", output_queue=stdout_queue)
+        stderr_reader = _start_pipe_reader(process.stderr, stream_name="stderr", output_queue=stdout_queue)
 
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
-    events: list[dict[str, Any]] = []
-    latest_event: dict[str, Any] | None = None
-    stdout_closed = False
-    stderr_closed = False
-    term_sent = False
-    kill_sent = False
-    cancel_deadline: float | None = None
-    protocol_error: StructuredProgressProtocolError | None = None
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        events: list[dict[str, Any]] = []
+        latest_event: dict[str, Any] | None = None
+        stdout_closed = False
+        stderr_closed = False
+        term_sent = False
+        kill_sent = False
+        cancel_deadline: float | None = None
+        protocol_error: StructuredProgressProtocolError | None = None
 
-    try:
-        while True:
-            if process.poll() is not None and stdout_closed and stderr_closed and stdout_queue.empty():
-                break
+        try:
+            while True:
+                if process.poll() is not None and stdout_closed and stderr_closed and stdout_queue.empty():
+                    break
 
-            try:
-                stream_name, line = stdout_queue.get(timeout=poll_interval_seconds)
-            except queue.Empty:
-                _touch_heartbeat_or_abort(session, task_id=task_id, log_path=log_path, process=process)
+                try:
+                    stream_name, line = stdout_queue.get(timeout=poll_interval_seconds)
+                except queue.Empty:
+                    _touch_heartbeat_or_abort(session, task_id=task_id, log_path=log_path, process=process)
+                    term_sent, kill_sent, cancel_deadline = _apply_process_group_control(
+                        session,
+                        task_id=task_id,
+                        log_path=log_path,
+                        process=process,
+                        process_group_id=process_group_id,
+                        term_sent=term_sent,
+                        kill_sent=kill_sent,
+                        cancel_deadline=cancel_deadline,
+                        cancel_grace_period_seconds=cancel_grace_period_seconds,
+                    )
+                    continue
+
+                if line is None:
+                    if stream_name == "stdout":
+                        stdout_closed = True
+                    else:
+                        stderr_closed = True
+                elif stream_name == "stdout":
+                    stripped_line = line.rstrip("\n")
+                    stdout_lines.append(line)
+                    if stripped_line:
+                        try:
+                            parsed_event = _parse_structured_event_line(stripped_line)
+                        except StructuredProgressProtocolError as exc:
+                            append_stage_log(log_path, f"classified_failure={exc.code}")
+                            protocol_error = exc
+                            _terminate_process_group_and_wait(
+                                process,
+                                process_group_id=process_group_id,
+                                signal_number=signal.SIGKILL,
+                                timeout_seconds=1.0,
+                            )
+                        else:
+                            events.append(parsed_event)
+                            latest_event = parsed_event
+                            append_stage_log(log_path, _format_structured_event_for_log(parsed_event))
+                            if on_event is not None:
+                                on_event(parsed_event)
+                            _touch_heartbeat_or_abort(session, task_id=task_id, log_path=log_path, process=process)
+                else:
+                    stderr_lines.append(line)
+                    if line.rstrip():
+                        append_stage_log(log_path, line.rstrip())
+
+                if protocol_error is not None:
+                    continue
+
                 term_sent, kill_sent, cancel_deadline = _apply_process_group_control(
                     session,
                     task_id=task_id,
@@ -242,79 +178,34 @@ def run_tracked_structured_process_group_command(
                     cancel_deadline=cancel_deadline,
                     cancel_grace_period_seconds=cancel_grace_period_seconds,
                 )
-                continue
+        finally:
+            stdout_reader.join(timeout=1)
+            stderr_reader.join(timeout=1)
 
-            if line is None:
-                if stream_name == "stdout":
-                    stdout_closed = True
-                else:
-                    stderr_closed = True
-            elif stream_name == "stdout":
-                stripped_line = line.rstrip("\n")
-                stdout_lines.append(line)
-                if stripped_line:
-                    try:
-                        parsed_event = _parse_structured_event_line(stripped_line)
-                    except StructuredProgressProtocolError as exc:
-                        append_stage_log(log_path, f"classified_failure={exc.code}")
-                        protocol_error = exc
-                        _terminate_process_group_and_wait(
-                            process,
-                            process_group_id=process_group_id,
-                            signal_number=signal.SIGKILL,
-                            timeout_seconds=1.0,
-                        )
-                    else:
-                        events.append(parsed_event)
-                        latest_event = parsed_event
-                        append_stage_log(log_path, _format_structured_event_for_log(parsed_event))
-                        if on_event is not None:
-                            on_event(parsed_event)
-                        _touch_heartbeat_or_abort(session, task_id=task_id, log_path=log_path, process=process)
-            else:
-                stderr_lines.append(line)
-                if line.rstrip():
-                    append_stage_log(log_path, line.rstrip())
+        completed_process = subprocess.CompletedProcess(
+            args=args,
+            returncode=process.returncode,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
+        )
+        append_stage_log(log_path, f"exit_code={process.returncode}")
 
-            if protocol_error is not None:
-                continue
-
-            term_sent, kill_sent, cancel_deadline = _apply_process_group_control(
-                session,
-                task_id=task_id,
-                log_path=log_path,
-                process=process,
-                process_group_id=process_group_id,
-                term_sent=term_sent,
-                kill_sent=kill_sent,
-                cancel_deadline=cancel_deadline,
-                cancel_grace_period_seconds=cancel_grace_period_seconds,
+        if term_sent or kill_sent:
+            _terminate_process_group_and_wait(
+                process, process_group_id=process_group_id, signal_number=signal.SIGKILL,
             )
-    finally:
-        stdout_reader.join(timeout=1)
-        stderr_reader.join(timeout=1)
+            _finalize_cancelled_process_group(session, task_id=task_id)
 
-    completed_process = subprocess.CompletedProcess(
-        args=args,
-        returncode=process.returncode,
-        stdout="".join(stdout_lines),
-        stderr="".join(stderr_lines),
-    )
-    append_stage_log(log_path, f"exit_code={process.returncode}")
+        _clear_active_process_group(session, task_id=task_id)
 
-    if term_sent or kill_sent:
-        _finalize_cancelled_process_group(session, task_id=task_id)
+        if protocol_error is not None:
+            raise protocol_error
 
-    _clear_active_process_group(session, task_id=task_id)
-
-    if protocol_error is not None:
-        raise protocol_error
-
-    return StructuredProcessGroupResult(
-        completed_process=completed_process,
-        events=events,
-        latest_event=latest_event,
-    )
+        return StructuredProcessGroupResult(
+            completed_process=completed_process,
+            events=events,
+            latest_event=latest_event,
+        )
 
 
 def _run_logged_structured_command(
@@ -419,6 +310,24 @@ def _signal_process_group(process_group_id: int, signal_number: int) -> None:
         return
 
 
+@contextmanager
+def _reap_process_group_on_error(process: subprocess.Popen[str], session: Session) -> Iterator[None]:
+    try:
+        yield
+    except BaseException:  # Cleanup must also cover interrupts after a successful launch.
+        try:
+            _terminate_process_group_and_wait(
+                process, process_group_id=process.pid, signal_number=signal.SIGKILL,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            session.info["process_group_cleanup_failed"] = True
+            raise ProcessGroupCleanupError(process.pid) from exc
+        session.info.pop("process_group_cleanup_failed", None)
+        raise
+    else:
+        session.info.pop("process_group_cleanup_failed", None)
+
+
 def _terminate_process_group_and_wait(
     process: subprocess.Popen[str],
     *,
@@ -426,11 +335,27 @@ def _terminate_process_group_and_wait(
     signal_number: int,
     timeout_seconds: float = 5.0,
 ) -> None:
-    _signal_process_group(process_group_id, signal_number)
-    try:
-        process.wait(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        return
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            _signal_process_group(process_group_id, signal_number)
+            break
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+    process.wait(timeout=max(0, deadline - time.monotonic()))
+    while True:
+        try:
+            os.killpg(process_group_id, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, timeout_seconds)
+        time.sleep(0.01)
 
 
 def _start_pipe_reader(
@@ -535,7 +460,6 @@ def _apply_process_group_control(
     if (
         term_sent
         and not kill_sent
-        and process.poll() is None
         and cancel_deadline is not None
         and time.monotonic() >= cancel_deadline
     ):
@@ -579,7 +503,7 @@ def set_stage_status(
     elif status == "failed":
         stage.finished_at = now
         task = session.get(models.Task, task_id)
-        if task is not None:
+        if task is not None and session.info.get("pipeline_run_id") is None:
             task_status_changed = task.status != "failed"
             task.status = "failed"
             task.updated_at = now

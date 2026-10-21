@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 
@@ -129,6 +130,87 @@ def test_task_library_readiness_filters_treat_deleted_artifact_files_as_missing(
     # Then: the deleted artifact is missing and cannot be reported as ready.
     assert [item["task_id"] for item in missing_response.json()["items"]] == ["task-deleted-artifact"]
     assert [item["task_id"] for item in ready_response.json()["items"]] == []
+
+
+@pytest.mark.parametrize(
+    ("stage_name", "stored_kind", "public_kind"),
+    [
+        ("ingest", "source_video", "source_video"),
+        ("media_prep", "prepared_audio", "prepared_audio"),
+        ("media_prep", "asr_audio", "prepared_audio"),
+        ("asr", "transcript_json", "transcript_json"),
+        ("translation", "translated_segments", "translated_segments"),
+        ("translation", "bilingual_transcript_json", "translated_segments"),
+        ("highlight", "highlight_candidates", "highlight_candidates"),
+        ("highlight", "highlight_candidates_json", "highlight_candidates"),
+        ("export", "clip_video", "clip_video"),
+        ("export", "exported_clip", "clip_video"),
+        ("export", "clip_export", "clip_video"),
+        ("report", "report", "report"),
+        ("report", "task_report_markdown", "report"),
+    ],
+)
+@pytest.mark.parametrize("deleted", [False, True], ids=["present", "deleted"])
+def test_registered_artifact_readiness_matches_details_and_filters(
+    client: TestClient,
+    tmp_path: Path,
+    stage_name: str,
+    stored_kind: str,
+    public_kind: str,
+    deleted: bool,
+) -> None:
+    # Given: a real registered output on a completed stage in temporary SQLite/storage.
+    from app.db import session_scope
+    from app.models import PipelineRun, TaskStage, utc_now
+    from app.services.clip_export import _persist_export_artifact
+    from app.services.storage import persist_artifact_metadata
+
+    task_id = "task-registered-output"
+    output_path = tmp_path / "output.mp4"
+    output_path.write_bytes(b"registered-output")
+    with session_scope() as session:
+        _seed_task(session, task_id=task_id, status="success")
+        session.add(TaskStage(task_id=task_id, name=stage_name, status="success"))
+        session.add(PipelineRun(id="run-output", task_id=task_id, status="success", started_at=utc_now()))
+        if stored_kind == "clip_export":
+            artifact = _persist_export_artifact(
+                session,
+                task_id=task_id,
+                candidate_id=1,
+                output_path=output_path,
+                start_s=0.0,
+                end_s=1.0,
+                source_duration_s=1.0,
+                source_video_reference="source.mp4",
+                export_backend="cpu",
+                video_encoder="libx264",
+            )
+        else:
+            artifact = persist_artifact_metadata(
+                session, task_id=task_id, stage_name=stage_name, kind=stored_kind, path=output_path
+            )
+        artifact_id = artifact.id
+        assert artifact.kind == stored_kind
+    if deleted:
+        output_path.unlink()
+
+    # When: both HTTP detail models and SQL-backed readiness filters read the output.
+    details = [client.get(f"{prefix}/tasks/{task_id}") for prefix in ("/api", "/api/v2")]
+    ready_response = client.get("/api/v2/tasks", params={"readiness": "ready"})
+    missing_response = client.get("/api/v2/tasks", params={"readiness": "missing"})
+
+    # Then: every alias preserves its public kind and tracks actual file availability.
+    for response in details:
+        assert response.status_code == 200
+        readiness = response.json()["artifact_readiness"]
+        assert len(readiness) == 1
+        assert readiness[0]["kind"] == public_kind
+        assert readiness[0]["status"] == ("missing" if deleted else "ready")
+        assert readiness[0]["artifact_id"] == artifact_id
+        assert readiness[0]["path"].endswith("/content/output.mp4")
+    assert ready_response.status_code == missing_response.status_code == 200
+    assert [item["task_id"] for item in ready_response.json()["items"]] == ([] if deleted else [task_id])
+    assert [item["task_id"] for item in missing_response.json()["items"]] == ([task_id] if deleted else [])
 
 
 def test_task_library_readiness_filter_matches_a_skipped_highlight_stage(client: TestClient) -> None:

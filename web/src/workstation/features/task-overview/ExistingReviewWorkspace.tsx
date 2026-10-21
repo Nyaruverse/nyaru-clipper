@@ -1,5 +1,6 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { workstationKeys } from "../../api/queryKeys";
 
 import {
 	exportTaskClip,
@@ -267,11 +268,16 @@ function toExportedClipArtifactFromResponse(
 	};
 }
 
-export function ExistingReviewWorkspace({
+export function ExistingReviewWorkspace(props: ExistingReviewWorkspaceProps) {
+	return <TaskReviewWorkspace key={props.taskId} {...props} />;
+}
+
+function TaskReviewWorkspace({
 	artifactReadiness,
 	artifacts,
 	taskId,
 }: ExistingReviewWorkspaceProps) {
+	const queryClient = useQueryClient();
 	const { header, subtitles, candidates, downloads, exportedClips } =
 		WORKSPACE_COPY;
 	const transcriptArtifact = useMemo(
@@ -399,6 +405,7 @@ export function ExistingReviewWorkspace({
 			}));
 		},
 		onSuccess: (response) => {
+			void queryClient.invalidateQueries({ queryKey: workstationKeys.detail(taskId) });
 			setCandidateExportErrors({});
 			setLocalClipArtifacts((current) => {
 				const nextArtifact = toExportedClipArtifactFromResponse(response);

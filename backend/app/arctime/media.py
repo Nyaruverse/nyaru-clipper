@@ -95,7 +95,9 @@ def read_subtitles(path: Path, *, merge_contiguous_zero_duration: bool = False) 
 
 def clip_subtitles(segments: list[SubtitleSegment], start: float, end: float) -> list[SubtitleSegment]:
     return [SubtitleSegment(str(i + 1), max(c.start_seconds, start) - start, min(c.end_seconds, end) - start, c.text)
-            for i, c in enumerate(s for s in segments if s.end_seconds > start and s.start_seconds < end)]
+            for i, c in enumerate(s for s in segments
+                if round((min(s.end_seconds, end) - start) * 1000)
+                > round((max(s.start_seconds, start) - start) * 1000))]
 
 
 def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[tuple[float, float]], highlight_count: int | None) -> list[dict]:
@@ -173,7 +175,7 @@ def download_video(url: str, directory: Path) -> Path:
 
 
 def export_clip(source: Path, target: Path, start: float, end: float, segments: list[SubtitleSegment]) -> None:
-    from app.services.export_encoding import ExportInvocation, execute_video_export
+    from app.services.export_encoding import ExportEncodingConfig, ExportInvocation, execute_video_export
     from app.settings import get_settings
 
     final_subtitle = target.with_suffix(".srt")
@@ -181,17 +183,24 @@ def export_clip(source: Path, target: Path, start: float, end: float, segments: 
     if target.exists() or target.is_symlink() or final_subtitle.is_symlink() or log_path.is_symlink():
         raise FileExistsError("Final clip already exists or an output is a symlink")
     duration = probe_video(source)
+    # Remuxing can shorten the container timestamp by a frame; retain the selected subtitle tail.
+    if start < duration < end <= duration + .05:
+        duration = end
     select_clips([], duration, [(start, end)], None)
     expected_subtitle = render_srt(clip_subtitles(segments, start, end))
     retained_subtitle = final_subtitle.exists()
     if retained_subtitle and final_subtitle.read_text(encoding="utf-8") != expected_subtitle:
         raise FileExistsError("Existing subtitles differ from the requested clip; preserving them")
     settings = get_settings()
-    settings.ffmpeg_binary = tool_path("ffmpeg")
+    encoding_config = ExportEncodingConfig(
+        ffmpeg_binary=tool_path("ffmpeg"),
+        export_video_backend=settings.export_video_backend,
+        windows_ffmpeg_binary=settings.windows_ffmpeg_binary,
+    )
     with tempfile.TemporaryDirectory(prefix=".encoding-", dir=target.parent) as temporary:
         video = Path(temporary) / "clip.mp4"
         subtitle = video.with_suffix(".srt")
-        execution = execute_video_export(ExportInvocation(source, video, start, end, "managed-video"), settings, log_path)
+        execution = execute_video_export(ExportInvocation(source, video, start, end, "managed-video"), encoding_config, log_path)
         if execution.completed_process.returncode or not video.is_file():
             raise RuntimeError(f"ffmpeg clip encoding failed; see {log_path.name}; previous clips are preserved")
         actual_duration = probe_video(video)

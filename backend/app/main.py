@@ -9,9 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import api_router
 from app.db import init_db
+from app.paths import ensure_data_dir
 from app.settings import get_settings
 from app.services.runtime_capabilities import get_runtime_capability_summary
-from app.services.storage import get_tasks_root
 
 runtime_logger = logging.getLogger("app.runtime")
 settings = get_settings()
@@ -19,7 +19,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    get_tasks_root()
+    (ensure_data_dir() / "tasks").mkdir(parents=True, exist_ok=True)
     init_db()
     runtime_summary = get_runtime_capability_summary()
     runtime_logger.info(

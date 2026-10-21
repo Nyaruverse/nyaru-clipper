@@ -52,6 +52,11 @@ def test_clipped_cues_are_rebased():
     assert cues[0].start_seconds == 1
 
 
+def test_clipping_omits_overlap_that_rounds_to_zero_milliseconds():
+    cue = SubtitleSegment("1", 20.920, 30, "next chunk")
+    assert media.clip_subtitles([cue], 0, 20.920333) == []
+
+
 @pytest.mark.parametrize("ranges", [[(-1, 3)], [(2, 2)], [(3, 2)], [(0, 11)], [(0, math.inf)], [(math.nan, 5)]])
 def test_out_of_range_selection_is_rejected(ranges):
     with pytest.raises(ValueError):
@@ -142,6 +147,35 @@ def test_matching_orphan_subtitle_is_preserved_during_recovery(tmp_path, monkeyp
     media.export_clip(tmp_path / "source.mp4", target, 0, 10, cues)
     assert target.read_bytes() == b"encoded video"
     assert subtitle.stat().st_ino == before
+
+
+def test_export_preserves_tail_when_remux_duration_is_one_frame_shorter(tmp_path, monkeypatch):
+    import subprocess
+    from app.services import export_encoding
+
+    source = tmp_path / "source.mp4"
+    target = tmp_path / "clip.mp4"
+    cues = [SubtitleSegment("1", 9, 10, "tail")]
+    monkeypatch.setattr(media, "probe_video", lambda path: 10 - 1 / 60 if path == source else 10)
+    monkeypatch.setattr(media, "tool_path", lambda name: name)
+
+    def success(invocation, settings, log_path):
+        assert invocation.end_s == 10
+        invocation.output_path.write_bytes(b"encoded video")
+        return export_encoding.ExportExecution("cpu", "libx264", subprocess.CompletedProcess([], 0))
+
+    monkeypatch.setattr(export_encoding, "execute_video_export", success)
+    media.export_clip(source, target, 0, 10, cues)
+
+    assert target.read_bytes() == b"encoded video"
+    assert target.with_suffix(".srt").read_text() == media.render_srt(cues)
+
+
+@pytest.mark.parametrize("start,end", [(0, 10), (9.81, 9.82)])
+def test_export_rejects_tail_beyond_timestamp_rounding(tmp_path, monkeypatch, start, end):
+    monkeypatch.setattr(media, "probe_video", lambda path: 9.8)
+    with pytest.raises(ValueError, match="Clip bounds"):
+        media.export_clip(tmp_path / "source.mp4", tmp_path / "clip.mp4", start, end, [])
 
 
 def test_changed_orphan_subtitle_is_not_overwritten(tmp_path, monkeypatch):

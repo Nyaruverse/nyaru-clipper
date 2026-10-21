@@ -75,6 +75,40 @@ def test_highlights_are_selected_from_local_transcript(client):
     assert job["clips"][0]["score"] >= .55
 
 
+@pytest.mark.parametrize("selection,mode", [
+    ({"ranges": json.dumps([["1", "4"]])}, "ranges"),
+    ({"highlights": 2}, "highlights"),
+])
+def test_local_video_supports_slicing_without_ai(client, tmp_path, selection, mode):
+    response = client.post("/companion-api/jobs/upload", params={"saozi": "false", **selection}, content=b"local-video")
+    assert response.status_code == 202
+    job = completed(client, response.json()["id"])
+    assert job["state"] == "completed" and job["mode"] == mode
+    assert len(job["clips"]) == 1
+    assert client.get(f"/companion-api/jobs/{job['id']}/files/source.mp4").content == b"local-video"
+    assert not list(tmp_path.glob(".saozi-upload-*"))
+
+
+@pytest.mark.parametrize("selection", [
+    {"ranges": "bad-json"}, {"ranges": "null"}, {"ranges": "[]"},
+    {"ranges": json.dumps([["4", "1"]])},
+    {"ranges": json.dumps([["1", "4"]]), "highlights": 2},
+    {"highlights": 0}, {"highlights": 2, "language": "--bad"},
+])
+def test_invalid_local_selection_does_not_reserve_job(client, selection):
+    response = client.post("/companion-api/jobs/upload", params={"saozi": "false", **selection}, content=b"video")
+    assert response.status_code == 422
+    assert client.get("/companion-api/jobs").json() == []
+
+
+def test_empty_local_upload_can_be_retried_without_ai(client):
+    params = {"saozi": "false", "ranges": json.dumps([["1", "4"]])}
+    assert client.post("/companion-api/jobs/upload", params=params, content=b"").status_code == 422
+    retry = client.post("/companion-api/jobs/upload", params=params, content=b"video")
+    assert retry.status_code == 202
+    assert completed(client, retry.json()["id"])["state"] == "completed"
+
+
 @pytest.mark.parametrize("payload", [
     {"url": "file:///etc/passwd"},
     {"url": "https://user:password@example.org/v.mp4"},
@@ -219,6 +253,26 @@ def test_cli_recovery_overrides_stale_gui_failure(client, tmp_path, monkeypatch)
     assert "old failure" not in snapshot["message"]
 
 
+@pytest.mark.parametrize('state', ['completed', 'failed'])
+def test_room_end_is_visible_without_overriding_processing_state(client, tmp_path, state):
+    job_id = 'aabbccddeeff'
+    directory = tmp_path / job_id
+    directory.mkdir()
+    (directory / 'job.json').write_text(json.dumps({
+        'state': 'completed' if state == 'completed' else 'live_failed',
+        'live': True, 'capture_end_reason': 'live_ended'}))
+    error = 'Local ASR timestamps exceed chunk duration' if state == 'failed' else None
+    (directory / 'gui.json').write_text(json.dumps({'id': job_id, 'state': state,
+        'message': '处理失败' if error else '处理完成', 'error': error}))
+    for response in (client.get(f'/companion-api/jobs/{job_id}'), client.get('/companion-api/jobs')):
+        job = response.json()
+        if isinstance(job, list):
+            job = next(row for row in job if row['id'] == job_id)
+        assert job['capture_end_reason'] == 'live_ended'
+        assert '直播已结束' in job['message']
+        assert job['state'] == state and job['error'] == error
+
+
 def translation_finished(client, job_id):
     for _ in range(200):
         result = client.get(f"/companion-api/jobs/{job_id}").json()
@@ -268,7 +322,8 @@ def test_translation_config_persists_updates_privately_and_loads_after_restart(t
             response = client.post("/companion-api/translation-config", json={"api_key": key})
             assert response.status_code == 200
             assert key not in response.text
-            assert json.loads(path.read_text()) == {"deepseek_api_key": key, "deepseek_model": "deepseek-flash"}
+            assert json.loads(path.read_text()) == {"deepseek_api_key": key, "deepseek_model": "deepseek-flash",
+                                                    'llm_provider': 'deepseek', 'chatgpt_model': ''}
             assert path.stat().st_mode & 0o777 == 0o600
         assert client.get("/companion-api/jobs").json() == []
         assert client.get("/companion-api/jobs/aaaaaaaaaaaa/files/config.json").status_code == 404
@@ -302,21 +357,22 @@ def test_empty_translation_config_disables_key_on_restart(tmp_path):
 def test_model_selection_persists_without_reentering_or_replacing_key(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/companion-api/config").json()["translation_model"] == "deepseek-flash"
-        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 200
+        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 422
         assert client.get("/companion-api/config").json()["translation_configured"] is False
         assert client.post("/companion-api/translation-config", json={"api_key": "test-key"}).status_code == 200
         assert client.post("/companion-api/translation-config", json={"model": "deepseek-flash"}).status_code == 200
-        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 200
+        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 422
         before = (tmp_path / "config.json").read_bytes()
         assert client.post("/companion-api/translation-config", json={"model": "unknown"}).status_code == 422
         assert client.post("/companion-api/translation-config", json={}).status_code == 422
         assert (tmp_path / "config.json").read_bytes() == before
-        assert json.loads(before) == {"deepseek_api_key": "test-key", "deepseek_model": "deepseek-v4-pro"}
+        assert json.loads(before) == {"deepseek_api_key": "test-key", "deepseek_model": "deepseek-flash",
+                                      'llm_provider': 'deepseek', 'chatgpt_model': ''}
     with TestClient(create_app(tmp_path)) as restarted:
         config = restarted.get("/companion-api/config").json()
         assert config["translation_configured"] is True
-        assert config["translation_model"] == "deepseek-v4-pro"
-        assert config["translation_models"] == ["deepseek-flash", "deepseek-v4-pro"]
+        assert config["translation_model"] == "deepseek-flash"
+        assert config["translation_models"] == ["deepseek-flash"]
         assert "test-key" not in json.dumps(config)
 
 
@@ -327,15 +383,22 @@ def test_repairing_invalid_model_preserves_saved_key(tmp_path):
         config = client.get("/companion-api/config").json()
         assert config["translation_config_error"]
         assert config["translation_configured"] is True
-        assert client.post("/companion-api/translation-config", json={"model": "deepseek-v4-pro"}).status_code == 200
+        assert client.post("/companion-api/translation-config", json={"model": "deepseek-flash"}).status_code == 200
         assert json.loads(path.read_text())["deepseek_api_key"] == "test-preserved-key"
         assert client.get("/companion-api/config").json()["translation_config_error"] is None
 
 
 def test_started_translation_keeps_model_when_global_selection_changes(client, monkeypatch):
     from app.arctime import translation
+    from app.arctime.chatgpt_auth import ChatGPTAuth
+    monkeypatch.setattr(ChatGPTAuth, 'models', lambda self: [{'slug': 'subscription-model', 'display_name': 'Subscription'}])
+    monkeypatch.setattr(ChatGPTAuth, 'status', lambda self: {'connected': True, 'sharing': True, 'account_label': 'Test',
+                                                           'error': None, 'manage_url': 'https://chatgpt.com/settings/usage'})
     models = []
-    def request(client, key, cues, start, model):
+    def request(client, key, cues, start, model, **kwargs):
+        if model.startswith('chatgpt:'):
+            assert kwargs['request_json'] is not None
+            assert key.get_secret_value() == ''
         models.append(model)
         if len(models) == 1:
             raise ValueError("temporary failure")
@@ -343,18 +406,18 @@ def test_started_translation_keeps_model_when_global_selection_changes(client, m
     monkeypatch.setattr(translation, "_request", request)
     job_id = start(client).json()["id"]
     assert completed(client, job_id)["state"] == "completed"
-    client.post("/companion-api/translation-config", json={"api_key": "test-key", "model": "deepseek-v4-pro"})
+    client.post("/companion-api/translation-config", json={"api_key": "test-key", "model": "deepseek-flash"})
     assert client.post(f"/companion-api/jobs/{job_id}/translate").status_code == 202
     assert translation_finished(client, job_id)["translation"]["state"] == "failed"
-    client.post("/companion-api/translation-config", json={"model": "deepseek-flash"})
-    assert client.get(f"/companion-api/jobs/{job_id}").json()["translation"]["model"] == "deepseek-v4-pro"
+    assert client.post('/companion-api/llm-config', json={'provider': 'chatgpt', 'model': 'subscription-model'}).status_code == 200
+    assert client.get(f"/companion-api/jobs/{job_id}").json()["translation"]["model"] == "deepseek-flash"
     assert client.post(f"/companion-api/jobs/{job_id}/translate").status_code == 202
     assert translation_finished(client, job_id)["translation"]["state"] == "completed"
     other_id = start(client).json()["id"]
     assert completed(client, other_id)["state"] == "completed"
     assert client.post(f"/companion-api/jobs/{other_id}/translate").status_code == 202
     assert translation_finished(client, other_id)["translation"]["state"] == "completed"
-    assert models == ["deepseek-v4-pro", "deepseek-v4-pro", "deepseek-flash"]
+    assert models == ["deepseek-flash", "deepseek-flash", "chatgpt:subscription-model"]
 
 
 def test_translation_config_symlink_and_write_failure_do_not_activate_key(tmp_path, monkeypatch):

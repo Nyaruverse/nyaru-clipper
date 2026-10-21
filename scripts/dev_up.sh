@@ -31,7 +31,7 @@ api_pid="$!"
 children+=("${api_pid}")
 
 printf 'waiting for api readiness...\n'
-wait_for_url "api health" "http://127.0.0.1:${APP_PORT}/api/health"
+wait_for_api_readiness "http://127.0.0.1:${APP_PORT}/api/health"
 
 printf 'starting local worker...\n'
 "${SCRIPT_DIR}/dev_worker.sh" &

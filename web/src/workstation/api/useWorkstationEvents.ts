@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { getWorkstationEventsUrl, workstationEventNames, workstationFallbackPollingInterval, workstationReconnectDelays } from "./events";
@@ -45,16 +46,38 @@ export function useWorkstationEvents(): WorkstationEventConnection {
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let tasksPending = false;
+    let queuePending = false;
+    const pendingTaskIds = new Set<string>();
     let consecutiveFailures = 0;
     let lastReceivedEventId: string | null = null;
     let disposed = false;
 
-    const invalidateTaskProjections = (taskId: string | undefined) => {
-      void queryClient.invalidateQueries({ queryKey: workstationKeys.summary });
-      void queryClient.invalidateQueries({ queryKey: ["workstation", "tasks", "list"] });
-      if (taskId !== undefined) {
-        void queryClient.invalidateQueries({ queryKey: workstationKeys.detail(taskId) });
+    const refreshProjection = (queryKey: QueryKey) => {
+      // Invalidation alone reuses an initial pending fetch with no cached data.
+      void queryClient.cancelQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey });
+    };
+
+    const flushPendingProjections = () => {
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
       }
+      if (tasksPending) {
+        refreshProjection(workstationKeys.summary);
+        refreshProjection(["workstation", "tasks", "list"]);
+        for (const taskId of pendingTaskIds) refreshProjection(workstationKeys.detail(taskId));
+      }
+      if (queuePending) refreshProjection(workstationKeys.queue);
+      tasksPending = false;
+      queuePending = false;
+      pendingTaskIds.clear();
+    };
+
+    const scheduleRefresh = () => {
+      if (refreshTimer === null) refreshTimer = setTimeout(flushPendingProjections, 50);
     };
 
     const invalidateFallbackProjections = () => {
@@ -96,6 +119,7 @@ export function useWorkstationEvents(): WorkstationEventConnection {
         }
 
         eventSource?.close();
+        flushPendingProjections();
         consecutiveFailures += 1;
         const delayIndex = Math.min(consecutiveFailures - 1, workstationReconnectDelays.length - 1);
         const retryDelay = workstationReconnectDelays[delayIndex];
@@ -112,7 +136,7 @@ export function useWorkstationEvents(): WorkstationEventConnection {
 
       for (const eventName of workstationEventNames) {
         eventSource.addEventListener(eventName, (event) => {
-          if (!(event instanceof MessageEvent) || typeof event.data !== "string") {
+          if (disposed || !(event instanceof MessageEvent) || typeof event.data !== "string") {
             return;
           }
           if (event.lastEventId !== "") {
@@ -120,11 +144,15 @@ export function useWorkstationEvents(): WorkstationEventConnection {
             setLastEventId(event.lastEventId);
           }
           if (isTaskProjectionEvent(eventName)) {
-            invalidateTaskProjections(parseEventPayload(event.data).task_id);
+            tasksPending = true;
+            const taskId = parseEventPayload(event.data).task_id;
+            if (taskId !== undefined) pendingTaskIds.add(taskId);
+            scheduleRefresh();
             return;
           }
           if (eventName === "queue.updated") {
-            void queryClient.invalidateQueries({ queryKey: workstationKeys.queue });
+            queuePending = true;
+            scheduleRefresh();
           }
         });
       }
@@ -138,6 +166,7 @@ export function useWorkstationEvents(): WorkstationEventConnection {
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
       }
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
       stopFallbackPolling();
     };
   }, [queryClient]);

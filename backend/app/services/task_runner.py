@@ -3,12 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import logging
 import shutil
 from typing import Any, Callable
 
 from sqlmodel import Session, select
 
-from app.models import CANONICAL_STAGES, MediaSource, Task, TaskJob, TaskStage, utc_now
+from app.models import CANONICAL_STAGES, MediaSource, PipelineRun, Task, TaskJob, TaskStage, utc_now
 from app.repositories.tasks import clear_task_execution_progress, get_task_record, upsert_task_execution_progress
 from app.services.asr_child_runner import build_asr_child_command
 from app.services.asr_whisperx import (
@@ -23,10 +24,10 @@ from app.services.asr_whisperx import (
 from app.services.failure_codes import failure_code_from_exception
 from app.services.downloader import download_bilibili_vod
 from app.services.highlights import analyze_task_highlights
-from app.services.media_prep import prepare_media_for_asr
+from app.services.media_prep import prepare_media_for_asr, media_cache_is_current
 from app.services.media_chunks import MediaChunkFailure, load_media_chunk_manifest, media_chunk_manifest_path
 from app.services.pipeline_support import append_stage_log, run_tracked_structured_process_group_command, set_stage_status
-from app.services.reporting import generate_task_report
+from app.services.reporting import PreparedTaskReport, generate_task_report, publish_task_report
 from app.services.source_catalog import resolve_local_reference_artifact, resolve_persisted_local_media_source
 from app.services.storage import ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
 from app.services.task_control import (
@@ -48,6 +49,7 @@ from app.services.workstation_runs import (
     sync_stage_run,
 )
 from app.services.workstation_events import publish_stage_updated, publish_task_updated
+from app.services.workstation_queue import begin_queue_mutation, finish_queue_entry
 
 CANONICAL_STAGE_ORDER = CANONICAL_STAGES
 
@@ -323,6 +325,8 @@ def _execute_asr_subprocess(session: Session, task_id: str) -> StageDirective:
             _record_asr_chunk_progress(
                 session, task_id=task_id, completed_count=completed_count, total_count=total_count, chunk_index=chunk.index
             )
+        if not media_cache_is_current(work_dir, _resolve_ingest_video_path(task_id, session)):
+            raise AsrFailure(code="invalid_chunk_output", message="Media source or audio changed during ASR processing.")
         append_stage_log(log_path, "asr_merge=start")
         artifacts = merge_asr_chunk_artifacts(task_id, work_dir=work_dir, chunks=chunk_manifest.chunks)
         publish_merged_asr_artifacts(session, task_id=task_id, artifacts=artifacts)
@@ -412,6 +416,7 @@ def run_task_pipeline(
         pipeline_run = get_pending_pipeline_run(session, task_id)
         if pipeline_run is None:
             pipeline_run = create_pipeline_run(session, task_id, "legacy")
+        session.info["pipeline_run_id"] = pipeline_run.id
         start_pipeline_run(session, pipeline_run)
 
         stages = _load_stage_map(session, task_id)
@@ -420,6 +425,11 @@ def run_task_pipeline(
             raise ValueError(f"Unknown stage: {first_stage_name}")
 
         completed_stages: list[str] = []
+        prepared_report: PreparedTaskReport | None = None
+        validated_stage_name = _validated_resume_stage(session, task_id, first_stage_name)
+        if validated_stage_name != first_stage_name:
+            claimed_stage_running = False
+        first_stage_name = validated_stage_name
         start_index = CANONICAL_STAGE_ORDER.index(first_stage_name)
 
         try:
@@ -470,24 +480,15 @@ def run_task_pipeline(
                     session.rollback()
                     return _current_run_result(session, task_id=task_id, completed_stages=completed_stages)
                 except Exception as exc:
-                    append_stage_log(log_path, f"task_runner:error {exc}")
-                    _mark_stage_failed(
-                        task=task,
-                        job=job,
-                        stage=stage,
-                        summary=_failure_summary(exc),
-                        failure_code=failure_code_from_exception(stage_name, exc),
-                    )
-                    session.add(task)
-                    session.add(job)
-                    session.add(stage)
-                    publish_task_updated(session, task)
-                    publish_stage_updated(session, stage)
-                    sync_stage_run(session, pipeline_run.id, stage)
-                    finish_pipeline_run(session, pipeline_run, "failed")
+                    if session.info.get("process_group_cleanup_failed"):
+                        raise
+                    _log_failure(task_id, stage_name, f"task_runner:error {exc}")
                     session.commit()
+                    _finalize_pipeline_failure(session, stage, exc)
                     raise
 
+                if isinstance(outcome, PreparedTaskReport):
+                    prepared_report = outcome
                 directive = outcome if isinstance(outcome, StageDirective) else None
                 if directive is not None:
                     _apply_stage_directive(stage=stage, directive=directive)
@@ -506,7 +507,7 @@ def run_task_pipeline(
                     return _current_run_result(session, task_id=task_id, completed_stages=completed_stages)
 
                 _advance_job_checkpoint(job=job, next_stage_name=_next_stage_name(index))
-                task.status = "running" if index < len(CANONICAL_STAGE_ORDER) - 1 else "success"
+                task.status = "running"
                 task.updated_at = utc_now()
                 session.add(task)
                 session.add(job)
@@ -520,30 +521,87 @@ def run_task_pipeline(
 
             final_stage = stages[CANONICAL_STAGE_ORDER[-1]]
             if final_stage.status in {"success", "skipped"}:
-                job.status = "success"
-                job.stage_name = CANONICAL_STAGE_ORDER[-1]
-                job.finished_at = utc_now()
-                job.updated_at = job.finished_at
-                task.status = "success"
-                task.updated_at = job.finished_at
-                session.add(job)
-                session.add(task)
-                publish_task_updated(session, task)
-                finish_pipeline_run(session, pipeline_run, "success")
-                session.commit()
+                try:
+                    begin_queue_mutation(session)
+                    _ensure_current_execution_context_if_bound(session, task_id=task_id)
+                    if _finalize_cancelled_if_requested(session, task_id=task_id):
+                        _sync_current_stage_run(session, pipeline_run.id, task_id)
+                        finish_pipeline_run(session, pipeline_run, "cancelled")
+                        session.commit()
+                        return _current_run_result(session, task_id=task_id, completed_stages=completed_stages)
+                    job.status = "success"
+                    job.stage_name = CANONICAL_STAGE_ORDER[-1]
+                    job.finished_at = utc_now()
+                    job.updated_at = job.finished_at
+                    task.status = "success"
+                    task.updated_at = job.finished_at
+                    session.add(job)
+                    session.add(task)
+                    publish_task_updated(session, task)
+                    finish_pipeline_run(session, pipeline_run, "success")
+                    finish_queue_entry(session, task_id)
+                    if prepared_report is None:
+                        prepared_report = generate_task_report(session, task_id)
+                    with publish_task_report(session, prepared_report):
+                        session.commit()
+                except StaleExecutionTokenError:
+                    raise
+                except Exception as exc:
+                    session.rollback()
+                    _finalize_pipeline_failure(session, final_stage, exc)
+                    raise
         except StaleExecutionTokenError:
             session.rollback()
             return _current_run_result(session, task_id=task_id, completed_stages=completed_stages)
 
         return TaskRunResult(task_id=task_id, final_status=task.status, completed_stages=completed_stages)
     finally:
-        if execution_token is not None:
+        session.rollback()
+        session.info.pop("pipeline_run_id", None)
+        if execution_token is not None and not session.info.get("process_group_cleanup_failed"):
             try:
                 finalize_execution(session, task_id=task_id, execution_token=execution_token)
                 session.commit()
             except (StaleExecutionTokenError, RuntimeError, ValueError):
                 session.rollback()
-            clear_execution_context(session)
+        clear_execution_context(session)
+
+
+def _finalize_pipeline_failure(session: Session, stage: TaskStage, exc: Exception) -> None:
+    """Keep the original failure authoritative even when its report cannot be published."""
+    task_id = stage.task_id
+    begin_queue_mutation(session)
+    _ensure_current_execution_context_if_bound(session, task_id=task_id)
+    task = session.get(Task, task_id)
+    job = session.exec(select(TaskJob).where(TaskJob.task_id == task_id)).one()
+    pipeline_run = session.get(PipelineRun, session.info["pipeline_run_id"])
+    _mark_stage_failed(task=task, job=job, stage=stage, summary=_failure_summary(exc),
+                       failure_code=failure_code_from_exception(stage.name, exc))
+    session.add(task)
+    session.add(job)
+    session.add(stage)
+    publish_task_updated(session, task)
+    publish_stage_updated(session, stage)
+    sync_stage_run(session, pipeline_run.id, stage)
+    finish_pipeline_run(session, pipeline_run, "failed")
+    finish_queue_entry(session, task_id)
+    session.commit()
+    try:
+        begin_queue_mutation(session)
+        _ensure_current_execution_context_if_bound(session, task_id=task_id)
+        with publish_task_report(session, generate_task_report(session, task_id)):
+            session.commit()
+    except Exception as report_error:
+        session.rollback()
+        _log_failure(task_id, "report", f"task_runner:failed_report_error {report_error}")
+
+
+def _log_failure(task_id: str, stage_name: str, message: str) -> None:
+    """Keep diagnostic filesystem errors from replacing the pipeline failure."""
+    try:
+        append_stage_log(log_file_for_stage(task_id, stage_name), message)
+    except OSError:
+        logging.getLogger(__name__).exception("Failed to write %s failure diagnostic", stage_name)
 
 
 def _load_stage_map(session: Session, task_id: str) -> dict[str, TaskStage]:
@@ -786,3 +844,24 @@ def _current_run_result(session: Session, *, task_id: str, completed_stages: lis
         final_status=final_status,
         completed_stages=list(completed_stages),
     )
+
+
+def _validated_resume_stage(session: Session, task_id: str, requested: str) -> str:
+    if CANONICAL_STAGE_ORDER.index(requested) <= CANONICAL_STAGE_ORDER.index("media_prep"):
+        return requested
+    work_dir = ensure_task_dirs(task_id)["work"]
+    try:
+        source_path = _resolve_ingest_video_path(task_id, session)
+    except FileNotFoundError:
+        return "ingest"
+    if not media_cache_is_current(work_dir, source_path):
+        return "media_prep"
+    if requested == "asr":
+        return requested
+    manifest = load_media_chunk_manifest(media_chunk_manifest_path(work_dir))
+    from app.services.asr_whisperx import load_verified_merged_asr_artifacts
+    try:
+        load_verified_merged_asr_artifacts(task_id, work_dir=work_dir, chunks=manifest.chunks)
+    except AsrFailure:
+        return "asr"
+    return requested
