@@ -1,5 +1,135 @@
 # Nyaru-Clipper project handoff
 
+## Version-control update: 23 October 2026 (Asia/Shanghai)
+
+Unified implementation, recovery tools, direct tests and App02 fixes are committed as `f8484d5560e971fb4a736e6296d876333cb5b7c6` (`feat: unify task execution, migration and recovery`) on `codex/unified-architecture-2026-10-22`. Primary-checkout documentation belongs to `codex/code-improvement-2026-10-21`; these are the two explicit push targets for this publication. Master and other development branches remain unchanged. Statements below about uncommitted or unpushed work retain their original observation dates; use the [Git publication receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261023.json) and remote branch IDs for the publication result.
+
+Fresh checks in the unified candidate before committing: backend **1551 passed**, frontend **332 passed across 40 files**, TypeScript/Vite build and all three requirements export checks passed. Program sources match the App02 build-input manifest; only indexes/handoffs changed after packaging. Four existing end-of-file blank-line notices remain. This publication only changes version-control state: no repackaging, installation, formal-data cutover or additional platform qualification. Retain sealed domains, old epoch/reader pins, original media and private evidence.
+
+## Current handoff: 23 October 2026 (Asia/Shanghai)
+
+### Handoff refresh: 23 October 2026,13:36 Asia/Shanghai
+
+This refresh only updates handoffs and performs read-only checks. Both App02 ZIPs, the native/frozen executables and fixed recovery bundle retain their recorded SHA256 hashes; all six real-test roots remain immutable and no matching candidate App/backend process was found. [Refresh receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261023-app02.json). Functional results below come from the previous actual runs. No App launch, rebuild, functional rerun, remote connection or fresh full formal-data audit occurred.
+
+| Handoff item | Current location and boundary |
+| --- | --- |
+| Latest candidate App02 | [App ZIP](/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-02/Nyaru-Clipper-unified-candidate-20261023-02.zip); extracted App at `/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-02/Nyaru Clipper.app`. Display0.1.19/build27: use recorded hashes, do not double-click. |
+| Pinned independent recovery | [Recovery ZIP](/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-02.zip); fixed reader directory `/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-02`. Do not move it or rebind an existing epoch. |
+| Latest real task/recovery evidence | Task `ad3ad70afddf5287b5d1b4f797665a2a`:21 cues,two manual translations,revision2. [R2 manifest](/Users/drm/.cache/nyaru-clipper/historical-fixed-native-20261023-01/R2/complete.json) / [independent recovery verification](/Users/drm/.cache/nyaru-clipper/historical-fixed-native-20261023-01/recovered-readonly/verification.json):3 documents,no errors. The saved receipts were checked; recovery was not rerun. |
+| Test entry points to retain | Six roots under `historical-fixed-native-20261023-01/runtime` are sealed; do not reuse the old launch argv. Retain API domain `historical-fixed-api-20261023-01`, all old R2 snapshots and reader pins. The old App01 empty root is not an App02 default. |
+| Formal environment | Candidate has not replaced the formal App or switched formal data. Previous formal App content/metadata, formal-data metadata and selected original task/media protection checks are in the [final audit](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/final-audit.json). This refresh did not repeat formal-data body verification. |
+
+**Next sequence**: first use fresh independent data domains and the pinned App02 reader to repeat R0/R1 takeover, rollback and reopen, checking document versions/full contents and explicit-retry boundaries. Then qualify M24 OS restart/boot protection on an authorized isolated platform. Missing CUDA/WSL ROCm/Windows AMF hardware, external translation and real live capture remain pending; old-package or local results cannot substitute. Historical Workstation preparation failure on old Linux absolute paths was not repaired this round; protect the five unknown directories. P6,formal installation and data cutover have not started; a handoff update does not authorize them.
+
+### Historical-task repair candidate App02 (latest)
+
+F01/F02 are repaired and revalidated against the **new frozen package**:25/25 historical-copy scenario groups passed. A real150-second replay yielded21 cues with manual translations correctly partial2/21. Native playback, revision2 save, CmdQ/reopen, real15-second burn and system saving passed. Adjacent backend regressions82 passed (including8 focused cases); frontend332 passed. Both new archives verified. Display remains0.1.19/build27: use hashes for identity.
+
+[App02 packages and bilingual report](candidate-fixes-2026-10-23.md) · [authoritative receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/receipt.md). App ZIP SHA256 `914e36a0b7cf97ad864cedf9d87abfcfcb1b0ae76248b5ec5da2eb7272eff14b`; recovery ZIP `31e364935d925993b6a849d8c1f7df21b325731c29a39e3e298774153a339c42`; new epoch bundle `52342c6a998c6241a5381db6a778bb792ae38a0e197989d166da79da73016b54`. Old pins are unchanged.
+
+Formal App content/metadata, formal data metadata and selected original tasks/media match baselines; no replacement, cutover or commit. All created App/helpers/servers stopped; queues paused. Real-test domain `historical-fixed-native-20261023-01` has six immutable roots and a sealed new R2; independent recovery exported all3 documents, preserving real revision2. Do not double-click, directly reopen/unseal R2, or replace old epoch pins. New-package R0/R1, M24 OS-restart/boot protection and missing-hardware/provider gates remain pending; P6/formal cutover have not started.
+
+### Historical task functional acceptance (App01 failure snapshot; closed by the new package above)
+
+Isolated historical-task copies were tested at the user's request: **19 passing / 2 failing groups** in the21-group frozen API matrix. A retained150-second real recording was processed as a new replay:21 cues,15-second clip/burn passed; browser editing reached revision5 and persisted on reload. Two unfixed defects are **partial translation reported complete** and **lost migrated highlight mode/score/reasons**, so overall acceptance failed. Historical workstation preparation rejected old Linux absolute artifact paths with zero activation; five unknown directories remain preserved.
+
+macOS lock screen blocked native UI, CmdQ, system save panel and continuous playback; browser results do not qualify WKWebView. Remote ROCm checks only read the historical1-cue task,4 publication groups,30-second product, models and device visibility; inference was not rerun. Formal data metadata, five original historical tasks and14 archived sources remain unchanged, and all created candidate/helper processes are stopped. No product edit, rebuild, install or formal cutover occurred. See the [bilingual acceptance report](/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper/docs/historical-task-acceptance-2026-10-23.md) and [authoritative evidence](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-task-acceptance-20261023/receipt.md) for defects and next gates.
+
+### Post-packaging handoff checks (earlier snapshot)
+
+The earlier handoff refresh only edited docs and performed read-only checks: archives existed, both bundle hashes matched, both R2 databases remained immutable, and no matching candidate process was found. That refresh did not rerun application tests, start the App, rebuild or connect remotely. Packaging results below come from the retained [packaging receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/candidate-package-20261023-receipt.md); subsequent functional checks are recorded in the latest section above.
+
+| Handoff item | Latest record |
+| --- | --- |
+| [Candidate App ZIP](/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-01/Nyaru-Clipper-unified-candidate-20261023-01.zip) | SHA256 `7a5c3cad144c57dc74bda2391e157452b69418d1476fdd40e2895f3b310ad6a9`; 5406 extracted files/modes identical, strict signing passed |
+| [Independent recovery ZIP](/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-01.zip) | SHA256 `47f34e5b0d577b20be6d4990bdfd6e093c946159581b4cd1a6035b548b969082`; do not move pinned directory `/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-01` |
+| Bundle rechecked now | Both App/standalone manifests hash to `1ce64b4effcc38a592d90b12e879dcc02a990a62316af8fbdc8e23e16b31ff12`; the complete 3619-resource check belongs to packaging acceptance |
+| Qualified local workflow | Frozen takeover, R0/R1 thaw, R1 kill/resume, old-helper reopen, native r3 save/quit/reopen identical to independent export; R2 thaw correctly refused |
+| Review and formal environment | [Independent review](/Users/drm/project/nyaru-clipper/.omo/evidence/candidate-package-20261023-review.md) CLEAR/APPROVE/no blockers; packaging before/after records match 1496 installed-App file hashes and 6815 data metadata entries, without claiming full data-body hashing |
+| Remaining gates | M03 local_passed within local scope, M24 partial; matrix 22 local_passed/3 partial/3 blocked, P6 planned; not full-platform accepted |
+| Historical regression limits | 23 October full backend 1538 passed, final focused run 46 passed; the final five terminal negatives are covered by the focused run, counts are not added; neither packaging nor this refresh reran the full suite |
+
+These are historical App01 entry points: the [earlier startup/acceptance document](/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper/docs/candidate-package-2026-10-23.md) and empty root `/Users/drm/.cache/nyaru-clipper/packaged-native-empty-20261023-01/runtime.json` are retained records, not App02 startup instructions. Any new trial requires a fresh independent domain within the App02 boundaries above, explicit absolute `--unified-runtime` and matching `--migration-guard`. Do not double-click, reuse old ports/PIDs, or rebind reader pins.
+
+The new sealed domains `/Users/drm/.cache/nyaru-clipper/candidate-package-20261023-recovery-03/R2` and `/Users/drm/.cache/nyaru-clipper/candidate-package-20261023-native-guarded-01/R2` are recovery evidence: do not start against or unseal them. Retain the old build-04 sample seal too. Next work remains M24 OS reboot/boot-time protection on an authorized isolated platform, plus missing-environment CUDA/WSL ROCm, Windows AMF and real live qualification; this does not authorize formal cutover or P6.
+
+
+**The Option B unified candidate is implemented, with scoped local and native Linux ROCm workflows verified; cross-platform qualification and production cutover remain incomplete.** On 23 October, authorized M03/M24 qualification added real takeover/recovery kills and fixed interrupted independent thaw; see [execution record §9](unified-architecture-execution-2026-10-22.md#9-2026-10-23-additional-m03m24-takeover-and-crash-recovery-qualification). No formal-data cutover, installed-App replacement or host reboot occurred. Historical entries retain their observation dates.
+
+### 1. Working directories and phase state
+
+**The latest candidate is App02 above:** [repair package and acceptance](candidate-fixes-2026-10-23.md). [App01 package](candidate-package-2026-10-23.md) takeover,R0/R1 rollback,R2 thaw refusal and native r3 evidence belongs to that old package and does not automatically qualify App02. The installed App remains unchanged.
+
+| Item | Current boundary |
+| --- | --- |
+| Candidate source | `/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper`, branch `codex/unified-architecture-2026-10-22`; continue implementation and qualification here |
+| Base HEAD | `428ba833193db888c6b049ac2983abe1b2ecae17`; unified implementation remains uncommitted, so HEAD alone cannot reconstruct the candidate |
+| Primary checkout | `/Users/drm/project/nyaru-clipper`, branch `codex/code-improvement-2026-10-21`, same HEAD; contains existing dirty changes and is not the unified implementation directory |
+| P0/P1 | `completed`: local evidence covers isolated baseline and workstation artifacts entering the shared editor/product export workflow |
+| P2–P4 | Implementation and local candidate verification complete; cumulative platform qualification remains pending |
+| P5 | Local migration, group rollback and independent recovery verified; target-platform and crash/reboot qualification remain open |
+| P6 | `planned`; old writers and compatibility entry points remain until acceptance, rather than treating deletion as proof |
+| Production | No installed-App replacement, formal-task migration, commit/push/merge; historical installed-source details are in the 21 October section of the [primary handoff](/Users/drm/project/nyaru-clipper/docs/project-handoff.md) |
+
+The [design](superpowers/specs/2026-10-22-unified-architecture-design.md) and [phased plan](superpowers/plans/2026-10-22-unified-architecture.md) define gates; [execution record §8](unified-architecture-execution-2026-10-22.md#8-complete-candidate-implementation-and-current-acceptance-ledger) holds observed evidence; the [runtime/rollback guide](unified-runtime-guide.md) provides executable commands. Historical phase entries and passing tests do not establish full `accepted` status.
+
+### 2. Implemented architecture and migration boundaries
+
+- **Shared state and execution:** SQLite tasks/operations/documents/publications are the common source of truth through `models_unified.py`, `models_migration.py` and additive revision `20261022_01`. `unified_host.py`, `unified_cli.py` and `unified_dispatch.py` provide one executor and four operations: `process_recording/process_live/translate/export`. CPP and WhisperX remain available, sharing queue, priority/order, pause, cancellation, retry, attempt/token and process-group contracts.
+- **Editing and publication:** immutable bodies plus CAS, version history and configuration/template snapshots; durable staging and receipts precede non-overwriting member publication and final group commit. A usable first clip does not make the parent successful. Reopen reconciles through the exclusive decision table, rejecting orphan bodies and old attempts.
+- **Takeover and locks:** `migration_*` and `source_seal.py` use externally registered source UUIDs, complete multi-root registration and generation checks. `prepare/verify` grant no execution authority. One Supervisor continuously holds locks, seals old roots, rechecks and commits takeover, then continues hosting the API; do not exit it and start an unguarded service. Linux protection requires separately verified read-only mounts; successful ROCm inference does not qualify takeover protection.
+- **Rollback:** classify the whole group as R0/R1/R2. Any new task or global settings/template/project write makes the group sticky R2; cancellation of another batch cannot downgrade it. R0/R1 commit group withdrawal receipts before restoring old permissions. R2 keeps seals and uses same-epoch multi-root snapshots, read-only export or an independent old-format working copy. Never downgrade the new DB, overwrite newer drafts or pass unified roots directly to old entry points.
+- **When the new version cannot start:** a pinned independent Python/reader/guard/old helper/media tool bundle provides recovery without candidate imports, its virtualenv, models or network. Credentials remain external references. Partial sealing/thaw failures retain original permission journals and `controls-resealed.json`; resume into new output directories as documented, without inferring original modes from current read-only permissions.
+
+### 3. Acceptance evidence and remaining gates
+
+The complete M01–M28 table remains in execution record §8.3: **22 `local_passed`, 3 `partial`, 3 `blocked`**. M03 closes within its local scope; M24 retains platform gates. These states do not establish full cross-platform acceptance. The table below retains 22 October results; this run's regressions/kills/actual HTTP evidence are in §9.
+
+| Observed result | Evidence and limits |
+| --- | --- |
+| Backend/frontend/build | Backend **1512 passed, 0 failed/skipped**, with 17 existing JUnit warnings; frontend **332 passed/40 files**, TypeScript/Vite passed. Backend receipt [r5.xml](/Users/drm/.cache/nyaru-clipper/unified-backend-20261022-r5.xml) was reread, not rerun, during this refresh |
+| Real browser | Chrome **2 passed**: keyboard/touch queue ordering, priority/pause, CAS 409 draft retention, real ASS downloads, SSE failures falling back to polling and cursor reconnect; [browser-r7 evidence](/Users/drm/.cache/nyaru-clipper/unified-queue-20261022-1_md6l57/browser-r7) |
+| Real macOS media | whisper.cpp processed 150.033333 seconds into 6 cues; revision 1 editing, 0–30-second burn, normal quit/same-build reopen retained selection and pause state. A bad-media test remains failed. Final build-05 separately verified empty-root initialization/start/quit and did not repeat the complete media acceptance |
+| Real product export | A 5000-cue edit preserved the other 4999 cues; product API MP4 download, fixed parameters and original hashes passed. Frozen V maximum RMSE **0.356518**, bbox **1 px**; [product evidence](/Users/drm/.cache/nyaru-clipper/unified-p1-product-20261022-final) |
+| Native Linux ROCm | Rocky 9.8/ROCm 7.2.4/RX 7900 GRE: real WhisperX GPU float16→Japanese alignment→revision 1 edit→PNG→30-second CPU burn/browser download/full decode; reopen retained operations and product. [Receipts](/Users/drm/.cache/nyaru-clipper/unified-gpu-result-20261022-r4). One recognized cue is not semantic transcription-quality acceptance |
+| Independent recovery | Frozen `-I -S -B` entry completed six-root snapshot/read-only export; 1 document, 6 cues and 4 registered publications matched, `complete=true`, zero errors; seven thaw combinations and interrupted-recovery evidence also exist |
+
+Open gates: M12 additional real live evidence, M22 Windows AMF and M24 controlled OS reboot/boot-time protection ordering/other platform profiles remain `partial`; finite SIGKILL boundaries do not qualify every timing. M18 lacks Linux CUDA and WSL ROCm environments, M19 lacks a controlled real live source, and M21 lacks P6 prerequisites, so they remain `blocked`. Native Linux ROCm cannot substitute for CUDA/WSL. Its Noto font substitution and different FFmpeg cannot substitute for macOS frozen V same-font image metrics; HTTPX compatibility with inherited SOCKS proxies remains unqualified. External-provider/paid calls, notarization and formal release gained no new acceptance.
+
+### 4. Builds, recovery bundles and protected data
+
+The following caches are private local evidence, absent from clones. Preserve them and keep credentials out of Git. Paths below are relative to `/Users/drm/.cache/nyaru-clipper/`:
+
+| Purpose | Exact location and handling |
+| --- | --- |
+| Latest candidate App02 | `unified-native-build-20261023-02/Nyaru Clipper.app`;5407 files and package identity above. Run only in fresh independent domains with explicit runtime/guard; real-test roots are sealed. |
+| Latest App02 independent recovery | `unified-recovery-20261023-02/bundle.json`,SHA `52342c6a998c6241a5381db6a778bb792ae38a0e197989d166da79da73016b54`;3620 resources checked. Do not relocate pinned paths. |
+| Historical App01 and pinned recovery | `unified-native-build-20261023-01/Nyaru Clipper.app` and `unified-recovery-20261023-01/bundle.json`,old bundle SHA `1ce64b4effcc38a592d90b12e879dcc02a990a62316af8fbdc8e23e16b31ff12`. Counts5406/3619 belong to that old package; empty root `packaged-native-empty-20261023-01/runtime.json` is not an App02 entry. Preserve existing epoch paths. |
+| Older candidate App | `unified-native-build-20261022-05/Nyaru Clipper.app` retains historical identity without this recovery fix; do not overwrite/upgrade it in place |
+| Real CPP sample root | `unified-native-runtime-20261022-01`, task `8cb8f1980a815e9696728c36545ebfd6`; six roots have read-only/immutable seals: do not start against them or casually unseal |
+| Sample's pinned reader | **`unified-native-build-20261022-04/Nyaru Clipper.app/Contents/Resources/recovery/bundle.json`**, SHA `1fbeb3c8f87145d1c78e1d41b4ac5670d24fbc8f9b6f22038389eab69fbe7731`; do not substitute the build-05 bundle |
+| Recipe/complete snapshot | `unified-native-recovery-recipe-20261022-04.json`; `unified-native-snapshot-20261022-04/complete.json`, SHA `8859a044a485b6dec4476c2809b96c1ffda7cc77af16459844aa8b5092ab18a7` |
+| Independent recovery verification | `unified-native-recovered-20261022-04/verification.json`, SHA `e74d5f452b633034f4c126228e6e9e65441f3372ecf108ecaa1ef0fe2ba54b2a` |
+| App02 build inputs | [Exact input inventory](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/source-input.json) and [post-build audit](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/final-audit.json); subsequent handoff edits are outside package input identity. |
+| Historical App01 build inputs | [202-file manifest](/Users/drm/project/nyaru-clipper/.omo/evidence/m03-m24-20261023-source.json),digest `1e10e6b3d72ea396b8b0223c1dea3251cfbbf807c51062407b1e31e2078df7ba`; identifies the earlier package,not App02. |
+| Historical 22 October seal | `unified-source-manifest-20261022-final.json`, 197-file digest `6ba9d792c80b08523b1ab1beb3d2497a46b2346072778502cf321abfb1e8e002`; predates subsequent recovery fixes and does not identify current source or the new package |
+
+The GPU workstation uses the user-authorized SSH alias `server-194`. Its isolated root `/home/drm/nyaru-unified-20261022-4eE6Qm` retains `repo`, `models/faster-whisper-small`, `models/alignment-ja`, `gpu-runtime/runtime.json`, `gpu-env.sh`, failed attempts and all download receipts. Qualification scoped device selection, offline models, NLTK, fonts and proxy variables to its process. Read the environment recipe and execution record §8.4 before retesting; a bare environment is not equivalent. Task `8333059829bd563b9094d3065a87355c` processed on attempt 2 (first lacked punkt_tab) and exported on attempt 1. Product SHA `a88627da42b28bad83af40a2d2c1e16330d4fc8458e0e4f3cbb3d3f7777a5866` belongs to the earlier GPU qualification/local receipt check; this documentation refresh did not repeat GPU or product-hash acceptance.
+
+At qualification end, owned temporary App/API/SSH forwards were stopped; an unrelated remote `uv` process was left alone. **This refresh did not recheck remote or current service state; old PIDs/ports are not evidence of current availability.** Protect formal DBs, original media, credentials, App backups and the five unowned directories in the historical inventory; that count is dated, not a current count. Automation once accidentally launched the default compatibility entry, adding formal-root `startup-*.json`; no business-file rewrite was observed then. Do not claim absolutely zero formal-root writes.
+
+### 5. Next operator's execution order
+
+1. Read-only verify candidate branch/HEAD/dirty state and these receipts, preserving primary-checkout changes. Use new independent roots and follow the runtime guide. Native startup/reopen must explicitly pass `--unified-runtime /absolute/runtime.json`; omission enters the compatibility default path. Taken-over runtimes also require the same pinned runtime and `--migration-guard`/`serve-guarded`.
+2. First repeat App02 R0/R1 takeover,rollback and reopen in fresh independent copies with this package's pinned reader; verify document versions/full contents and explicit-retry boundaries. Then qualify P5 M24 controlled reboot/boot protection and target-platform profiles. Earlier local M03 takeover/reopen evidence belongs to the original package and cannot substitute for App02 revalidation. Use multi-root recipes and paused queues; retain the original `thaw-intent.json` for SIGKILL retry. Sealed real/CPP samples are read-only evidence,not new test roots.
+3. Obtain separate CUDA, WSL ROCm, Windows AMF and authorized real live environments/sources, retaining actual receipts against the original matrix. Keep status unchanged when environments are unavailable. Maintain dependency artifacts through their generator; qualification is not a reason to repin existing GPU requirements.
+4. Only after required qualification passes, review commit scope and a formal cutover proposal. Production install/migration requires separate explicit authorization. P6 also requires a cleared caller inventory and reviewed deletion scope. Until then preserve compatibility entry points, old data and failed evidence; no reset/clean/bulk staging/push/merge or overwriting newer data with old snapshots.
+
+---
+
+## Historical handoff: 14 October 2026 (original observation dates retained)
+
 **Git submission scope (2026-10-14):** This update submits the bilingual translation, persistent Key/model settings, App 0.1.4 packaging and paired technical acceptance records to the three existing development branches. Earlier uncommitted/unpushed statements describe their dated snapshots. Use `git log -1` and `git ls-remote origin` for exact current source and remote heads; private configuration, media, models, build bundles and `.omo` evidence remain local.
 
 **Real translation acceptance (2026-10-14):** After user Key entry, App 0.1.4 Flash translated existing 40c0c9 (658 cues) and 7fe886 (1448 cues), producing two full and six clip bilingual SRTs. All timing/offset/output checks passed and 86 originals stayed unchanged; eight download/preview interfaces, native full/clip bilingual playback and two native SRT exports passed. No download, recognition or encoding was repeated. Sampling 24 cues is not full proofreading; recognition errors and ambiguous phrases require review. See [acceptance](deepseek-real-translation-acceptance-2026-10-14.md). Pending-Key/provider statements below are historical.

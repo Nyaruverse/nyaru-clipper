@@ -1,6 +1,12 @@
 # Documentation Index
 
+Latest local candidate: [App02 historical-task fixes, repackaging and frozen-package revalidation](candidate-fixes-2026-10-23.md), with new hashes,25/25 historical-copy scenarios, real-source/native save/reopen and independent recovery evidence. No formal App replacement or data cutover.
+
 This directory contains the current MVP documentation set for the Bilibili VTuber workstation.
+
+Earlier App01 candidate: [2026-10-23 App/independent recovery packages and isolated acceptance](candidate-package-2026-10-23.md), retaining original takeover/rollback evidence; latest repaired App02 is linked above.
+
+Unified architecture (Option B): [design](superpowers/specs/2026-10-22-unified-architecture-design.md), [phased plan](superpowers/plans/2026-10-22-unified-architecture.md), [execution and M01-M28 evidence](unified-architecture-execution-2026-10-22.md), [candidate runtime/recovery guide](unified-runtime-guide.md). Local implementation is verified; platform/production qualification and P6 remain pending. [中文执行记录](unified-architecture-execution-2026-10-22.zh-CN.md).
 
 Start here for setup and local deployment:
 

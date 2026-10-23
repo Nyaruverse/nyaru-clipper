@@ -1,5 +1,135 @@
 # Nyaru-Clipper 项目交接
 
+## 版本控制更新：2026-10-23（Asia/Shanghai）
+
+统一架构实现、恢复工具、直接测试与 App02 修复已提交为 `f8484d5560e971fb4a736e6296d876333cb5b7c6`（`feat: unify task execution, migration and recovery`），位于 `codex/unified-architecture-2026-10-22`。主目录文档归入 `codex/code-improvement-2026-10-21`；这两条分支是本轮明确推送目标，master 与其他开发分支不变。下文“尚未提交／未推送”的描述保留为原观察时点的历史，发布结果以[本轮 Git 收据](/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261023.json)及远端分支编号为准。
+
+提交前在统一候选工作树重新执行：后端全量 **1551 passed**，前端 **332 passed／40 文件**，TypeScript／Vite 构建及三份 requirements 导出检查通过。App02 构建输入中的程序源码与此次提交内容一致，构建后仅索引／交接文档有变化；四处既有文件末尾空行提示保留。本轮只发布版本控制内容，不重新打包或安装，不切换正式数据，不补授平台资格。封存域、旧 epoch／reader pin、原始媒体和私有证据继续保留。
+
+## 当前交接：2026-10-23（Asia/Shanghai）
+
+### 交接刷新核对：2026-10-23 13:36（Asia/Shanghai）
+
+本次仅更新交接文档并只读复核：App02 两个 ZIP、原生程序／冻结后端、固定恢复 bundle 的 SHA256 与上轮收据一致；真实测试域六根仍 immutable，未发现匹配的候选 App／后端进程。[本次核对收据](/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261023-app02.json)。下方功能验收来自上轮实测，本次没有启动 App、重打包、重跑功能测试、连接远端或重新全量核验正式数据。
+
+| 接手对象 | 当前入口与边界 |
+| --- | --- |
+| 最新候选 App02 | [App ZIP](/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-02/Nyaru-Clipper-unified-candidate-20261023-02.zip)；解包 App 位于 `/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-02/Nyaru Clipper.app`。显示 0.1.19／build 27，必须按下方摘要识别，不双击。 |
+| 固定独立恢复包 | [恢复 ZIP](/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-02.zip)；固定 reader 目录 `/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-02`，不得移动或改绑既有 epoch。 |
+| 最新真实任务与恢复证据 | 任务 `ad3ad70afddf5287b5d1b4f797665a2a`：21 条字幕，手工译文 2 条，第 2 版。[R2 清单](/Users/drm/.cache/nyaru-clipper/historical-fixed-native-20261023-01/R2/complete.json)／[独立恢复核验](/Users/drm/.cache/nyaru-clipper/historical-fixed-native-20261023-01/recovered-readonly/verification.json)：3 文档，无错误；本次核对的是保存的收据，未重新执行恢复。 |
+| 禁止复用的测试入口 | `historical-fixed-native-20261023-01/runtime` 六根已封存，不能用上轮 launch argv 直接重开。历史 API 域 `historical-fixed-api-20261023-01` 和所有旧 R2／reader pin 保留；旧 App01 空根不作为 App02 默认入口。 |
+| 正式环境 | 正式 App 未被候选替换、正式数据未切换。上轮正式 App 内容／元数据、正式数据元数据及选用原任务／原片保护核验见[最终审计](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/final-audit.json)；本次未重做正式数据正文核验。 |
+
+**下一步顺序**：先用新的独立数据域和 App02 固定 reader 重跑 R0／R1 的接管、回退与重开，核对文档版本／全文及显式重试边界；再在获准的隔离平台补 M24 系统重启／开机保护。缺硬件的 CUDA／WSL ROCm／Windows AMF、外部翻译、真实直播等继续待验收，不能用旧包或本机结果代替。原 Workstation 的旧 Linux 绝对路径准备失败未在本轮处理；五个未知目录继续保护。P6、正式安装及数据切换均未启动，不能由“更新交接”推定授权。
+
+### 历史任务修复候选 App02（最新）
+
+F01／F02 已修复并用**新冻结包**复验：历史副本 25/25 场景组通过；真实 150 秒原片识别 21 条，手动译文显示 partial 2/21；原生播放、编辑第 2 版保存、CmdQ 重开、真实 15 秒烧录和系统保存通过。后端相邻回归 82 passed（包含 8 项专项）、前端 332 passed。新包与新独立恢复包均已校验；显示版本仍为 0.1.19／build 27，按摘要识别。
+
+[App02 包与完整中英验收报告](candidate-fixes-2026-10-23.zh-CN.md) · [权威收据](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/receipt.md)。新 App ZIP SHA256 `914e36a0b7cf97ad864cedf9d87abfcfcb1b0ae76248b5ec5da2eb7272eff14b`；独立恢复 ZIP `31e364935d925993b6a849d8c1f7df21b325731c29a39e3e298774153a339c42`；新 epoch bundle `52342c6a998c6241a5381db6a778bb792ae38a0e197989d166da79da73016b54`，旧 pin 不变。
+
+正式 App 内容／元数据、正式数据元数据及选用原始任务／原片核验一致；未替换、未切换、未提交。自建 App/helper／后端已停止，队列暂停。真实测试域 `historical-fixed-native-20261023-01` 六根 immutable、新 R2 已封存，独立恢复导出全部 3 文档并保留真实任务第 2 版。不得双击候选、直接重开／解封 R2 或替换旧 epoch 的 reader pin。新包 R0／R1、M24 系统重启／开机保护及缺硬件／供应商项目仍待验收，不启动 P6 或正式切换。
+
+### 历史任务功能验收（App01 失败快照，已由上方新包闭环）
+
+按用户要求使用历史任务的独立副本验证：冻结接口21组 **19通过／2失败**；150秒真实归档原片新建回放任务，识别21条、15秒切片／字幕烧录通过，浏览器编辑保存至第5版、重载保留。两项未修复问题为**部分译文误报整稿完成**与**迁移高光模式／评分／理由丢失**，不能据此宣布整体验收通过。原工作站因旧Linux绝对产物路径拒绝准备，零激活；五个未知目录保留。
+
+原生界面受macOS锁屏阻挡，CmdQ／系统保存面板／连续播放仍待验收；浏览器结果不替代WKWebView资格。远端ROCm仅只读复核历史1条字幕、4组产物及30秒成片、模型与设备可见性，未重新推理。正式数据元数据、五个原历史任务与14个归档原片核验不变，所有自建候选／helper已停止；未改产品源码／重打包／安装／正式切换。详情与后续修复门槛见[中英验收文档](/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper/docs/historical-task-acceptance-2026-10-23.zh-CN.md)，[权威证据](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-task-acceptance-20261023/receipt.md)。
+
+### 打包后交接检查（此前快照）
+
+此前交接刷新仅更新文档并只读复核：压缩包存在、两处 bundle 摘要一致、两套 R2 数据库仍 immutable，未发现该候选的运行进程。当时未重跑应用测试、启动 App、重新构建或连接远端；以下打包验收来自保存的[打包收据](/Users/drm/project/nyaru-clipper/.omo/evidence/candidate-package-20261023-receipt.md)，后续功能验证以上方最新章节为准。
+
+| 接手项 | 最新记录 |
+| --- | --- |
+| [候选 App ZIP](/Users/drm/.cache/nyaru-clipper/unified-native-build-20261023-01/Nyaru-Clipper-unified-candidate-20261023-01.zip) | SHA256 `7a5c3cad144c57dc74bda2391e157452b69418d1476fdd40e2895f3b310ad6a9`；5406 文件／权限解包全等，严格签名通过 |
+| [独立恢复 ZIP](/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-01.zip) | SHA256 `47f34e5b0d577b20be6d4990bdfd6e093c946159581b4cd1a6035b548b969082`；固定目录 `/Users/drm/.cache/nyaru-clipper/unified-recovery-20261023-01` 不移动 |
+| 本次实核 bundle | App 内与独立包均为 `1ce64b4effcc38a592d90b12e879dcc02a990a62316af8fbdc8e23e16b31ff12`；3619 资源完整检查属于打包验收记录 |
+| 已验收的本机链路 | 冻结接管、R0／R1 解冻、R1 强杀续跑、旧 helper 重开、原生 r3 保存／退出／重开与独立导出全文一致；R2 解冻正确拒绝 |
+| 审阅与正式环境 | [独立审阅](/Users/drm/project/nyaru-clipper/.omo/evidence/candidate-package-20261023-review.md) CLEAR／APPROVE／无阻塞；打包前后正式 App 1496 文件内容摘要、正式数据 6815 项元数据一致，未声称正式数据正文全量哈希 |
+| 当前门槛 | M03 本机 local_passed，M24 partial；总表 22 local_passed／3 partial／3 blocked，P6 planned；不是全平台 accepted |
+| 历史回归边界 | 10 月 23 日全量后端 1538 passed、最终专项 46 passed；最后 5 个终态反例在专项内覆盖，计数不相加；打包验收及此次文档刷新未重跑全套 |
+
+以上为 App01 的历史入口：[当时运行与验收文档](/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper/docs/candidate-package-2026-10-23.zh-CN.md)及空根 `/Users/drm/.cache/nyaru-clipper/packaged-native-empty-20261023-01/runtime.json`仅作旧记录保留，不是 App02 启动指令。新一轮试用须按顶部 App02 边界建立独立新域，显式指定绝对 `--unified-runtime` 与匹配 `--migration-guard`；不要双击、复用旧端口／PID或改绑 reader pin。
+
+两套新封存域 `/Users/drm/.cache/nyaru-clipper/candidate-package-20261023-recovery-03/R2`、`/Users/drm/.cache/nyaru-clipper/candidate-package-20261023-native-guarded-01/R2` 仅作恢复证据，不直接启动或解封；旧 build-04 样本封存同样保留。下一步仍是获准隔离平台上的 M24 系统重启／开机保护资格，以及缺环境的 CUDA／WSL ROCm、Windows AMF 和真实直播验收，不能据此启动正式切换或 P6。
+
+
+**方案 B 的统一架构候选已实现，本机与 native Linux ROCm 的限定工作流通过；跨平台资格及正式切换未完成。** 10 月 23 日按用户授权补验收 M03／M24，新增真实接管／恢复强杀演练并修复独立 thaw 续跑，见[执行记录第 9 节](unified-architecture-execution-2026-10-22.zh-CN.md#9-2026-10-23m03m24-接管与崩溃回退补验收)。没有切换正式数据、替换 App 或重启主机。下方历史记录只属于原观察时点。
+
+### 1. 接手目录与阶段状态
+
+**最新候选为顶部 App02**：[修复包与验收](candidate-fixes-2026-10-23.zh-CN.md)。[App01 包](candidate-package-2026-10-23.zh-CN.md)的接管、R0／R1 回退、R2 拒绝解冻及原生 r3 证据仅属于该旧包，不自动升级为 App02 资格。正式安装仍未替换。
+
+| 项目 | 当前边界 |
+| --- | --- |
+| 候选源码 | `/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper`，分支 `codex/unified-architecture-2026-10-22`；继续实现和验收从这里开始 |
+| 基线 HEAD | `428ba833193db888c6b049ac2983abe1b2ecae17`；统一架构实现仍未提交，不能仅凭 HEAD 重建候选 |
+| 主目录 | `/Users/drm/project/nyaru-clipper`，分支 `codex/code-improvement-2026-10-21`、同一 HEAD；含既有未提交改动，不是统一实现目录 |
+| P0／P1 | `completed`：隔离基线、产物进入共享编辑／产品导出链路已有本机证据 |
+| P2—P4 | 实现与本机候选验证完成；累计平台资格仍待验收 |
+| P5 | 本机迁移、整组回退与独立恢复已验证；目标平台及崩溃／重启资格未闭环 |
+| P6 | `planned`；旧写入核心和兼容入口保留，不以删除代码代替验收 |
+| 正式环境 | 未替换已安装 App、未迁移正式任务，未提交／推送／合并；正式安装来源的历史记录见[主目录交接](/Users/drm/project/nyaru-clipper/docs/project-handoff.zh-CN.md)的 10 月 21 日章节 |
+
+实施前的[设计](superpowers/specs/2026-10-22-unified-architecture-design.zh-CN.md)与[分阶段计划](superpowers/plans/2026-10-22-unified-architecture.zh-CN.md)定义门槛；[执行记录第 8 节](unified-architecture-execution-2026-10-22.zh-CN.md#8-完整候选实现与当前验收账)记录实际证据；[运行／回退指南](unified-runtime-guide.zh-CN.md)提供可执行命令。阶段历史和测试通过均不能替代整项 `accepted`。
+
+### 2. 已落地的架构与迁移边界
+
+- **统一状态与执行**：SQLite 任务／操作／文档／发布为共同事实源；`models_unified.py`、`models_migration.py` 和增量 revision `20261022_01`；`unified_host.py`、`unified_cli.py`、`unified_dispatch.py` 承载单执行器及 `process_recording/process_live/translate/export` 四种操作。CPP 与 WhisperX 保留，排队、优先级／排序、暂停、取消、重试、attempt／token／进程组共用契约。
+- **编辑与产物**：不可变正文＋CAS、版本历史和配置／模板快照；先持久化暂存和收据，再逐成员不可覆盖发布，最后整组提交。首片可用不代表父操作成功；重开按互斥判定表对账，不接纳孤稿或旧 attempt。
+- **接管与锁**：`migration_*` 与 `source_seal.py` 使用外部来源 UUID、完整多根登记和 generation；`prepare/verify` 不授予写入权。同一 Supervisor 持续持锁、封锁旧根、复核并事务接管，接管后继续托管 API；不能退出它再另开未保护服务。Linux 保护要求另行验证的只读挂载，ROCm 推理通过不等于接管保护通过。
+- **回退边界**：按整组判定 R0／R1／R2；任一任务或全局设置／模板／工程新写入使整组 sticky R2，取消另一批次不能降级。R0／R1 先提交全组撤销凭据再恢复旧权限；R2 保持封锁，走多根同 epoch 快照、只读导出或独立旧格式工作副本。不得 downgrade 新 DB、覆盖新稿或把统一根直接交给旧入口。
+- **新版不能启动**：预先固定的独立 Python／reader／guard／旧 helper／媒体工具提供恢复，不依赖候选源码、虚拟环境、模型或网络；凭据只保存外部引用。部分封锁／thaw 失败保留原权限日志与 `controls-resealed.json`，按指南用新输出目录续跑，不从当前只读权限猜测原模式。
+
+### 3. 验收证据与未完成项
+
+完整 M01—M28 表保留在执行记录 §8.3：**22 项 `local_passed`、3 项 `partial`、3 项 `blocked`**。M03 本机范围已闭环，M24 仍有平台门槛；这些状态不等于跨平台全部已验收。下表保留 10 月 22 日结果，本轮新增回归／强杀／实际 HTTP 证据另见执行记录 §9。
+
+| 已观察结果 | 可复核证据与限制 |
+| --- | --- |
+| 后端／前端／构建 | 后端 **1512 passed、0 failed／skipped**，17 项既有 JUnit 警告；前端 **332 passed／40 文件**、TypeScript／Vite 通过。后端收据 [r5.xml](/Users/drm/.cache/nyaru-clipper/unified-backend-20261022-r5.xml)；本轮重读该收据，没有重跑 |
+| 实际浏览器 | Chrome **2 passed**；队列键盘／触屏排序、优先级／暂停、CAS 409 草稿保留、真实 ASS 下载、SSE 失败转轮询及游标重连；证据 [browser-r7](/Users/drm/.cache/nyaru-clipper/unified-queue-20261022-1_md6l57/browser-r7) |
+| macOS 实际媒体 | 150.033333 秒媒体经 whisper.cpp 得到 6 cue，编辑保存 revision 1、0—30 秒烧录、正常退出／同构建重开保留选择与暂停状态；坏媒体测试任务保留失败。最终 build-05 另验证空根初始化／启动／退出，不冒充重跑了全部媒体验收 |
+| 实际产品导出 | 5000 cue 编辑保留其余 4999 条；真实产品 API 下载 MP4，既定参数与原件摘要通过，固定 V 最大 RMSE **0.356518**、bbox **1 px**；[产品证据](/Users/drm/.cache/nyaru-clipper/unified-p1-product-20261022-final) |
+| native Linux ROCm | Rocky 9.8／ROCm 7.2.4／RX 7900 GRE；真实 WhisperX GPU float16→日语对齐→编辑 revision 1→PNG→30 秒 CPU 烧录／浏览器下载／完整解码，重开保留操作与产物；[收据目录](/Users/drm/.cache/nyaru-clipper/unified-gpu-result-20261022-r4)。一个识别 cue 不构成识别语义质量验收 |
+| 独立恢复 | 冻结入口 `-I -S -B` 的 6 根快照／只读导出；1 文档、6 cue、4 登记发布一致，`complete=true`、零错误；另有 7 种 thaw 组合及失败续跑证据 |
+
+剩余门槛：M12 真实直播补充、M22 Windows AMF、M24 受控系统重启／开机保护顺序及其他平台 profile 仍 `partial`；有限 SIGKILL 边界不代表所有时刻。M18 Linux CUDA 与 WSL ROCm 缺对应环境、M19 缺受控真实直播来源、M21 缺 P6 前提而 `blocked`。native Linux ROCm 不能替代 CUDA／WSL。其 Noto 字体替代和 FFmpeg 版本不同，不能替代 macOS 固定 V 同字体图像指标；保留 SOCKS 代理时的 HTTPX 兼容性未验收。外部供应商／付费调用、公证及正式发布未新增验收。
+
+### 4. 构建、恢复包与必须保留的数据
+
+以下缓存均为本机私有证据，不随 clone 分发，不清理、不把凭据加入 Git。以 `/Users/drm/.cache/nyaru-clipper/` 为前缀：
+
+| 用途 | 精确位置与注意事项 |
+| --- | --- |
+| 最新候选 App02 | `unified-native-build-20261023-02/Nyaru Clipper.app`；5407 文件及包摘要见顶部。仅在新独立域按显式 runtime／guard 运行，真实测试域已封存。 |
+| 最新 App02 独立恢复包 | `unified-recovery-20261023-02/bundle.json`，SHA `52342c6a998c6241a5381db6a778bb792ae38a0e197989d166da79da73016b54`；3620 资源核对，固定路径不可移动。 |
+| 历史 App01 与固定恢复包 | `unified-native-build-20261023-01/Nyaru Clipper.app`、`unified-recovery-20261023-01/bundle.json`，旧 bundle SHA `1ce64b4effcc38a592d90b12e879dcc02a990a62316af8fbdc8e23e16b31ff12`；5406／3619 文件属旧包，旧空根 `packaged-native-empty-20261023-01/runtime.json` 不作为 App02 启动入口。保留既有 epoch 固定路径。 |
+| 旧候选 App | `unified-native-build-20261022-05/Nyaru Clipper.app` 保留历史身份，不包含本次恢复修复，不覆盖或原地升级 |
+| 真实 CPP 样本根 | `unified-native-runtime-20261022-01`，任务 `8cb8f1980a815e9696728c36545ebfd6`；六根已安装只读／immutable 封锁，不直接启动或随意解封 |
+| 样本固定 reader | **`unified-native-build-20261022-04/Nyaru Clipper.app/Contents/Resources/recovery/bundle.json`**，SHA `1fbeb3c8f87145d1c78e1d41b4ac5670d24fbc8f9b6f22038389eab69fbe7731`；不可替换成 build-05 的包 |
+| 配方／完整快照 | `unified-native-recovery-recipe-20261022-04.json`；`unified-native-snapshot-20261022-04/complete.json`，SHA `8859a044a485b6dec4476c2809b96c1ffda7cc77af16459844aa8b5092ab18a7` |
+| 独立恢复核验 | `unified-native-recovered-20261022-04/verification.json`，SHA `e74d5f452b633034f4c126228e6e9e65441f3372ecf108ecaa1ef0fe2ba54b2a` |
+| App02 打包输入 | [准确输入清单](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/source-input.json)与[构建后审计](/Users/drm/project/nyaru-clipper/.omo/evidence/historical-fixes-20261023/final-audit.json)；后续交接编辑不属于包内输入身份。 |
+| App01 历史打包输入 | [202 文件清单](/Users/drm/project/nyaru-clipper/.omo/evidence/m03-m24-20261023-source.json)，摘要 `1e10e6b3d72ea396b8b0223c1dea3251cfbbf807c51062407b1e31e2078df7ba`；仅对应此前包，不标识 App02。 |
+| 10 月 22 日历史封存 | `unified-source-manifest-20261022-final.json`，197 文件摘要 `6ba9d792c80b08523b1ab1beb3d2497a46b2346072778502cf321abfb1e8e002`；早于后续恢复修复，不代表当前源码或本轮新包 |
+
+GPU 工作站使用用户授权的 SSH 别名 `server-194`；隔离根 `/home/drm/nyaru-unified-20261022-4eE6Qm` 内保留 `repo`、`models/faster-whisper-small`、`models/alignment-ja`、`gpu-runtime/runtime.json`、`gpu-env.sh`、失败 attempt 与全部下载收据。进程环境限定了设备、离线模型、NLTK、字体与代理；复测前先读环境配方和执行记录 §8.4，不能只启动裸环境。任务 `8333059829bd563b9094d3065a87355c` 的处理为 attempt 2（第一次缺 punkt_tab），导出为 attempt 1。产物 SHA `a88627da42b28bad83af40a2d2c1e16330d4fc8458e0e4f3cbb3d3f7777a5866` 属于此前 GPU 资格与本地收据核验；本次文档刷新未重做 GPU 或产物哈希验收。
+
+验收结束时，自建临时 App／API／SSH 转发已停止，远端无关 `uv` 进程未处理；**本轮没有重查远端或当前服务，不沿用旧 PID／端口为在线状态**。正式数据库、原片、授权、App 备份以及历史清单中 5 个未归属目录继续保护，目录数量是旧清单，不能推断当前数量。一次自动化误开默认兼容入口曾新增正式根 `startup-*.json`，当时未观察到业务文件改写；不可声称正式根完全零写入。
+
+### 5. 下一位接手者的执行顺序
+
+1. 在候选工作树只读核对 branch／HEAD／dirty 和本节证据，保留主目录既有改动。使用新独立根，按运行指南初始化；原生启动和重开必须显式传 `--unified-runtime /absolute/runtime.json`，省略参数会走兼容默认路径。已接管运行时另需同一 pinned runtime 与 `--migration-guard`／`serve-guarded`。
+2. 先用 App02、新独立副本与本包固定 reader 重跑 R0／R1 接管、回退及重开，核对文档版本／全文和显式重试边界，再补 P5 M24 受控重启／开机保护与目标平台 profile。此前 M03 本机接管／重开证据属于原包，不能代替 App02 复验。使用多根配方与暂停队列；SIGKILL 续跑保留原 `thaw-intent.json`。已封存真实／CPP 样本只读，不作为新测试根。
+3. 分别补齐 CUDA、WSL ROCm、Windows AMF 和获准的真实直播环境／来源，按原矩阵留真实收据；拿不到环境时保持原状态。依赖清单按生成脚本维护，不能借补验收重锁原 GPU pins。
+4. 必选资格全部通过后，再审核提交范围和正式切换方案；正式安装／迁移需单独明确授权。P6 还须调用清单清零并审核具体删除范围。在此之前保留兼容入口、旧数据和所有失败证据，不 reset／clean／批量暂存／推送／合并，不用旧快照覆盖较新数据。
+
+---
+
+## 历史交接：2026-10-14（保留原观察时点）
+
 **本轮 Git 提交范围（2026-10-14）**：本次将双语翻译、Key／模型持久配置、App 0.1.4 打包及配对技术验收记录提交到三个既有开发分支。较早段落的未提交／未推送保留其观察日期；准确当前源码及远程 HEAD 以 `git log -1`、`git ls-remote origin` 为准。私密配置、媒体、模型、构建包及 `.omo` 证据留在本机。
 
 **真实翻译验收补充（2026-10-14）**：用户设置 Key 后，App 0.1.4 使用 Flash 完成既有 40c0c9 的 658 条及 7fe886 的 1448 条翻译，生成 2 份完整和 6 份切片双语 SRT。全部时间轴、偏移、输出校验和及 86 个原文件保持不变；八份下载／预览接口、原生完整视频／切片双语播放及两次系统 SRT 导出通过。未重新下载、识别或编码。24 条语义抽查不能替代逐句校对，识别误字与含混句仍需人工复核。见[真实翻译验收](deepseek-real-translation-acceptance-2026-10-14.zh-CN.md)。下文尚未输入 Key／真实翻译待验收为历史状态。

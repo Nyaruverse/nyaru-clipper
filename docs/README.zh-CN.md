@@ -1,6 +1,12 @@
 # 文档目录说明
 
+最新本机候选：[App02 两项历史任务修复、重打包与实包复验](candidate-fixes-2026-10-23.zh-CN.md)，含新包摘要、25/25 历史副本场景、真实原片／原生保存重开和独立恢复证据；未替换正式 App、未切换正式数据。
+
 本目录存放项目的操作手册、用户手册、线框图和流程说明。
+
+此前 App01 候选：[2026-10-23 App／独立恢复包与隔离验收](candidate-package-2026-10-23.zh-CN.md)，保留原包接管／回退证据；最新修复包见上方 App02。
+
+统一架构方案 B：[设计](superpowers/specs/2026-10-22-unified-architecture-design.zh-CN.md)、[分阶段计划](superpowers/plans/2026-10-22-unified-architecture.zh-CN.md)、[执行与 M01—M28 证据](unified-architecture-execution-2026-10-22.zh-CN.md)、[候选运行时／恢复指南](unified-runtime-guide.zh-CN.md)。本机实现已验证，平台／生产资格与 P6 仍待完成。[English execution record](unified-architecture-execution-2026-10-22.md)。
 
 如果你要先完成部署或本地启动，请优先阅读：
 
