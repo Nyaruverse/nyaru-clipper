@@ -84,7 +84,7 @@ def apply_task_bulk_mutation(
     tags: tuple[str, ...] | None = None,
 ) -> TaskBulkMutationOutcome:
     """Apply one operation without committing, preserving independent batch outcomes."""
-    if operation == "delete":
+    if operation in {"delete", "requeue"}:
         begin_queue_mutation(session)
         session.expire_all()
     task = session.get(Task, task_id)
@@ -146,7 +146,8 @@ def _requeue_task(session: Session, task: Task) -> TaskBulkMutationOutcome:
         CANONICAL_STAGES[0],
     )
     try:
-        retry_task_from_stage(session, task.id, restart_stage)
+        with session.begin_nested():
+            retry_task_from_stage(session, task.id, restart_stage)
     except QueueConflict as exc:
         return TaskBulkMutationOutcome(task_id=task.id, status="rejected", message=str(exc))
     return TaskBulkMutationOutcome(task_id=task.id, status="success", message=None)

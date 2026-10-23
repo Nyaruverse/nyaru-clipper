@@ -110,6 +110,14 @@ const wslCudaMismatchCapabilities: RuntimeCapabilities = {
 };
 
 describe("EnvironmentStatusCard", () => {
+  it("keeps nonblocking recovery guidance and error details when capability fetching fails", () => {
+    render(<EnvironmentStatusCard errorMessage="runtime endpoint unavailable" />);
+
+    expect(screen.getByTestId("environment-status-card")).toHaveClass("environment-status-card--warning");
+    expect(screen.getByText("运行能力检查暂时不可用。任务界面仍可继续使用，系统稍后会再次重试。")).toBeVisible();
+    expect(screen.getByText("runtime endpoint unavailable")).toBeVisible();
+  });
+
   it("renders a healthy runtime snapshot with a satisfied full-function profile signal", () => {
     render(<EnvironmentStatusCard capabilities={healthyCapabilities} />);
 

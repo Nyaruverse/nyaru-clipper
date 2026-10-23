@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { mergeCues, splitCue, patchCues, resolveStyle, nudgeStyle, cueWarnings, parseDocument, activeDocumentCues, effectiveAnchor, nudgeCueStyle } from './subtitleDocument';
 import { documentFixture } from './subtitleDocument.fixture';
+import samples from '../../../backend/tests/fixtures/grapheme-wrap.json';
 
 describe('subtitle editing document', () => {
+  it.each(samples)('uses whole grapheme lines for bilingual anchors: $text', ({ text, lines }) => {
+    const base = documentFixture();
+    const doc = { ...base, width: 64, height: 1080, style: { ...base.style,
+      original: { ...base.style.original, size: 20, margin: 0 },
+      translation: { ...base.style.translation, size: 20, margin: 0 } } };
+    const cue = { ...doc.cues[0], text: 'X', translation: text };
+    expect(effectiveAnchor(doc, cue, 'original', true)).toEqual({ x: 32, y: 1080 - (lines.length * 24 + 8) });
+  });
   it('keeps imported ASS horizontal margins when nudging an automatic anchor',()=>{
     const base=documentFixture();
     const doc={...base,style:{...base.style,original:{...base.style.original,align:7,position:'top' as const,margin_left:90,margin_right:60}}};
@@ -72,6 +81,50 @@ describe('subtitle editing document', () => {
     expect(next.cues[0].start_seconds).toBe(1);
     expect(next.cues[0].end_seconds).toBe(8);
     expect(next.cues[0].original_emphasis).toEqual(doc.cues[0].original_emphasis);
+  });
+
+  it.each([[8, 8], [4, 5]])('covers both cues when the later cue is edited to start at zero and end at %s', (end, expectedEnd) => {
+    const doc = documentFixture();
+    const edited = patchCues(doc, ['cue-000002'], cue => ({ ...cue, start_seconds: 0, end_seconds: end }));
+
+    const merged = mergeCues(edited, ['cue-000002', 'cue-000001']);
+
+    expect(merged.cues).toHaveLength(1);
+    expect(merged.cues[0]).toMatchObject({ start_seconds: 0, end_seconds: expectedEnd });
+    expect(activeDocumentCues(merged, 0.5)).toEqual(merged.cues);
+    expect(activeDocumentCues(merged, expectedEnd)).toEqual([]);
+    expect(doc).toEqual(documentFixture());
+    expect(edited.cues.map(cue => [cue.start_seconds, cue.end_seconds])).toEqual([[1, 5], [0, end]]);
+  });
+
+  it('preserves document order, first styles and codepoint emphasis when merging retimed cues', () => {
+    const base = documentFixture();
+    const styled = patchCues(base, ['cue-000001'], cue => ({ ...cue, translation: 'あ😀い',
+      original_style: { ...base.style.original, color: '#123456' },
+      translation_style: { ...base.style.translation, color: '#654321' } }));
+    const edited = patchCues(styled, ['cue-000002'], cue => ({ ...cue, start_seconds: 0,
+      original_style: { ...base.style.original, color: '#FFFFFF' },
+      original_emphasis: [{ start: 1, end: 2, color: '#00FF00', bold: false }],
+      translation_emphasis: [{ start: 0, end: 2, color: '#0000FF', bold: true }] }));
+    const neighbour = { ...base.cues[1], id: 'neighbour', start_seconds: 0.25 };
+    const doc = { ...edited, cues: [...edited.cues, neighbour] };
+    const original = JSON.stringify(doc);
+
+    const merged = mergeCues(doc, ['cue-000002', 'cue-000001']);
+
+    expect(merged.cues.map(cue => cue.id)).toEqual(['cue-000001', 'neighbour']);
+    expect(merged.cues[0]).toMatchObject({ text: '你好😀世界\n第二句', translation: 'あ😀い\n二番目',
+      original_style: styled.cues[0].original_style, translation_style: styled.cues[0].translation_style,
+      original_emphasis: [...base.cues[0].original_emphasis, { start: 7, end: 8, color: '#00FF00', bold: false }],
+      translation_emphasis: [{ start: 4, end: 6, color: '#0000FF', bold: true }] });
+    expect(merged.cues[1]).toBe(neighbour);
+    expect(JSON.stringify(doc)).toBe(original);
+  });
+
+  it.each([{ ids: [] }, { ids: ['cue-000001'] }])('rejects merge when fewer than two cues are selected: $ids', ({ ids }) => {
+    const doc = documentFixture();
+
+    expect(() => mergeCues(doc, ids)).toThrow('请至少选择两条相邻字幕');
   });
 
   it('rejects a split on the boundary and non-adjacent merge', () => {

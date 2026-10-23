@@ -4,16 +4,26 @@ import os
 from pathlib import Path
 
 
-def get_data_dir() -> Path:
-    configured = os.getenv("APP_DATA_DIR")
-    if configured:
-        return Path(configured)
+_default_data_dir = Path("/data")
 
-    container_data_dir = Path("/data")
+
+def get_data_dir() -> Path:
+    """Locate storage without writes; before initialization the default is /data."""
+    configured = os.getenv("APP_DATA_DIR")
+    return Path(configured) if configured else _default_data_dir
+
+
+def ensure_data_dir() -> Path:
+    """Initialize storage and remember a successful default-path fallback."""
+    global _default_data_dir
+
+    data_dir = get_data_dir()
     try:
-        container_data_dir.mkdir(parents=True, exist_ok=True)
-        return container_data_dir
+        data_dir.mkdir(parents=True, exist_ok=True)
     except PermissionError:
-        repo_data_dir = Path(__file__).resolve().parents[2] / "data"
-        repo_data_dir.mkdir(parents=True, exist_ok=True)
-        return repo_data_dir
+        if os.getenv("APP_DATA_DIR"):
+            raise
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        _default_data_dir = data_dir
+    return data_dir

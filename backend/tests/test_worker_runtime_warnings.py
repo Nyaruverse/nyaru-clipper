@@ -177,6 +177,25 @@ def test_worker_iteration_surfaces_runtime_warnings_in_stage_log_summary(backend
 
 def test_worker_retry_preserves_runtime_warning_surfacing(backend_env, monkeypatch) -> None:
     task_id = _create_task("https://www.bilibili.com/video/BV1workerwarnretry001")
+    from test_task_runner import _prepare_asr_input_audio
+    from test_asr_whisperx import _FakeWhisperX
+    from app.services.asr_child_runner import run_asr_child
+    from app.services.asr_whisperx import merge_asr_chunk_artifacts
+    from app.services.media_chunks import load_media_chunk_manifest
+
+    audio = _prepare_asr_input_audio(backend_env["data_dir"], task_id)
+    monkeypatch.setenv("APP_WHISPERX_MODEL_NAME", "large-v3")
+    monkeypatch.setenv("APP_WHISPERX_DEVICE", "cpu")
+    monkeypatch.setenv("APP_WHISPERX_COMPUTE_TYPE", "int8")
+    fake = _FakeWhisperX(
+        transcription_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]},
+        aligned_result={"segments": [{"start": 0, "end": 1, "text": "hello"}]},
+    )
+    monkeypatch.setattr("app.services.asr_whisperx._load_whisperx_module", lambda: fake)
+    assert run_asr_child(task_id, 0).status == "success"
+    work_dir = audio.parent.parent
+    chunks = load_media_chunk_manifest(work_dir / "media-chunks.json").chunks
+    merge_asr_chunk_artifacts(task_id, work_dir=work_dir, chunks=chunks)
 
     from app.db import session_scope
     from app.models import Task, TaskJob, TaskStage, utc_now

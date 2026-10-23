@@ -69,6 +69,44 @@ setup_web_dev_env() {
   export VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://127.0.0.1:8000/api}"
 }
 
+wait_for_api_readiness() {
+  local url="$1"
+  local timeout_seconds="${2:-180}"
+
+  URL="${url}" TIMEOUT_SECONDS="${timeout_seconds}" python3 - <<'PY'
+import http.client
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+url = os.environ["URL"]
+deadline = time.monotonic() + int(os.environ["TIMEOUT_SECONDS"])
+last_error = "no response"
+
+while time.monotonic() < deadline:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            ready = response.status == 200 and isinstance(payload, dict) and (
+                payload.get("status") == "ok" and payload.get("database") == "ok"
+            )
+        if ready:
+            print("api health contract: status=ok database=ok")
+            sys.exit(0)
+        last_error = "API status or database is not ready"
+    except (urllib.error.URLError, OSError, http.client.HTTPException,
+            json.JSONDecodeError, UnicodeDecodeError) as exc:
+        last_error = type(exc).__name__
+    time.sleep(2)
+
+print(f"timed out waiting for api readiness at {url}: {last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
 wait_for_url() {
   local label="$1"
   local url="$2"

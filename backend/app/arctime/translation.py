@@ -53,6 +53,13 @@ def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], 
              request_json: JsonRequest | None = None) -> list[dict]:
     validate_model(model, request_json)
     rows = [{"id": start + index + 1, "ja": cue.text} for index, cue in enumerate(cues)]
+    from app.services.task_execution import ExternalOutcomeUnknown, current_execution
+    from app.services.external_calls import ProviderRejected, external_value, inside_external_call
+    execution = current_execution.get()
+    if execution is not None and not inside_external_call.get():
+        return external_value(execution, {'version': 1, 'provider_model': model, 'prompt': prompt, 'rows': rows},
+            lambda: _request(client, key, cues, start, model, prompt=prompt, request_json=request_json),
+            lambda value: value, lambda value: validate_rows(value, [row['id'] for row in rows]))
     if request_json is not None:
         text = request_json(prompt, json.dumps({"segments": rows}, ensure_ascii=False))
         try:
@@ -69,10 +76,16 @@ def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], 
                       "messages": [{"role": "system", "content": prompt},
                                    {"role": "user", "content": json.dumps({"segments": rows}, ensure_ascii=False)}]})
         except httpx.RequestError:
+            if execution is not None:
+                raise ExternalOutcomeUnknown() from None
             if attempt == 2:
                 raise ValueError("DeepSeek 网络连接失败或超时；已完成翻译已保留") from None
             time.sleep(2 ** attempt)
             continue
+        if execution is not None and response.status_code >= 500:
+            raise ExternalOutcomeUnknown()
+        if execution is not None and 400 <= response.status_code < 500:
+            raise ProviderRejected('provider rejected request')
         if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
             time.sleep(2 ** attempt)
             continue
@@ -166,6 +179,11 @@ def translate_run(directory: Path, key: SecretStr, *, client: httpx.Client | Non
             media.write_json(checkpoint, state)
             raise
         except Exception:
+            from app.services.task_execution import current_execution
+            if current_execution.get() is not None:
+                state.update(state='interrupted', error='处理已中断；保留已完成批次，请检查操作状态')
+                media.write_json(checkpoint, state)
+                raise
             state.update(state="failed", error="翻译处理失败；已完成批次和原视频已保留，请重试")
             media.write_json(checkpoint, state)
             raise ValueError(state["error"]) from None

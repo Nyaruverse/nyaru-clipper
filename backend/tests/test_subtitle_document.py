@@ -105,7 +105,9 @@ def test_edited_export_clamps_absolute_cues_and_packages_document(document_job, 
         assert 'edited start' in ass and 'edited end' in ass
         assert json.loads(archive.read('subtitle-document.json')) == doc
         assert json.loads(archive.read('manifest.json'))['time_origin_seconds'] == 1
-    assert snapshot['outputs'][0]['document'] == doc
+    from app.arctime.subtitle_exports import read_exports, resolve_export_document
+    assert snapshot['outputs'][0]['document'] is None
+    assert resolve_export_document(directory, read_exports(directory).outputs[0]).model_dump() == doc
     request['style']['original']['size'] += 1
     assert client.post(URL.replace('subtitle-document', 'subtitle-export'), json=request).status_code == 422
 

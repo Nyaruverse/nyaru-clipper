@@ -26,6 +26,137 @@ import { defaultStyle } from "./subtitleStyle";
 
 afterEach(() => vi.unstubAllGlobals());
 
+function selectionApi() {
+  fakeApi();
+  const original = globalThis.fetch;
+  let translated = false;
+  const loadedSources: string[] = [];
+  const jobs = ['aabbccddeeff', '112233445566'].map(id => ({id, state: 'completed', started_at: 0, mode: 'ranges'}));
+  vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith('/config')) return new Response(JSON.stringify({ready: true, missing: [], translation_configured: true}));
+    if (url.endsWith('/translate')) { translated = true; return new Response('{}'); }
+    if (url.endsWith('/jobs')) return new Response(JSON.stringify(jobs));
+    if (url.endsWith('/subtitle-settings')) return new Response(JSON.stringify({style: defaultStyle, templates: [], arctime_templates: [], burn_available: true}));
+    if (url.endsWith('/subtitle-document')) {
+      const source = (translated ? 'b' : 'a').repeat(64);
+      if (options?.method !== 'POST') loadedSources.push(source);
+      return new Response(options?.method === 'POST' ? String(options.body) : JSON.stringify({...documentFixture(), source_fingerprint: source}));
+    }
+    if (url.endsWith('/subtitle-exports')) return new Response(JSON.stringify({active: null, outputs: []}));
+    const response = await original(url, options);
+    if (jobs.some(job => url.endsWith(`/jobs/${job.id}`))) return new Response(JSON.stringify({...await response.json(), bilingual_segments: [], translation: {state: translated ? 'completed' : 'not_started'}}));
+    return response;
+  }));
+  return loadedSources;
+}
+
+it('initializes the first cue again when switching tasks with matching cue IDs', async () => {
+  // Given two task documents share source and cue IDs.
+  selectionApi();
+  mount(false);
+  openTool('字幕样式');
+  expect(await screen.findByLabelText('选择字幕 1')).toBeChecked();
+  fireEvent.click(screen.getByLabelText('选择字幕 1'));
+  fireEvent.click(screen.getByLabelText('选择字幕 2'));
+
+  // When another task is selected through history.
+  openTool('任务记录');
+  fireEvent.click(screen.getByRole('button', {name: /112233/}));
+
+  // Then its initial selection is valid, independent of the previous task.
+  await waitFor(() => expect(screen.getByLabelText('选择字幕 1')).toBeChecked());
+  expect(screen.getByLabelText('选择字幕 2')).not.toBeChecked();
+});
+
+it('keeps explicit empty selection through edits, undo and workspace navigation', async () => {
+  // Given a loaded document with an undoable edit.
+  selectionApi();
+  mount(false);
+  openTool('字幕样式');
+  fireEvent.change(await screen.findByLabelText('本条原文'), {target: {value: '编辑稿'}});
+
+  // When selection is cleared and the document and visible workspace change.
+  fireEvent.click(screen.getByRole('button', {name: '取消选择'}));
+  fireEvent.click(screen.getByRole('button', {name: '撤销'}));
+  fireEvent.click(screen.getByRole('button', {name: '设置'}));
+  fireEvent.click(screen.getByRole('button', {name: '返回工作区'}));
+  fireEvent.click(screen.getByRole('tab', {name: '模板设计'}));
+  fireEvent.click(screen.getByRole('tab', {name: '日常模式'}));
+  openTool('字幕样式');
+  fireEvent.change(screen.getByLabelText('查找字幕'), {target: {value: '你好'}});
+
+  // Then no cue is silently selected again.
+  expect(screen.getByText('2 条 · 已选 0')).toBeVisible();
+  expect(screen.getByLabelText('选择字幕 1')).not.toBeChecked();
+  expect(screen.queryByLabelText('本条原文')).not.toBeInTheDocument();
+});
+
+it('initializes selection when a refreshed source document replaces an empty selection', async () => {
+  const loadedSources = selectionApi();
+  mount(false);
+  openTool('字幕样式');
+  await screen.findByLabelText('选择字幕 1');
+  fireEvent.click(screen.getByRole('button', {name: '取消选择'}));
+  fireEvent.click(screen.getByRole('button', {name: '生成中日双语字幕'}));
+  await waitFor(() => expect(loadedSources).toEqual(['a'.repeat(64), 'b'.repeat(64)]));
+  await waitFor(() => expect(screen.getByLabelText('选择字幕 1')).toBeChecked());
+  expect(screen.getByLabelText('选择字幕 2')).not.toBeChecked();
+});
+
+it('leaves the first cue unchanged when attempting bulk style, timing and move actions after clearing', async () => {
+  // Given the timing tools and a visible first cue at the playhead.
+  selectionApi();
+  mount(false);
+  openTool('字幕样式');
+  await screen.findByLabelText('本条原文');
+  fireEvent.click(screen.getByRole('button', {name: '高级逐条编辑'}));
+  fireEvent.click(screen.getByRole('button', {name: /^时间$/}));
+  const video = document.querySelector('video');
+  if (!video) throw new Error('Expected task video');
+  fireEvent.timeUpdate(video, {target: {currentTime: 2}});
+
+  // When cleared, attempt every formerly available bulk action and canvas nudge.
+  fireEvent.click(screen.getByRole('button', {name: '取消选择'}));
+  for (const name of ['平移所选时间', '应用当前全局模板到所选']) {
+    const button = screen.queryByRole('button', {name});
+    if (button) fireEvent.click(button);
+  }
+  const anchor = screen.queryByRole('button', {name: '原文位置锚点'});
+  if (anchor) fireEvent.keyDown(anchor, {key: 'ArrowRight'});
+  fireEvent.click(screen.getByLabelText('选择字幕 1'));
+
+  // Then the original timing and inherited style are intact.
+  expect(screen.getByLabelText('开始秒数')).toHaveValue(1);
+  expect(screen.getByLabelText('结束秒数')).toHaveValue(5);
+  expect(screen.getByText(/当前语言继承全局样式/)).toBeVisible();
+  expect(screen.getByRole('button', {name: '撤销'})).toBeDisabled();
+});
+
+it.each([false, true])('prunes removed split-cue IDs after undo with a retained cue: %s', async retainFirst => {
+  // Given a split creates a new cue, selected alone or alongside the original.
+  selectionApi();
+  mount(false);
+  openTool('字幕样式');
+  await screen.findByLabelText('本条原文');
+  fireEvent.click(screen.getByRole('button', {name: '高级逐条编辑'}));
+  fireEvent.click(screen.getByRole('button', {name: /^时间$/}));
+  const video = document.querySelector('video');
+  if (!video) throw new Error('Expected task video');
+  fireEvent.timeUpdate(video, {target: {currentTime: 3}});
+  fireEvent.click(screen.getByRole('button', {name: '在播放头拆分'}));
+  fireEvent.click(screen.getByLabelText('选择字幕 2'));
+  if (!retainFirst) fireEvent.click(screen.getByLabelText('选择字幕 1'));
+  expect(screen.getByText(`3 条 · 已选 ${retainFirst ? 2 : 1}`)).toBeVisible();
+
+  // When undo removes the newly selected cue.
+  fireEvent.click(screen.getByRole('button', {name: '撤销'}));
+
+  // Then every stale ID is removed without replacing an empty selection.
+  expect(screen.getByText(`2 条 · 已选 ${retainFirst ? 1 : 0}`)).toBeVisible();
+  expect(screen.getByLabelText('选择字幕 1').matches(':checked')).toBe(retainFirst);
+  expect(screen.getByLabelText('选择字幕 2')).not.toBeChecked();
+});
+
 function saoziApi(translationConfigured = true) {
   const posts: {url: string; body: BodyInit | null | undefined}[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
@@ -212,6 +343,7 @@ it("saves a persistent key and translates an existing task without creating or r
   fireEvent.click(screen.getByRole("button", { name: "保存 Key 到配置文件" }));
   await waitFor(() => expect(input).toHaveValue(""));
   expect(await screen.findByText(/Key 已保存 · 重启自动加载/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button",{name:"返回工作区"}));
   const button = screen.getByRole("button", { name: "生成中日双语字幕" });
   await waitFor(() => expect(button).toBeEnabled());
   fireEvent.click(button);
@@ -225,8 +357,11 @@ it("saves a persistent key and translates an existing task without creating or r
 });
 
 function openTool(name: string) {
-  const button = within(screen.getByRole("navigation", {name:"工作台工具"})).getByRole("button", {name});
-  if (button.getAttribute("aria-expanded") !== "true") fireEvent.click(button);
+  const back = screen.queryByRole('button',{name:'返回工作区'});
+  if(back) fireEvent.click(back);
+  if(name==='AI 设置') {fireEvent.click(screen.getByRole('button',{name:'设置'}));fireEvent.click(screen.getByRole('button',{name:'AI与翻译'}));return;}
+  const button = screen.getByRole('button',{name});
+  if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button);
 }
 
 function mount(openCreate = true) {
@@ -247,23 +382,23 @@ it("toggles the right drawer closed when its active toolbar option is clicked ag
   expect(screen.getByLabelText("BV 号")).toBeVisible();
   fireEvent.click(button);
   expect(button).toHaveAttribute("aria-expanded", "false");
-  expect(screen.queryByRole("complementary", {name:"工具选项"})).toBeNull();
+  expect(screen.getByRole("complementary", {name:"工具选项"})).toBeVisible();
+  expect(screen.getByLabelText("BV 号")).not.toBeVisible();
 });
 
 it("preserves source and provider drafts while switching the single open drawer section", () => {
   fakeApi();
   mount(false);
-  const toolbar = screen.getByRole("navigation", {name:"工作台工具"});
-  fireEvent.click(within(toolbar).getByRole("button", {name:"新建任务"}));
+  openTool("新建任务");
   fireEvent.change(screen.getByLabelText("BV 号"), {target:{value:"BV1xx411c7mD"}});
-  fireEvent.click(within(toolbar).getByRole("button", {name:"AI 设置"}));
+  openTool("AI 设置");
   fireEvent.change(screen.getByLabelText("DeepSeek API Key"), {target:{value:"unsaved-test-key"}});
   expect(screen.getByLabelText("BV 号")).not.toBeVisible();
-  fireEvent.click(within(toolbar).getByRole("button", {name:"新建任务"}));
+  openTool("新建任务");
   expect(screen.getByLabelText("BV 号")).toHaveValue("BV1xx411c7mD");
-  fireEvent.click(within(toolbar).getByRole("button", {name:"AI 设置"}));
+  openTool("AI 设置");
   expect(screen.getByLabelText("DeepSeek API Key")).toHaveValue("unsaved-test-key");
-  expect(within(toolbar).getAllByRole("button", {expanded:true})).toHaveLength(1);
+  expect(screen.getByRole("button",{name:"返回工作区"})).toBeVisible();
 });
 
 it("returns focus to the active toolbar option when Escape closes the drawer", () => {
@@ -274,7 +409,8 @@ it("returns focus to the active toolbar option when Escape closes the drawer", (
   screen.getByLabelText("BV 号").focus();
   fireEvent.keyDown(screen.getByLabelText("BV 号"), {key:"Escape"});
   expect(button).toHaveFocus();
-  expect(screen.queryByRole("complementary", {name:"工具选项"})).toBeNull();
+  expect(screen.getByRole("complementary", {name:"工具选项"})).toBeVisible();
+  expect(screen.getByLabelText("BV 号")).not.toBeVisible();
 });
 
 it("retains a selected local recording after closing and reopening the drawer", async () => {
@@ -465,10 +601,27 @@ it('allows retry and editing after a subtitle export was interrupted', async () 
   await within(screen.getByRole('region',{name:'处理进度'})).findByText('字幕导出已中断，请重新导出');
   expect(screen.getByRole('button',{name:'开始处理'})).toBeEnabled();
   openTool("字幕样式");
-  expect(screen.getByLabelText('原文字体')).toBeEnabled();
+  expect(screen.getByLabelText('本条原文')).toBeEnabled();
   openTool("导出");
   const retry = screen.getByRole('button',{name:'导出 ASS'});
   expect(retry).toBeEnabled();
   fireEvent.click(retry);
   await waitFor(()=>expect(posts).toContain('/companion-api/jobs/aabbccddeeff/subtitle-export'));
+});
+it('exports the selected task snapshot ArcTime binding without using a design template draft',async()=>{
+ fakeApi();const original=globalThis.fetch;const posts:Record<string,unknown>[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(url:string,options?:RequestInit)=>{
+  if(options?.method==='POST'){posts.push(JSON.parse(String(options.body)));return new Response('{}');}
+  if(url.endsWith('/jobs'))return new Response(JSON.stringify([{id:'aabbccddeeff',state:'completed',started_at:0,mode:'ranges'}]));
+  if(url.endsWith('/subtitle-settings'))return new Response(JSON.stringify({style:defaultStyle,templates:[],arctime_templates:[{id:'bound-project',name:'绑定工程'}],burn_available:true}));
+  if(url.endsWith('/subtitle-document'))return new Response(JSON.stringify(documentFixture()));
+  if(url.endsWith('/subtitle-exports'))return new Response(JSON.stringify({active:null,outputs:[]}));
+  const response=await original(url,options);
+  if(url.endsWith('/jobs/aabbccddeeff'))return new Response(JSON.stringify({...await response.json(),state:'completed',subtitle_template:{name:'固定模板',style:defaultStyle,arctime_template_id:'bound-project'}}));
+  return response;
+ }));
+ mount();openTool('导出');
+ await waitFor(()=>expect(screen.getByRole('button',{name:'导出 ArcTime ZIP'})).toBeEnabled());
+ fireEvent.click(screen.getByRole('button',{name:'导出 ArcTime ZIP'}));
+ await waitFor(()=>expect(posts[0]).toMatchObject({kind:'arctime',arctime_template_id:'bound-project'}));
 });

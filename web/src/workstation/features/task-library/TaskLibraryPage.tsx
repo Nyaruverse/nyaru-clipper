@@ -91,8 +91,8 @@ export function TaskLibraryPage(): ReactNode {
   const [bulkTags, setBulkTags] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const inspectedTaskId = searchParams.get("selected");
-  const summaryQuery = useQuery({ queryKey: workstationKeys.summary, queryFn: getTaskLibrarySummary });
-  const taskQuery = useQuery({ queryKey: workstationKeys.list(toTaskListQuery(filters)), queryFn: () => getTaskLibraryPage(filters), placeholderData: (previous) => previous });
+  const summaryQuery = useQuery({ queryKey: workstationKeys.summary, queryFn: ({ signal }) => getTaskLibrarySummary(signal) });
+  const taskQuery = useQuery({ queryKey: workstationKeys.list(toTaskListQuery(filters)), queryFn: ({ signal }) => getTaskLibraryPage(filters, signal), placeholderData: (previous) => previous });
   const bulkMutation = useMutation({
     mutationFn: ({ operation, tags }: { readonly operation: BulkOperation; readonly tags?: readonly string[] }) => mutateTasks(operation, [...selectedTaskIds], tags),
     onSuccess: (response) => {

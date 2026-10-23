@@ -11,6 +11,10 @@ def engine(tmp_path, monkeypatch):
     model = tmp_path / "model.bin"
     model.write_bytes(b"lmggtest-model")
     monkeypatch.setattr(local_asr.media, "tool_path", lambda name: name)
+    vad = tmp_path / 'vad.bin'
+    vad.write_bytes(b'fixture-vad')
+    monkeypatch.setattr(local_asr, 'DEFAULT_VAD_MODEL', vad, raising=False)
+    monkeypatch.setattr(local_asr, 'VAD_MODEL_SHA256', local_asr.media.fingerprint(vad), raising=False)
     return local_asr.LocalASR(model, language="zh")
 
 
@@ -102,6 +106,30 @@ def test_small_terminal_timestamp_overrun_is_clipped_and_cached(tmp_path, engine
     assert cached["segments"][-1]["end_seconds"] == 300
 
 
+@pytest.mark.parametrize('duration,start,end', [(7.167333, 3.5, 8.0), (20.833, 9.38, 21.04)])
+def test_observed_live_tail_estimate_is_clipped_even_when_cue_starts_before_tail_window(
+        tmp_path, engine, monkeypatch, duration, start, end):
+    from app.services.subtitles import SubtitleSegment, render_srt
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    calls = fake_tools(monkeypatch, content=render_srt([SubtitleSegment('1', start, end, '末尾一句')]))
+    cues = engine.transcribe(video, tmp_path, duration)
+    assert [(cue.start_seconds, cue.end_seconds, cue.text) for cue in cues] == [(start, duration, '末尾一句')]
+    assert engine.transcribe(video, tmp_path, duration) == cues
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('duration,end', [(7.167333, 8.168), (0.2, 1.0)])
+def test_excessive_nonterminal_live_overrun_is_still_rejected(tmp_path, engine, monkeypatch, duration, end):
+    from app.services.subtitles import SubtitleSegment, render_srt
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    fake_tools(monkeypatch, content=render_srt([SubtitleSegment('1', 0, end, '异常时间')]))
+    with pytest.raises(ValueError, match='timestamps exceed chunk duration'):
+        engine.transcribe(video, tmp_path, duration)
+    assert not (tmp_path / 'asr/chunk-0001.json').exists()
+
+
 @pytest.mark.parametrize("end", ["00:05:02,040", "00:05:12,000", "00:05:30,000"])
 def test_terminal_asr_window_overrun_is_clipped(tmp_path, engine, monkeypatch, end):
     video = tmp_path / "source.mp4"
@@ -181,3 +209,117 @@ def test_silent_chunk_is_allowed_if_other_chunks_contain_speech(tmp_path, engine
     cues = engine.transcribe(video, tmp_path, 310)
     assert [(s.start_seconds, s.end_seconds) for s in cues] == [(301, 303)]
     assert len(original) == 4
+
+
+@pytest.mark.parametrize('retry_content', ['', '1\n00:00:01,000 --> 00:00:03,000\n有效语音\n'])
+def test_invalid_timing_retries_once_with_vad_and_caches_only_verified_result(
+        tmp_path, engine, monkeypatch, retry_content):
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    calls = fake_tools(monkeypatch, content='1\n00:00:00,000 --> 00:00:30,000\n' + 'ව' * 100 + '\n')
+    original = local_asr.subprocess.run
+    def retry(command, **kwargs):
+        result = original(command, **kwargs)
+        if '--vad' in command:
+            from pathlib import Path
+            Path(command[command.index('-of') + 1]).with_suffix('.srt').write_text(retry_content)
+        return result
+    monkeypatch.setattr(local_asr.subprocess, 'run', retry)
+    if retry_content:
+        cues = engine.transcribe(video, tmp_path, 22.333)
+        assert [(c.start_seconds, c.end_seconds, c.text) for c in cues] == [(1, 3, '有效语音')]
+    else:
+        with pytest.raises(ValueError, match='No speech was recognized'):
+            engine.transcribe(video, tmp_path, 22.333)
+    assert len(calls) == 3
+    cached = json.loads((tmp_path / 'asr/chunk-0001.json').read_text())
+    assert len(cached['segments']) == (1 if retry_content else 0)
+    assert cached['key']['asr'] == engine.identity()
+    if retry_content:
+        engine.transcribe(video, tmp_path, 22.333)
+    else:
+        with pytest.raises(ValueError, match='No speech was recognized'):
+            engine.transcribe(video, tmp_path, 22.333)
+    assert len(calls) == 3
+
+
+def test_invalid_vad_retry_does_not_cache_or_loop(tmp_path, engine, monkeypatch):
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    calls = fake_tools(monkeypatch, content='1\n00:00:00,000 --> 00:00:30,000\n异常时间\n')
+    with pytest.raises(ValueError, match='timestamps exceed chunk duration'):
+        engine.transcribe(video, tmp_path, 22.333)
+    assert len(calls) == 3 and '--vad' in calls[-1]
+    assert not (tmp_path / 'asr/chunk-0001.json').exists()
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_vad_retry_requires_verified_model(tmp_path, engine, monkeypatch, missing):
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    if missing:
+        local_asr.DEFAULT_VAD_MODEL.unlink()
+    else:
+        local_asr.DEFAULT_VAD_MODEL.write_bytes(b'tampered-vad')
+    calls = fake_tools(monkeypatch, content='1\n00:00:00,000 --> 00:00:30,000\n异常时间\n')
+    with pytest.raises(RuntimeError, match='VAD'):
+        engine.transcribe(video, tmp_path, 22.333)
+    assert len(calls) == 2 and not (tmp_path / 'asr/chunk-0001.json').exists()
+
+
+def test_bundled_whisper_uses_one_library_directory_without_mutating_parent_environment(
+        tmp_path, engine, monkeypatch):
+    import os
+    from pathlib import Path
+    tools = tmp_path / 'tools'
+    tools.mkdir()
+    (tools / 'libomp.dylib').write_bytes(b'fixture-library')
+    monkeypatch.setattr(local_asr.media, 'tool_path', lambda name: str(tools / name))
+    monkeypatch.setattr(local_asr.sys, 'platform', 'darwin')
+    parent = dict(os.environ)
+    observed = []
+    def run(command, **kwargs):
+        if Path(command[0]).name == 'ffmpeg':
+            Path(command[-1]).write_bytes(b'audio')
+        else:
+            observed.append(kwargs.get('env', {}).get('DYLD_LIBRARY_PATH'))
+            Path(command[command.index('-of') + 1]).with_suffix('.srt').write_text(
+                '1\n00:00:01,000 --> 00:00:03,000\n有效语音\n')
+        return subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(local_asr.subprocess, 'run', run)
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    assert engine.transcribe(video, tmp_path, 10)[0].text == '有效语音'
+    assert observed == [str(tools)] and dict(os.environ) == parent
+
+
+@pytest.mark.parametrize('failure', ['missing_output', 'process_error'])
+def test_vad_retry_failure_never_reuses_first_attempt_subtitles(tmp_path, engine, monkeypatch, failure):
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    calls = fake_tools(monkeypatch, content='1\n00:00:00,000 --> 00:00:30,000\n异常时间\n')
+    original = local_asr.subprocess.run
+    def retry(command, **kwargs):
+        if '--vad' in command:
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 1 if failure == 'process_error' else 0)
+        return original(command, **kwargs)
+    monkeypatch.setattr(local_asr.subprocess, 'run', retry)
+    with pytest.raises(RuntimeError, match='failed'):
+        engine.transcribe(video, tmp_path, 22.333)
+    assert len(calls) == 3 and not (tmp_path / 'asr/chunk-0001.json').exists()
+
+
+def test_frozen_vad_lookup_requires_bundled_asset_even_when_cache_has_a_valid_model(tmp_path, engine, monkeypatch):
+    resources = tmp_path / 'resources'
+    (resources / 'models').mkdir(parents=True)
+    monkeypatch.setattr(local_asr.sys, '_MEIPASS', str(resources), raising=False)
+    with pytest.raises(RuntimeError, match='VAD'):
+        local_asr._vad_model()
+    bundled = resources / 'models' / local_asr.VAD_MODEL_NAME
+    bundled.write_bytes(local_asr.DEFAULT_VAD_MODEL.read_bytes())
+    assert local_asr._vad_model() == bundled
+    bundled.unlink()
+    bundled.symlink_to(local_asr.DEFAULT_VAD_MODEL)
+    with pytest.raises(RuntimeError, match='VAD'):
+        local_asr._vad_model()

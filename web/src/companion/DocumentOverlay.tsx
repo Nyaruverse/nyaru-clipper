@@ -32,7 +32,7 @@ export function DocumentOverlay({ id, document: doc, time, bilingual, selected, 
     const timer = window.setTimeout(() => {
       setError('');
       void fetch(`/companion-api/jobs/${id}/subtitle-preview`, { method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document: doc, time: timeRef.current, bilingual }) }).then(async response => {
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ frame: { ...doc, cues: active }, time: timeRef.current, bilingual }) }).then(async response => {
         if (!response.ok) {
           const result: unknown = await response.json();
           throw new Error(typeof result === 'object' && result !== null && 'detail' in result && typeof result.detail === 'string' ? result.detail : '精确预览生成失败');

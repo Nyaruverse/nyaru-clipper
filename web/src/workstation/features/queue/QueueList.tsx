@@ -38,7 +38,7 @@ const queueKeyboardCodes = {
   start: [KeyboardCode.Space, KeyboardCode.Enter],
 };
 
-class QueueKeyboardSensor implements SensorInstance {
+export class QueueKeyboardSensor implements SensorInstance {
   static activators = KeyboardSensor.activators;
 
   autoScrollEnabled = false;
@@ -113,7 +113,7 @@ class QueueKeyboardSensor implements SensorInstance {
   }
 }
 
-function queueKeyboardCoordinates(queuedTaskIds: readonly string[]): KeyboardCoordinateGetter {
+export function queueKeyboardCoordinates(queuedTaskIds: readonly string[]): KeyboardCoordinateGetter {
   return (event, args) => {
     if (event.code !== KeyboardCode.Down && event.code !== KeyboardCode.Up) return undefined;
 

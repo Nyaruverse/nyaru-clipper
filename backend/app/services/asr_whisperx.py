@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
@@ -9,19 +10,17 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol, TypeVar
+from typing import Any, Callable, Final, Protocol, TypeVar
 
 from sqlmodel import Session
 
 from app.paths import get_data_dir
-from app.repositories.tasks import get_task_record
 from app.services.runtime_profile import detect_runtime_profile
-from app.services.failure_codes import normalize_failure_code
+from app.services.cache_identity import content_sha256
 from app.services.media_chunks import MediaChunk
-from app.services.pipeline_support import append_stage_log, set_stage_status
 from app.services.storage import (
     ensure_task_dirs,
-    log_file_for_stage,
+    artifact_batch,
     persist_artifact_metadata,
     resolve_task_artifact_path,
 )
@@ -41,17 +40,7 @@ ASR_CHUNK_OUTPUT_DIRECTORY = "asr-chunks"
 ASR_CHUNK_RESULT_MANIFEST_FILENAME = "asr-result.json"
 ASR_AGGREGATE_MANIFEST_FILENAME = "asr-aggregate-manifest.json"
 ASR_AGGREGATE_MANIFEST_SCHEMA_VERSION = 1
-
-
-@dataclass(slots=True)
-class AsrStageResult:
-    audio_path: Path
-    transcript_path: Path
-    subtitle_path: Path
-    raw_alignment_path: Path
-    model_metadata: dict[str, Any]
-    elapsed_seconds: float
-    segments: list[SubtitleSegment]
+ASR_SEGMENT_OVERLAP_TOLERANCE_SECONDS: Final = 0.25
 
 
 @dataclass(slots=True)
@@ -89,6 +78,7 @@ class AsrResultManifest:
     artifacts: AsrArtifactPaths
     model_metadata: dict[str, Any]
     error: dict[str, Any] | None
+    cache_identity: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,12 +114,12 @@ def merge_asr_chunk_segments(
     for chunk, local_segments in chunks:
         chunk_duration_seconds = chunk.end_seconds - chunk.start_seconds
         for local_segment in local_segments:
-            _validate_chunk_local_segment(
+            normalized_start_seconds = _validate_chunk_local_segment(
                 local_segment,
                 chunk_duration_seconds=chunk_duration_seconds,
                 previous_end_seconds=previous_end_seconds - chunk.start_seconds,
             )
-            global_start_seconds = chunk.start_seconds + local_segment.start_seconds
+            global_start_seconds = chunk.start_seconds + normalized_start_seconds
             global_end_seconds = chunk.start_seconds + local_segment.end_seconds
             words = _rebase_chunk_words(
                 local_segment.words,
@@ -154,18 +144,28 @@ def _validate_chunk_local_segment(
     *,
     chunk_duration_seconds: float,
     previous_end_seconds: float,
-) -> None:
+) -> float:
     if (
         segment.start_seconds < 0
         or segment.end_seconds < segment.start_seconds
         or segment.end_seconds > chunk_duration_seconds
-        or segment.start_seconds < previous_end_seconds
         or not segment.text.strip()
     ):
         raise AsrFailure(
             code="invalid_chunk_output",
             message="ASR chunk transcript contains non-monotonic, overlapping, or out-of-range segments.",
         )
+    if segment.start_seconds >= previous_end_seconds:
+        return segment.start_seconds
+    if (
+        previous_end_seconds - segment.start_seconds <= ASR_SEGMENT_OVERLAP_TOLERANCE_SECONDS
+        and segment.end_seconds > previous_end_seconds
+    ):
+        return previous_end_seconds
+    raise AsrFailure(
+        code="invalid_chunk_output",
+        message="ASR chunk transcript contains non-monotonic, overlapping, or out-of-range segments.",
+    )
 
 
 def _rebase_chunk_words(
@@ -213,7 +213,7 @@ def load_valid_asr_chunk_manifest(task_id: str, *, work_dir: Path, chunk: MediaC
     manifest_path = chunk_dir / ASR_CHUNK_RESULT_MANIFEST_FILENAME
     try:
         manifest = load_asr_result_manifest(manifest_path)
-        if manifest.status != "success":
+        if manifest.status != "success" or manifest.cache_identity != build_asr_cache_identity(chunk.audio_path, get_settings()):
             return None
         if _require_manifest_path(task_id, manifest.artifacts.audio_path, kind="audio_path") != chunk.audio_path.resolve():
             return None
@@ -228,7 +228,7 @@ def load_valid_asr_chunk_manifest(task_id: str, *, work_dir: Path, chunk: MediaC
         if any(actual.resolve() != expected.resolve() for actual, expected in expected_paths.items()):
             return None
         _load_chunk_transcript_segments(transcript_path)
-    except AsrFailure:
+    except (AsrFailure, OSError):
         return None
     return manifest
 
@@ -253,6 +253,7 @@ def merge_asr_chunk_artifacts(task_id: str, *, work_dir: Path, chunks: tuple[Med
     transcript_path = work_dir / "asr-segments.json"
     subtitle_path = work_dir / "subtitles.zh.srt"
     aggregate_manifest_path = work_dir / ASR_AGGREGATE_MANIFEST_FILENAME
+    aggregate_manifest_path.unlink(missing_ok=True)
     _write_json_atomically(
         transcript_path,
         build_internal_subtitle_json(segments, model_metadata=model_metadata, elapsed_seconds=elapsed_seconds),
@@ -570,11 +571,11 @@ def _model_target_dir(*, root: Path, key: str) -> Path:
 
 
 def _main_model_target_dir(settings: Settings) -> Path:
-    return _model_target_dir(root=_default_model_root(settings), key="whisperx")
+    return _model_target_dir(root=_default_model_root(settings), key="whisperx") / hashlib.sha256(str(settings.whisperx_model_name).encode()).hexdigest()[:24]
 
 
 def _alignment_model_target_dir(settings: Settings) -> Path:
-    return _model_target_dir(root=_default_model_root(settings), key="alignment")
+    return _model_target_dir(root=_default_model_root(settings), key="alignment") / hashlib.sha256((_alignment_repo_id(settings) or settings.whisperx_language).encode()).hexdigest()[:24]
 
 
 def _alignment_repo_id(settings: Settings) -> str:
@@ -709,68 +710,6 @@ def _download_requested_model(model: dict[str, Any]) -> None:
     _download_model_snapshot(repo_id=model["repo_id"], target_dir=model["target_dir"])
 
 
-def transcribe_task_audio(session: Session, task_id: str) -> AsrStageResult:
-    record = get_task_record(session, task_id)
-    if record is None:
-        raise ValueError(f"Unknown task_id: {task_id}")
-
-    settings = get_settings()
-    audio_path = _resolve_input_audio_path(task_id, record)
-    task_dirs = ensure_task_dirs(task_id)
-    work_dir = task_dirs["work"]
-    log_path = log_file_for_stage(task_id, "asr")
-
-    append_stage_log(log_path, f"asr_input={audio_path}")
-    try:
-        pipeline_result = execute_asr_pipeline(
-            audio_path=audio_path,
-            work_dir=work_dir,
-            settings=settings,
-        )
-    except AsrFailure as failure:
-        append_stage_log(log_path, f"classified_failure={failure.code}")
-        append_stage_log(log_path, str(failure))
-        set_stage_status(
-            session,
-            task_id=task_id,
-            stage_name="asr",
-            status="failed",
-            summary=failure.code,
-            failure_code=normalize_failure_code("asr", failure.code),
-        )
-        session.commit()
-        raise
-
-    _persist_asr_artifacts(
-        session,
-        task_id=task_id,
-        audio_path=pipeline_result.audio_path,
-        transcript_path=pipeline_result.transcript_path,
-        subtitle_path=pipeline_result.subtitle_path,
-        raw_alignment_path=pipeline_result.raw_alignment_path,
-        model_metadata=pipeline_result.model_metadata,
-        elapsed_seconds=pipeline_result.elapsed_seconds,
-        segment_count=len(pipeline_result.segments),
-        language=settings.whisperx_language,
-    )
-    set_stage_status(
-        session,
-        task_id=task_id,
-        stage_name="asr",
-        status="success",
-        summary=ASR_STAGE_SUCCESS_SUMMARY,
-    )
-    return AsrStageResult(
-        audio_path=pipeline_result.audio_path,
-        transcript_path=pipeline_result.transcript_path,
-        subtitle_path=pipeline_result.subtitle_path,
-        raw_alignment_path=pipeline_result.raw_alignment_path,
-        model_metadata=pipeline_result.model_metadata,
-        elapsed_seconds=pipeline_result.elapsed_seconds,
-        segments=pipeline_result.segments,
-    )
-
-
 def load_asr_result_manifest(manifest_path: Path) -> AsrResultManifest:
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -810,39 +749,7 @@ def load_asr_result_manifest(manifest_path: Path) -> AsrResultManifest:
         ),
         model_metadata=dict(model_metadata) if isinstance(model_metadata, dict) else {},
         error=dict(error) if isinstance(error, dict) else None,
-    )
-
-
-def publish_asr_artifacts_from_manifest(
-    session: Session,
-    *,
-    task_id: str,
-    manifest: AsrResultManifest,
-) -> None:
-    if manifest.status != "success":
-        raise _manifest_error_to_failure(manifest)
-
-    audio_path = _require_manifest_path(task_id, manifest.artifacts.audio_path, kind="audio_path")
-    transcript_path = _require_manifest_path(task_id, manifest.artifacts.transcript_path, kind="transcript_path")
-    subtitle_path = _require_manifest_path(task_id, manifest.artifacts.subtitle_path, kind="subtitle_path")
-    raw_alignment_path = _require_manifest_path(
-        task_id,
-        manifest.artifacts.raw_alignment_path,
-        kind="raw_alignment_path",
-    )
-    elapsed_seconds = round(manifest.elapsed_ms_total / 1000, 3)
-    segment_count = _count_transcript_segments(transcript_path)
-    _persist_asr_artifacts(
-        session,
-        task_id=task_id,
-        audio_path=audio_path,
-        transcript_path=transcript_path,
-        subtitle_path=subtitle_path,
-        raw_alignment_path=raw_alignment_path,
-        model_metadata=manifest.model_metadata,
-        elapsed_seconds=elapsed_seconds,
-        segment_count=segment_count,
-        language=str(manifest.model_metadata.get("language") or ""),
+        cache_identity=payload.get("cache_identity") if isinstance(payload.get("cache_identity"), dict) else None,
     )
 
 
@@ -1032,44 +939,45 @@ def _persist_asr_artifacts(
     segment_count: int,
     language: str,
 ) -> None:
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="asr",
-        kind="alignment_raw",
-        path=raw_alignment_path,
-        metadata={
-            "elapsed_seconds": elapsed_seconds,
-            "model_metadata": model_metadata,
-            "source_audio_path": str(audio_path),
-        },
-    )
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="asr",
-        kind="transcript_json",
-        path=transcript_path,
-        metadata={
-            "elapsed_seconds": elapsed_seconds,
-            "model_metadata": model_metadata,
-            "segment_count": segment_count,
-            "source_audio_path": str(audio_path),
-        },
-    )
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="asr",
-        kind="subtitle_srt",
-        path=subtitle_path,
-        metadata={
-            "elapsed_seconds": elapsed_seconds,
-            "model_metadata": model_metadata,
-            "segment_count": segment_count,
-            "language": language,
-        },
-    )
+    with artifact_batch(session, task_id=task_id):
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="asr",
+            kind="alignment_raw",
+            path=raw_alignment_path,
+            metadata={
+                "elapsed_seconds": elapsed_seconds,
+                "model_metadata": model_metadata,
+                "source_audio_path": str(audio_path),
+            },
+        )
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="asr",
+            kind="transcript_json",
+            path=transcript_path,
+            metadata={
+                "elapsed_seconds": elapsed_seconds,
+                "model_metadata": model_metadata,
+                "segment_count": segment_count,
+                "source_audio_path": str(audio_path),
+            },
+        )
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="asr",
+            kind="subtitle_srt",
+            path=subtitle_path,
+            metadata={
+                "elapsed_seconds": elapsed_seconds,
+                "model_metadata": model_metadata,
+                "segment_count": segment_count,
+                "language": language,
+            },
+        )
 
 
 def _deserialize_manifest_phases(raw_phases: Any) -> list[AsrPhaseResult]:
@@ -1117,30 +1025,6 @@ def _require_manifest_path(task_id: str, path: Path | None, *, kind: str) -> Pat
             message=f"ASR child result manifest referenced a missing {kind}: {resolved}",
         )
     return resolved
-
-
-def _count_transcript_segments(transcript_path: Path) -> int:
-    try:
-        payload = json.loads(transcript_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
-        raise AsrFailure(
-            code="invalid_result_manifest",
-            message=f"ASR transcript artifact is unavailable or invalid: {transcript_path}",
-        ) from exc
-    segments = payload.get("segments") if isinstance(payload, dict) else None
-    if not isinstance(segments, list):
-        raise AsrFailure(
-            code="invalid_result_manifest",
-            message=f"ASR transcript artifact is missing segments: {transcript_path}",
-        )
-    return len(segments)
-
-
-def _manifest_error_to_failure(manifest: AsrResultManifest) -> AsrFailure:
-    error = manifest.error or {}
-    code = str(error.get("code") or "asr_child_failed").strip() or "asr_child_failed"
-    message = str(error.get("message") or "ASR child reported failure.").strip() or "ASR child reported failure."
-    return AsrFailure(code=code, message=message)
 
 
 def _run_pipeline_phase(
@@ -1358,3 +1242,21 @@ def _classify_asr_exception(exc: Exception, *, settings: Settings) -> AsrFailure
         code="alignment_failed",
         message=f"WhisperX alignment failed: {message}",
     )
+
+
+def build_asr_cache_identity(audio_path: Path, settings: Settings) -> dict[str, Any]:
+    execution = _resolve_asr_execution_config(settings)
+    model_ref = _resolve_main_model_ref(settings)
+    alignment_ref = _resolve_alignment_model_ref(settings)
+    def model_identity(ref: str | None) -> dict[str, Any]:
+        return {"ref": ref, "content_sha256": content_sha256(Path(ref)) if ref and Path(ref).exists() else None}
+    return {
+        "version": 1,
+        "audio_sha256": content_sha256(audio_path),
+        "model": model_identity(model_ref),
+        "alignment": model_identity(alignment_ref),
+        "language": settings.whisperx_language,
+        "device": execution.device,
+        "compute_type": execution.compute_type,
+        "batch_size": settings.whisperx_batch_size,
+    }

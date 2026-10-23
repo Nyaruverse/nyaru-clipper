@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -176,6 +177,10 @@ def test_generates_ranked_candidates_via_scene_detection_provider(backend_env, m
     _prepare_translation_fixture(data_dir, task_id, excited=True)
     source_video_path = _prepare_source_video_fixture(data_dir, task_id)
     _prepare_audio_energy_fixture(data_dir, task_id)
+    monkeypatch.setattr(
+        "app.services.media_prep.run_logged_command",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"format":{"duration":"72"}}', ""),
+    )
 
     perf_values = iter([20.0, 21.75])
     monkeypatch.setattr("app.services.highlights.time.perf_counter", lambda: next(perf_values))

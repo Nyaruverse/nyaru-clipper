@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from app.arctime import media
@@ -21,6 +22,7 @@ def validated_api_key(value: object) -> SecretStr:
 
 
 class JobInput(BaseModel):
+    engine: Literal['whisper.cpp', 'whisperx'] = 'whisper.cpp'
     url: str = Field(max_length=8192)
     ranges: list[tuple[str, str]] = Field(default_factory=list, max_length=100)
     highlights: int | None = Field(default=None, ge=1, le=100)
@@ -31,8 +33,8 @@ class JobInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_selection(self):
-        if self.subtitle_template_id and not self.live:
-            raise ValueError('自动字幕模板仅用于实时录播')
+        if self.live and self.engine != 'whisper.cpp':
+            raise ValueError('实时录播当前使用 whisper.cpp，请为 WhisperX 选择录像处理')
         self.url = self.url.strip()
         if self.live and re.fullmatch(r"[1-9][0-9]*", self.url):
             self.url = "https://live.bilibili.com/" + self.url

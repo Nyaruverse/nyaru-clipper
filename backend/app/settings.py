@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
 import shlex
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
+DEFAULT_DEEPSEEK_CONFIG_FILE: Final = PROJECT_ROOT / "config" / "deepseek.env"
 
 
 class Settings(BaseSettings):
@@ -34,7 +39,6 @@ class Settings(BaseSettings):
     whisperx_model_cache_dir: Path | None = None
     translation_provider: str = "hf"
     translation_model_name: str = "facebook/nllb-200-distilled-600M"
-    translation_fallback_model_name: str | None = None
     translation_device: str = "cuda"
     translation_source_language_code: str = "zho_Hans"
     translation_target_language_code: str = "jpn_Jpan"
@@ -50,8 +54,16 @@ class Settings(BaseSettings):
     scenedetect_min_scene_len: int = 15
 
 
+execution_settings: ContextVar[Settings | None] = ContextVar('execution_settings', default=None)
+
+
 def get_settings() -> Settings:
-    return Settings()
+    snapshot = execution_settings.get()
+    if snapshot is not None:
+        return snapshot
+    configured_file = os.getenv("APP_DEEPSEEK_CONFIG_FILE")
+    config_file = Path(configured_file) if configured_file is not None else DEFAULT_DEEPSEEK_CONFIG_FILE
+    return Settings(_env_file=config_file)
 
 
 def get_bbdown_extra_args(settings: Settings) -> list[str]:

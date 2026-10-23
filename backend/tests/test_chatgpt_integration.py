@@ -246,7 +246,7 @@ def legacy_manager(tmp_path, monkeypatch):
     manager.api_key = SecretStr('synthetic-flash-key')
     monkeypatch.setattr(manager.chatgpt, 'status', lambda: {'connected': True, 'sharing': True})
     submitted = []
-    monkeypatch.setattr(manager.executor, 'submit', lambda fn, *args: submitted.append((fn, args)))
+    monkeypatch.setattr(manager.executor, 'submit', lambda fn, *args, style_template=None: submitted.append((fn, args)))
     identity = 'abcdef012345'
     directory = tmp_path / identity
     directory.mkdir()
@@ -265,13 +265,13 @@ def test_legacy_projection_ignores_current_subscription_default(legacy_manager):
 
 
 @pytest.mark.parametrize('saved', [{}, {'llm_model': 'chatgpt:saved-model'}, {'saozi_model': 'chatgpt:saved-model'}])
-def test_resume_uses_saved_identity_or_legacy_flash(legacy_manager, monkeypatch, saved):
+def test_resume_uses_saved_identity_or_current_config(legacy_manager, monkeypatch, saved):
     from app.arctime import saozi_translation, workflow
     manager, identity, directory, submitted = legacy_manager
     job = json.loads((directory / 'job.json').read_text())
     job.update(saved)
     (directory / 'job.json').write_text(json.dumps(job))
-    expected = 'chatgpt:saved-model' if saved else 'deepseek-flash'
+    expected = 'chatgpt:saved-model' if saved else 'chatgpt:new-default'
     manager.submit(None, identity)
     _, args = submitted.pop()
     assert args[-1] == expected
@@ -284,12 +284,12 @@ def test_resume_uses_saved_identity_or_legacy_flash(legacy_manager, monkeypatch,
 
 
 @pytest.mark.parametrize('saved,checkpoint,expected', [
-    ({}, {}, 'deepseek-flash'),
+    ({}, {}, 'chatgpt:new-default'),
     ({'llm_model': 'chatgpt:saved-model'}, {}, 'chatgpt:saved-model'),
     ({'saozi_model': 'chatgpt:saved-model'}, {}, 'chatgpt:saved-model'),
     ({}, {'state': 'failed', 'identity': {'model': 'chatgpt:checkpoint-model'}}, 'chatgpt:checkpoint-model'),
 ])
-def test_translation_uses_saved_identity_or_checkpoint_or_legacy_flash(legacy_manager, monkeypatch, saved, checkpoint, expected):
+def test_translation_uses_saved_identity_or_checkpoint_or_current_config(legacy_manager, monkeypatch, saved, checkpoint, expected):
     from app.arctime import saozi_translation
     manager, identity, directory, submitted = legacy_manager
     job = json.loads((directory / 'job.json').read_text()); job.update(saved)

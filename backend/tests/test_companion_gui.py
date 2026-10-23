@@ -253,6 +253,26 @@ def test_cli_recovery_overrides_stale_gui_failure(client, tmp_path, monkeypatch)
     assert "old failure" not in snapshot["message"]
 
 
+@pytest.mark.parametrize('state', ['completed', 'failed'])
+def test_room_end_is_visible_without_overriding_processing_state(client, tmp_path, state):
+    job_id = 'aabbccddeeff'
+    directory = tmp_path / job_id
+    directory.mkdir()
+    (directory / 'job.json').write_text(json.dumps({
+        'state': 'completed' if state == 'completed' else 'live_failed',
+        'live': True, 'capture_end_reason': 'live_ended'}))
+    error = 'Local ASR timestamps exceed chunk duration' if state == 'failed' else None
+    (directory / 'gui.json').write_text(json.dumps({'id': job_id, 'state': state,
+        'message': '处理失败' if error else '处理完成', 'error': error}))
+    for response in (client.get(f'/companion-api/jobs/{job_id}'), client.get('/companion-api/jobs')):
+        job = response.json()
+        if isinstance(job, list):
+            job = next(row for row in job if row['id'] == job_id)
+        assert job['capture_end_reason'] == 'live_ended'
+        assert '直播已结束' in job['message']
+        assert job['state'] == state and job['error'] == error
+
+
 def translation_finished(client, job_id):
     for _ in range(200):
         result = client.get(f"/companion-api/jobs/{job_id}").json()

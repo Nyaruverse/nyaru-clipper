@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from app.arctime import media, saozi
+from app.arctime import video_integrity
 from app.arctime.workflow import _publish_text, write_manifest
 from app.services.subtitles import SubtitleSegment, render_srt
 
@@ -63,6 +64,11 @@ def recognize(directory, job, path, adapter):
     if path.is_symlink() or path.parent.is_symlink() or not path.resolve().is_relative_to(directory.resolve()):
         raise ValueError('录制块路径无效')
     length = media.probe_video(path)
+    decode_error = None
+    try:
+        video_integrity.validate_video_decode(path, length)
+    except video_integrity.VideoDecodeError as error:
+        decode_error = str(error)
     cache = path.parent / (path.stem + '-recognition')
     if cache.is_symlink():
         raise ValueError('识别缓存路径无效')
@@ -81,6 +87,10 @@ def recognize(directory, job, path, adapter):
              'text': c.text} for c in cues]
     job['chunks'].append({'path': str(path.relative_to(directory)), 'sha256': media.fingerprint(path),
                           'start': offset, 'duration': length, 'cues': rows})
+    if decode_error:
+        job['chunks'][-1]['video_decode_error'] = decode_error
+        count = sum(bool(chunk.get('video_decode_error')) for chunk in job['chunks'])
+        job['capture_warning'] = f'检测到 {count} 个录制块解码检查异常；录制继续，相关画面质量未通过，原文件已保留'
     job['duration'] += length
     save(directory, job)
     publish_transcript(directory, job)
@@ -111,9 +121,12 @@ def concatenate(directory, chunks, target):
         listing = work / 'inputs.txt'
         listing.write_text(''.join("file '" + str((directory / c['path']).resolve()).replace("'", "'\\''") + "'\n" for c in chunks))
         output = work / 'source.mp4'
-        result = subprocess.run([media.tool_path('ffmpeg'), '-nostdin', '-v', 'error', '-f', 'concat',
-                                 '-safe', '0', '-i', str(listing), '-c', 'copy', '-movflags', '+faststart', str(output)],
-                                capture_output=True, timeout=600, check=False)
+        command = [media.tool_path('ffmpeg'), '-nostdin', '-v', 'error', '-f', 'concat',
+                   '-safe', '0', '-i', str(listing), '-c', 'copy', '-movflags', '+faststart', str(output)]
+        from app.services.task_execution import current_execution
+        execution = current_execution.get()
+        result = execution.run_command(command, timeout=600) if execution else subprocess.run(
+            command, capture_output=True, timeout=600, check=False)
         if result.returncode:
             raise ValueError('合并已关闭录制块失败，原文件已保留')
         actual = media.probe_video(output)

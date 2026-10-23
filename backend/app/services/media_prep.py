@@ -5,14 +5,16 @@ import math
 import os
 import tempfile
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from sqlmodel import Session, select
 
-from app.models import Artifact, Task
+from app.models import Artifact
+from app.services.cache_identity import content_sha256
 from app.services.media_chunks import (
+    DEFAULT_MEDIA_CHUNK_SECONDS,
     MediaChunk,
     MediaChunkFailure,
     MediaChunkManifest,
@@ -22,13 +24,14 @@ from app.services.media_chunks import (
     write_media_chunk_manifest_atomically,
 )
 from app.services.pipeline_support import run_logged_command, set_stage_status
-from app.services.storage import ensure_task_dirs, get_task_root, log_file_for_stage, persist_artifact_metadata
+from app.services.storage import artifact_batch, ensure_task_dirs, refresh_task_storage, log_file_for_stage, persist_artifact_metadata
 from app.settings import get_settings
 
 
 _WAV_SAMPLE_RATE_HZ = 16000
 _WAV_CHANNELS = 1
 _WAV_SAMPLE_WIDTH_BYTES = 2
+_WAV_DURATION_TOLERANCE_SECONDS: Final = 0.05
 
 
 @dataclass(slots=True)
@@ -55,6 +58,7 @@ def prepare_media_for_asr(
     settings = get_settings()
     redactions = {str(source_video_path): source_locator} if source_locator is not None else None
 
+    identity = media_cache_identity(source_video_path)
     ffprobe_result = run_logged_command(
         [
             settings.ffprobe_binary,
@@ -97,13 +101,20 @@ def prepare_media_for_asr(
         chunk_manifest = load_media_chunk_manifest(
             manifest_path,
             source_duration_seconds=source_duration_seconds,
+            chunk_seconds=DEFAULT_MEDIA_CHUNK_SECONDS,
         )
+        if chunk_manifest.cache_identity != identity:
+            raise MediaChunkFailure("media identity is stale")
     except MediaChunkFailure:
         chunk_manifest = build_media_chunk_manifest(source_duration_seconds, work_dir=work_dir)
+        manifest_path.unlink(missing_ok=True)
         _invalidate_existing_chunk_audio(work_dir)
 
+    # Revoke the success marker before any chunk can be replaced.
+    manifest_path.unlink(missing_ok=True)
     for chunk in chunk_manifest.chunks:
-        if _has_valid_chunk_audio(chunk):
+        if (_has_valid_chunk_audio(chunk) and chunk_manifest.audio_sha256 is not None
+                and chunk_manifest.audio_sha256.get(chunk.id) == content_sha256(chunk.audio_path)):
             continue
         try:
             _create_chunk_audio(
@@ -118,50 +129,58 @@ def prepare_media_for_asr(
             _fail_media_prep(session, task_id=task_id, summary="ffmpeg_failed")
             raise
 
+    if media_cache_identity(source_video_path) != identity:
+        _fail_media_prep(session, task_id=task_id, summary="source_changed")
+        raise MediaPrepFailure("Source changed during media preparation")
+    chunk_manifest = replace(
+        chunk_manifest, cache_identity=identity,
+        audio_sha256={chunk.id: content_sha256(chunk.audio_path) for chunk in chunk_manifest.chunks},
+    )
     try:
         write_media_chunk_manifest_atomically(manifest_path, chunk_manifest)
     except MediaChunkFailure as exc:
         _fail_media_prep(session, task_id=task_id, summary="ffmpeg_failed")
         raise MediaPrepFailure("media chunk manifest could not be written") from exc
 
-    _persist_media_prep_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="media_prep",
-        kind="media_probe",
-        path=metadata_path,
-        metadata={"ffprobe_metadata": persisted_ffprobe_metadata},
-    )
-    _persist_media_prep_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="media_prep",
-        kind="media_chunk_manifest",
-        path=manifest_path,
-        metadata={
-            "source_duration_seconds": source_duration_seconds,
-            "chunk_seconds": chunk_manifest.chunk_seconds,
-            "chunk_count": len(chunk_manifest.chunks),
-        },
-    )
-    for chunk in chunk_manifest.chunks:
+    with artifact_batch(session, task_id=task_id):
         _persist_media_prep_artifact_metadata(
             session,
             task_id=task_id,
             stage_name="media_prep",
-            kind="asr_audio_chunk",
-            path=chunk.audio_path,
+            kind="media_probe",
+            path=metadata_path,
+            metadata={"ffprobe_metadata": persisted_ffprobe_metadata},
+        )
+        _persist_media_prep_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="media_prep",
+            kind="media_chunk_manifest",
+            path=manifest_path,
             metadata={
-                "chunk_id": chunk.id,
-                "index": chunk.index,
-                "start_seconds": chunk.start_seconds,
-                "end_seconds": chunk.end_seconds,
-                "audio_format": "wav",
-                "channels": _WAV_CHANNELS,
-                "sample_rate_hz": _WAV_SAMPLE_RATE_HZ,
-                "source_video_path": source_locator or str(source_video_path),
+                "source_duration_seconds": source_duration_seconds,
+                "chunk_seconds": chunk_manifest.chunk_seconds,
+                "chunk_count": len(chunk_manifest.chunks),
             },
         )
+        for chunk in chunk_manifest.chunks:
+            _persist_media_prep_artifact_metadata(
+                session,
+                task_id=task_id,
+                stage_name="media_prep",
+                kind="asr_audio_chunk",
+                path=chunk.audio_path,
+                metadata={
+                    "chunk_id": chunk.id,
+                    "index": chunk.index,
+                    "start_seconds": chunk.start_seconds,
+                    "end_seconds": chunk.end_seconds,
+                    "audio_format": "wav",
+                    "channels": _WAV_CHANNELS,
+                    "sample_rate_hz": _WAV_SAMPLE_RATE_HZ,
+                    "source_video_path": source_locator or str(source_video_path),
+                },
+            )
     set_stage_status(session, task_id=task_id, stage_name="media_prep", status="success", summary="Prepared ASR WAV chunks")
     return MediaPrepResult(
         source_video_path=source_video_path,
@@ -194,10 +213,10 @@ def _has_valid_chunk_audio(chunk: MediaChunk) -> bool:
                 and input_audio.getframerate() == _WAV_SAMPLE_RATE_HZ
             )
             actual_duration_seconds = input_audio.getnframes() / input_audio.getframerate()
-    except (OSError, wave.Error):
+    except (OSError, EOFError, wave.Error):
         return False
     expected_duration_seconds = chunk.end_seconds - chunk.start_seconds
-    return matches_format and abs(actual_duration_seconds - expected_duration_seconds) <= 1 / _WAV_SAMPLE_RATE_HZ
+    return matches_format and abs(actual_duration_seconds - expected_duration_seconds) <= _WAV_DURATION_TOLERANCE_SECONDS
 
 
 def _invalidate_existing_chunk_audio(work_dir: Path) -> None:
@@ -224,14 +243,7 @@ def _persist_media_prep_artifact_metadata(
     if artifact is not None:
         artifact.metadata_json = json.dumps(metadata, sort_keys=True)
         session.add(artifact)
-        task = session.get(Task, task_id)
-        if task is not None:
-            task.storage_bytes = sum(
-                candidate.stat().st_size
-                for candidate in get_task_root(task_id).rglob("*")
-                if candidate.is_file()
-            )
-            session.add(task)
+        refresh_task_storage(session, task_id=task_id)
         return
     persist_artifact_metadata(
         session,
@@ -313,3 +325,30 @@ def _safe_source_error(message: str, source_video_path: Path, source_locator: st
     if source_locator is None:
         return message
     return message.replace(str(source_video_path), source_locator)
+
+
+def media_cache_identity(source_video_path: Path) -> dict[str, object]:
+    return {
+        "version": 1,
+        "source_sha256": content_sha256(source_video_path),
+        "ffmpeg_binary": get_settings().ffmpeg_binary,
+        "chunk_seconds": DEFAULT_MEDIA_CHUNK_SECONDS,
+        "channels": _WAV_CHANNELS,
+        "sample_rate_hz": _WAV_SAMPLE_RATE_HZ,
+        "codec": "pcm_s16le",
+        "avoid_negative_ts": "make_zero",
+    }
+
+
+def media_cache_is_current(work_dir: Path, source_video_path: Path) -> bool:
+    try:
+        manifest = load_media_chunk_manifest(media_chunk_manifest_path(work_dir))
+        return (
+            manifest.cache_identity == media_cache_identity(source_video_path)
+            and manifest.audio_sha256 is not None
+            and all(_has_valid_chunk_audio(chunk)
+                    and manifest.audio_sha256.get(chunk.id) == content_sha256(chunk.audio_path)
+                    for chunk in manifest.chunks)
+        )
+    except (MediaChunkFailure, OSError):
+        return False

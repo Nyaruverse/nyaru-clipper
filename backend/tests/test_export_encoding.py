@@ -18,7 +18,7 @@ def _build_invocation(tmp_path: Path):
 
 def test_execute_video_export_uses_h264_amf_when_windows_backend_is_configured(tmp_path, monkeypatch) -> None:
     # Given: a configured Windows FFmpeg executable and WSL paths that can be translated.
-    from app.settings import Settings
+    from app.services.export_encoding import ExportEncodingConfig
     from app.services import export_encoding
 
     invocation = _build_invocation(tmp_path)
@@ -41,7 +41,8 @@ def test_execute_video_export_uses_h264_amf_when_windows_backend_is_configured(t
     # When: the export is requested through the Windows AMF backend.
     execution = export_encoding.execute_video_export(
         invocation,
-        Settings(
+        ExportEncodingConfig(
+            ffmpeg_binary="ffmpeg",
             export_video_backend="windows-amf",
             windows_ffmpeg_binary=Path("/mnt/e/ffmpeg.exe"),
         ),
@@ -76,7 +77,7 @@ def test_execute_video_export_uses_h264_amf_when_windows_backend_is_configured(t
 
 def test_execute_video_export_falls_back_to_libx264_after_amf_failure(tmp_path, monkeypatch) -> None:
     # Given: AMF process failure followed by a working CPU encoder.
-    from app.settings import Settings
+    from app.services.export_encoding import ExportEncodingConfig
     from app.services import export_encoding
 
     invocation = _build_invocation(tmp_path)
@@ -97,7 +98,8 @@ def test_execute_video_export_falls_back_to_libx264_after_amf_failure(tmp_path, 
     # When: the configured AMF process fails.
     execution = export_encoding.execute_video_export(
         invocation,
-        Settings(
+        ExportEncodingConfig(
+            ffmpeg_binary="ffmpeg",
             export_video_backend="windows-amf",
             windows_ffmpeg_binary=Path("/mnt/e/ffmpeg.exe"),
         ),
@@ -115,7 +117,7 @@ def test_execute_video_export_falls_back_to_libx264_after_amf_failure(tmp_path, 
 
 def test_execute_video_export_falls_back_to_libx264_when_windows_binary_is_unconfigured(tmp_path, monkeypatch) -> None:
     # Given: the AMF backend is selected without a Windows executable path.
-    from app.settings import Settings
+    from app.services.export_encoding import ExportEncodingConfig
     from app.services import export_encoding
 
     invocation = _build_invocation(tmp_path)
@@ -130,7 +132,7 @@ def test_execute_video_export_falls_back_to_libx264_when_windows_binary_is_uncon
     # When: command selection is attempted.
     execution = export_encoding.execute_video_export(
         invocation,
-        Settings(export_video_backend="windows-amf"),
+        ExportEncodingConfig(ffmpeg_binary="ffmpeg", export_video_backend="windows-amf"),
         tmp_path / "export.log",
     )
 
@@ -141,7 +143,7 @@ def test_execute_video_export_falls_back_to_libx264_when_windows_binary_is_uncon
 
 def test_execute_video_export_falls_back_to_libx264_when_windows_ffmpeg_cannot_launch(tmp_path, monkeypatch) -> None:
     # Given: a configured AMF binary that cannot be launched and a working CPU binary.
-    from app.settings import Settings
+    from app.services.export_encoding import ExportEncodingConfig
     from app.services import export_encoding
 
     invocation = _build_invocation(tmp_path)
@@ -162,7 +164,8 @@ def test_execute_video_export_falls_back_to_libx264_when_windows_ffmpeg_cannot_l
     # When: the configured Windows executable cannot launch.
     execution = export_encoding.execute_video_export(
         invocation,
-        Settings(
+        ExportEncodingConfig(
+            ffmpeg_binary="ffmpeg",
             export_video_backend="windows-amf",
             windows_ffmpeg_binary=Path("/mnt/e/missing-ffmpeg.exe"),
         ),

@@ -1,0 +1,9 @@
+import type { StudioWorkflow } from './studioModel';
+interface Props {readonly value:StudioWorkflow;readonly onChange:(value:StudioWorkflow)=>void;readonly prefix?:string;readonly section?:'processing'|'export'}
+export function WorkflowFields({value,onChange,prefix='默认',section}:Props){return <div className="studio-fields">
+ <div hidden={section==='export'} className="studio-fields"><label className="ny-field">{prefix}视频语种<select className="ny-input" value={value.language} onChange={e=>{const v=e.target.value;if(v==='auto'||v==='zh'||v==='ja'||v==='en')onChange({...value,language:v});}}><option value="auto">自动识别</option><option value="zh">中文</option><option value="ja">日语</option><option value="en">英语</option></select></label>
+ <label className="ny-field">{prefix}切片方式<select className="ny-input" value={value.mode} onChange={e=>{const v=e.target.value;if(v==='ranges'||v==='highlights'||v==='saozi')onChange({...value,mode:v});}}><option value="ranges">指定时间段</option><option value="highlights">高光自动切片</option><option value="saozi">臊子</option></select></label>
+ <label className="ny-field">{prefix}高光数量<input className="ny-input" type="number" min={1} max={100} value={value.highlights} onChange={e=>{const n=e.target.valueAsNumber;if(Number.isInteger(n)&&n>=1&&n<=100)onChange({...value,highlights:n});}}/></label>
+ </div><div hidden={section==='processing'} className="studio-fields"><label className="ny-field">{prefix}导出格式<select className="ny-input" value={value.export_format} onChange={e=>{const v=e.target.value;if(v==='ass'||v==='mp4'||v==='arctime')onChange({...value,export_format:v});}}><option value="ass">ASS 字幕</option><option value="mp4">字幕 MP4</option><option value="arctime">ArcTime ZIP</option></select></label>
+ <label className="cue-toggle"><input type="checkbox" checked={value.bilingual} onChange={e=>onChange({...value,bilingual:e.target.checked})}/>{prefix}双语字幕</label>
+ </div></div>;}

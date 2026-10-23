@@ -42,6 +42,8 @@ class MediaChunkManifest:
     source_duration_seconds: float
     chunk_seconds: float
     chunks: tuple[MediaChunk, ...]
+    cache_identity: dict[str, object] | None = None
+    audio_sha256: dict[str, str] | None = None
 
 
 def media_chunk_manifest_path(work_dir: Path) -> Path:
@@ -209,7 +211,13 @@ def _parse_manifest(payload: dict[object, object], *, work_dir: Path) -> MediaCh
             )
         )
 
-    manifest = MediaChunkManifest(source_duration_seconds, chunk_seconds, tuple(chunks))
+    identity = payload.get("cache_identity")
+    audio_sha256 = payload.get("audio_sha256")
+    manifest = MediaChunkManifest(
+        source_duration_seconds, chunk_seconds, tuple(chunks),
+        identity if isinstance(identity, dict) else None,
+        audio_sha256 if isinstance(audio_sha256, dict) else None,
+    )
     validate_media_chunk_manifest(manifest, work_dir=work_dir)
     return manifest
 
@@ -217,6 +225,8 @@ def _parse_manifest(payload: dict[object, object], *, work_dir: Path) -> MediaCh
 def _serialize_manifest(manifest: MediaChunkManifest, *, work_dir: Path) -> dict[str, object]:
     return {
         "schema_version": MEDIA_CHUNK_SCHEMA_VERSION,
+        "cache_identity": manifest.cache_identity,
+        "audio_sha256": manifest.audio_sha256,
         "source_duration_seconds": manifest.source_duration_seconds,
         "chunk_seconds": manifest.chunk_seconds,
         "chunks": [

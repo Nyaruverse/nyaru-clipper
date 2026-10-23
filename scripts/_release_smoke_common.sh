@@ -54,20 +54,7 @@ cleanup_smoke_fixture() {
 
 verify_api_health() {
   smoke_log "waiting for API health readiness..."
-  wait_for_url "api health" "http://127.0.0.1:${APP_PORT}/api/health"
-
-  APP_PORT="${APP_PORT}" python3 - <<'PY'
-import json
-import os
-import urllib.request
-
-app_port = os.environ["APP_PORT"]
-with urllib.request.urlopen(f"http://127.0.0.1:{app_port}/api/health", timeout=5) as response:
-    payload = json.loads(response.read().decode("utf-8"))
-
-assert payload["status"] == "ok", payload
-print(f"api health contract: {json.dumps(payload, sort_keys=True)}")
-PY
+  wait_for_api_readiness "http://127.0.0.1:${APP_PORT}/api/health"
 }
 
 verify_runtime_profile() {
@@ -148,16 +135,28 @@ verify_container_media_tools() {
   docker compose -f "${compose_file}" exec -T api python -c "import json, shutil; tools = {name: shutil.which(name) for name in ('BBDown', 'yt-dlp', 'ffmpeg', 'ffprobe')}; print(json.dumps(tools, sort_keys=True)); assert all(tools.values()), tools"
 }
 
+smoke_pnpm() (
+  cd "${ROOT_DIR}/web"
+  if command -v corepack >/dev/null 2>&1; then
+    corepack pnpm "$@"
+  else
+    pnpm "$@"
+  fi
+)
+
 run_downstream_smoke_suite() {
   smoke_log "running backend worker smoke test (no live media tools exercised)..."
-  uv run --project "${ROOT_DIR}/backend" pytest "${ROOT_DIR}/backend/tests/test_e2e_pipeline.py"
+  "${BACKEND_PYTHON:-${BACKEND_PYTHON_PATH}}" -m pytest "${ROOT_DIR}/backend/tests/test_e2e_pipeline.py"
 
   smoke_log "running frontend unit tests..."
-  pnpm --dir "${ROOT_DIR}/web" test --run
+  smoke_pnpm test --run
 
   smoke_log "building frontend bundle..."
-  pnpm --dir "${ROOT_DIR}/web" build
+  smoke_pnpm build
 
-  smoke_log "running targeted Playwright task flow smoke..."
-  CI="" pnpm --dir "${ROOT_DIR}/web" exec playwright test e2e/task-flow.spec.ts --reporter=line
+  smoke_log "running targeted Playwright workstation smoke..."
+  CI="" smoke_pnpm exec playwright test \
+    e2e/workstation-shell.spec.ts e2e/workstation-task-create.spec.ts \
+    e2e/workstation-queue.spec.ts e2e/workstation-task-overview.spec.ts \
+    e2e/task-library-controls.spec.ts --reporter=line
 }

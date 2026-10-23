@@ -1,6 +1,45 @@
 from __future__ import annotations
 
 
+def test_get_settings_loads_deepseek_values_from_an_operator_config_file(monkeypatch, tmp_path) -> None:
+    # Given: an operator supplies the local DeepSeek configuration file before startup.
+    config_file = tmp_path / "deepseek.env"
+    config_file.write_text(
+        "APP_DEEPSEEK_API_KEY=file-only-deepseek-key\nAPP_DEEPSEEK_MODEL=deepseek-local-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("APP_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("APP_DEEPSEEK_MODEL", raising=False)
+    monkeypatch.setenv("APP_DEEPSEEK_CONFIG_FILE", str(config_file))
+
+    from app.settings import get_settings
+
+    # When: the API or worker resolves its startup settings.
+    settings = get_settings()
+
+    # Then: the server-only provider values are read from that file.
+    assert settings.deepseek_api_key is not None
+    assert settings.deepseek_api_key.get_secret_value() == "file-only-deepseek-key"
+    assert settings.deepseek_model == "deepseek-local-model"
+
+
+def test_process_environment_overrides_the_deepseek_config_file(monkeypatch, tmp_path) -> None:
+    # Given: a local config file and a higher-priority process secret.
+    config_file = tmp_path / "deepseek.env"
+    config_file.write_text("APP_DEEPSEEK_API_KEY=file-key\n", encoding="utf-8")
+    monkeypatch.setenv("APP_DEEPSEEK_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("APP_DEEPSEEK_API_KEY", "environment-key")
+
+    from app.settings import get_settings
+
+    # When: the runtime resolves its provider settings.
+    settings = get_settings()
+
+    # Then: the environment remains the safe emergency override.
+    assert settings.deepseek_api_key is not None
+    assert settings.deepseek_api_key.get_secret_value() == "environment-key"
+
+
 def test_default_asr_profile_uses_turbo_with_conservative_batching(monkeypatch) -> None:
     # Given: no operator override for the ASR profile.
     monkeypatch.delenv("APP_WHISPERX_MODEL_NAME", raising=False)

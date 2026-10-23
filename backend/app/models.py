@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app import models_unified as models_unified
+from app import models_migration as models_migration
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)

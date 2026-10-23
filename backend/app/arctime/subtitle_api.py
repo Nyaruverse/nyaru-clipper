@@ -4,21 +4,21 @@ from collections.abc import Callable
 from pathlib import Path
 import subprocess
 import sys
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, assert_never
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from app.arctime.subtitle_encoding import burn_available
 from app.arctime.subtitle_fonts import FontCatalog, font_catalog
 from app.arctime.subtitle_exports import ExportSnapshot, SubtitleExports
 from app.arctime.subtitle_inputs import ExportRequest
 from app.arctime.subtitle_style import SubtitleStyle
-from app.arctime.subtitle_document import DocumentStore, SubtitleDocument, validate_source
+from app.arctime.subtitle_document import Cue, DocumentStore, SubtitleDocument, _source_signature, validate_source
 from app.arctime.subtitle_render import preview_png
-from app.arctime.subtitle_templates import ProjectTemplate, StyleTemplate
+from app.arctime.subtitle_templates import ProjectTemplate, StyleTemplate, StudioSettings, WorkflowDefaults
 from app.arctime.ass_import import AssInspection, inspect_ass
 
 if TYPE_CHECKING:
@@ -49,11 +49,30 @@ class PreviewInput(BaseModel):
     bilingual: bool = False
 
 
+class FramePreviewInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    frame: SubtitleDocument
+    time: float = Field(ge=0)
+    bilingual: bool = False
+
+
+class TemplatePreviewInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    style: SubtitleStyle
+    original: str = Field(max_length=500)
+    translation: str = Field(max_length=500)
+    bilingual: bool = True
+
+
 class DefaultInput(BaseModel):
     style: SubtitleStyle
 
 
 class TemplateInput(DefaultInput):
+    model_config = ConfigDict(extra="forbid")
+    streamer: str = Field(default="", max_length=100)
+    workflow: WorkflowDefaults = Field(default_factory=WorkflowDefaults)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
     id: str | None = None
     name: str = Field(min_length=1, max_length=100)
     arctime_template_id: str | None = None
@@ -79,7 +98,7 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
 def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     router = APIRouter(prefix="/companion-api")
     store = exports.templates
-    documents = DocumentStore()
+    documents = DocumentStore(artifacts=manager.artifacts, persistent=manager.documents)
 
     @router.get('/jobs/{job_id}/subtitle-document')
     def document(job_id: str, source: bool = False) -> SubtitleDocument:
@@ -91,7 +110,7 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
         payload = _operation(lambda: SubtitleDocument.model_validate_json(content))
         def persist() -> SubtitleDocument:
             with manager.lock:
-                if manager.active:
+                if manager.active and (manager.host is None or manager.active.get('id') == job_id):
                     raise HTTPException(409, '已有任务正在处理，请等待完成')
                 return _operation(lambda: documents.save(manager.directory(job_id), payload))
         return await run_in_threadpool(persist)
@@ -99,13 +118,38 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     @router.post('/jobs/{job_id}/subtitle-preview')
     async def preview(job_id: str, request: Request) -> Response:
         content = await _bounded_body(request, 20 * 1024 * 1024)
-        payload = _operation(lambda: PreviewInput.model_validate_json(content))
+        request_payload = _operation(lambda: TypeAdapter(FramePreviewInput | PreviewInput).validate_json(content))
+        match request_payload:
+            case FramePreviewInput(frame=frame, time=time, bilingual=bilingual):
+                payload = PreviewInput(document=frame, time=time, bilingual=bilingual)
+            case PreviewInput():
+                payload = request_payload
+            case unreachable:
+                assert_never(unreachable)
         def render() -> bytes:
-            validate_source(payload.document, documents.base(manager.directory(job_id), payload.document.style))
+            directory = manager.directory(job_id)
+            base = documents.base(directory, payload.document.style)
+            validate_source(payload.document, base)
             if payload.time > payload.document.duration:
                 raise ValueError('预览时间超过视频时长')
-            return preview_png(payload.document, payload.time, payload.bilingual)
+            pixels = preview_png(payload.document, payload.time, payload.bilingual)
+            if _source_signature(directory, artifacts=manager.artifacts(directory)) != base._signature:
+                raise ValueError('字幕来源在预览期间改变，请重试')
+            return pixels
         return Response(await run_in_threadpool(lambda: _operation(render)), media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+    @router.post('/template-preview')
+    async def template_preview(request: Request) -> Response:
+        content = await _bounded_body(request, 16 * 1024)
+        payload = _operation(lambda: TemplatePreviewInput.model_validate_json(content))
+        def render_sample() -> bytes:
+            sample = SubtitleDocument(source_fingerprint='0' * 64, revision=0, style=payload.style,
+                cues=[Cue(id='cue-000001', start_seconds=0, end_seconds=3,
+                          text=payload.original, translation=payload.translation)],
+                width=1920, height=1080, duration=3, fps=30)
+            return preview_png(sample, 1, payload.bilingual)
+        return Response(await run_in_threadpool(lambda: _operation(render_sample)), media_type='image/png',
+                        headers={'Cache-Control': 'no-store'})
 
     @router.get('/subtitle-fonts')
     def fonts() -> FontCatalog:
@@ -120,11 +164,20 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     def save_settings(payload: DefaultInput) -> DefaultInput:
         return DefaultInput(style=_operation(lambda: store.save_defaults(payload.style)))
 
+    @router.get('/studio-settings')
+    def studio_settings() -> StudioSettings:
+        return _operation(store.load_studio_settings)
+
+    @router.post('/studio-settings')
+    def save_studio_settings(payload: StudioSettings) -> StudioSettings:
+        return _operation(lambda: store.save_studio_settings(payload))
+
     @router.post("/style-templates")
     def save_template(payload: TemplateInput) -> StyleTemplate:
-        if "arctime_template_id" in payload.model_fields_set:
-            return _operation(lambda: store.save_style(payload.name, payload.style, payload.arctime_template_id, payload.id))
-        return _operation(lambda: store.save_style(payload.name, payload.style, template_id=payload.id))
+        options = {field: getattr(payload, field) for field in
+                   ('arctime_template_id', 'streamer', 'workflow', 'expected_revision')
+                   if field in payload.model_fields_set}
+        return _operation(lambda: store.save_style(payload.name, payload.style, template_id=payload.id, **options))
 
     @router.post("/style-templates/import")
     async def import_template(request: Request) -> StyleTemplate:

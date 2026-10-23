@@ -1,10 +1,8 @@
 # Local video companion
 
-The standalone browser GUI and CLI download one video URL, generate original-language text and sentence timestamps locally, and export explicit ranges or automatically ranked highlights. The GUI also supports optional DeepSeek bilingual translation and [subtitle styles, both template types, ASS, burning and ArcTime handoff](subtitle-styles.md). Recognition/clipping remain local; ArcTime integration uses files without cloud transcription.
+The standalone browser GUI and CLI download one video URL, generate original-language text and sentence timestamps locally, and export explicit ranges or automatically ranked highlights. macOS/Linux are supported first. They do not launch ArcTime or call its cloud services, translation, or DeepSeek proofreading. The SRT can be opened in a subtitle editor for review.
 
 ## Browser GUI
-
-The top New task / Slicing / Subtitle style / AI settings / Task history / Export entries open a right drawer. Click the active entry again, use its close button, or press Escape to dismiss it. Drafts and local-file selections survive switches; progress and live stop remain in the workspace. See the [UI verification](toolbar-drawer-acceptance-2026-10-16.md).
 
 For the double-click package with bundled tools and model, see [macOS app](macos-app.md).
 
@@ -20,8 +18,8 @@ cd ..
 
 Open the [local video workstation](http://127.0.0.1:8787). Dependencies and the build are already prepared on this development machine. Rebuild after frontend source changes. The original database/GPU workstation does not need to run.
 
-1. Under New task, choose 实时录播 (live capture), 下载视频 (download), or 本地视频 (local video). Enter a Bilibili room number, BV identifier, or choose a local file respectively. Enter identifiers directly; the application generates their URLs. Each source retains its draft when switching.
-2. Downloads and local videos share explicit ranges, automatic highlights and saozi choices under Slicing. Live capture always uses saozi and requires AI configuration; switching back restores the previous video slicing choice. Local import creates a separate copy without modifying the original. Ranges and highlights do not require AI authorization.
+1. Enter a video URL and language.
+2. Choose one or more explicit time ranges, or automatic highlights with a maximum clip count.
 3. Start processing and follow environment checks, download, transcription and per-clip export. Progress reports actual stages, without estimated percentages. One task runs at a time.
 4. Preview the source after download and clips as they finish. The player supports recognized subtitles; click transcript timestamps to seek the original video or click the clip timeline to switch previews.
 5. Download full SRT/TXT or individual MP4/SRT pairs. History survives page refreshes and service restarts.
@@ -47,7 +45,7 @@ Use Python 3.11, uv, FFmpeg, yt-dlp and whisper.cpp's `whisper-cli`. No backend 
 
 ```bash
 uv venv --python 3.11 ~/.cache/nyaru-clipper/companion-venv
-uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' 'httpx>=0.28,<1' 'PyJWT[crypto]>=2.10,<3' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
+uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
 ```
 
 On macOS:
@@ -62,7 +60,7 @@ On Linux, install FFmpeg and install/build `whisper-cli` following the [upstream
 
 ## Artifacts and recovery
 
-Every job gets `data/local-runs/<id>/` containing `source.mp4`, full `subtitles.srt`, `transcript.txt`, structured `transcript.json`, MP4/SRT clip pairs, persistent `clip-*.log` export diagnostics, `job.json`, and `asr/chunk-*.json`/logs. The GUI adds `gui.json` for messages/errors without persisting the source URL. Clip subtitle timestamps start at zero. The GUI can additionally export `styled-*.mp4` burned copies while preserving the original clip.
+Every job gets `data/local-runs/<id>/` containing `source.mp4`, full `subtitles.srt`, `transcript.txt`, structured `transcript.json`, MP4/SRT clip pairs, persistent `clip-*.log` export diagnostics, `job.json`, and `asr/chunk-*.json`/logs. The GUI adds `gui.json` for messages/errors without persisting the source URL. Clip subtitle timestamps start at zero. Subtitles are sidecars, not burned into video in this iteration.
 
 After download, failures or Ctrl+C can be recovered with `resume`. Valid ASR chunks and completed clip pairs are reused. Changed source/model settings or modified outputs are rejected. Resuming a completed job verifies artifacts without retranscription. Failed downloads require a new run with the original URL, which is not persisted. Legacy ArcTime cloud jobs are rejected.
 

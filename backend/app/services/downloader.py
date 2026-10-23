@@ -4,12 +4,13 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from sqlmodel import Session
 
 from app.repositories.tasks import get_task_record
 from app.services.pipeline_support import append_stage_log, run_logged_command, set_stage_status
-from app.services.storage import ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
+from app.services.storage import artifact_batch, ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
 from app.settings import get_bbdown_extra_args, get_settings
 
 
@@ -39,6 +40,19 @@ def download_bilibili_vod(session: Session, task_id: str) -> DownloadResult:
     settings = get_settings()
     cookie_value, cookie_present = _load_cookie_value(settings.bilibili_cookie_path)
 
+    redactions: dict[str, str] = {}
+    if cookie_value:
+        redactions[cookie_value] = "[REDACTED]"
+        for line in cookie_value.splitlines():
+            if "\t" in line:
+                values = [line.split("\t")[-1]]
+            else:
+                values = [part.partition("=")[2].strip() for part in line.split(";")]
+            for value in values:
+                if value:
+                    redactions[value] = "[REDACTED]"
+                    redactions[unquote(value)] = "[REDACTED]"
+
     append_stage_log(log_path, f"cookie_auth_present={str(cookie_present).lower()}")
 
     bbdown_path = raw_dir / "source.mp4"
@@ -49,7 +63,7 @@ def download_bilibili_vod(session: Session, task_id: str) -> DownloadResult:
         cookie_value=cookie_value,
         extra_args=get_bbdown_extra_args(settings),
     )
-    bbdown_result = run_logged_command(bbdown_args, log_path=log_path)
+    bbdown_result = run_logged_command(bbdown_args, log_path=log_path, redactions=redactions, redact_output=True)
     if bbdown_result.returncode == 0:
         metadata = _normalize_metadata(bbdown_result.stdout, fallback_video_id=record.task.source_video_id)
         output_path = _resolve_output_path(raw_dir, preferred=bbdown_path)
@@ -82,7 +96,7 @@ def download_bilibili_vod(session: Session, task_id: str) -> DownloadResult:
         output_path=ytdlp_path,
         cookie_path=settings.bilibili_cookie_path if cookie_present else None,
     )
-    ytdlp_result = run_logged_command(ytdlp_args, log_path=log_path)
+    ytdlp_result = run_logged_command(ytdlp_args, log_path=log_path, redactions=redactions, redact_output=True)
     if ytdlp_result.returncode != 0:
         fallback_failure = _classify_failure(
             stderr=ytdlp_result.stderr,
@@ -205,22 +219,23 @@ def _persist_success(
         "source_metadata": source_metadata,
     }
     metadata_path.write_text(json.dumps(source_metadata, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="ingest",
-        kind="source_video",
-        path=output_path,
-        metadata=normalized_contract,
-    )
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="ingest",
-        kind="source_metadata",
-        path=metadata_path,
-        metadata={"source_metadata": source_metadata},
-    )
+    with artifact_batch(session, task_id=task_id):
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="ingest",
+            kind="source_video",
+            path=output_path,
+            metadata=normalized_contract,
+        )
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="ingest",
+            kind="source_metadata",
+            path=metadata_path,
+            metadata={"source_metadata": source_metadata},
+        )
     summary = f"Downloaded source video via {selected_downloader}"
     if fallback_used:
         summary += " (fallback)"

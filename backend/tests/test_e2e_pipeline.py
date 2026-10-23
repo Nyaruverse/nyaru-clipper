@@ -150,6 +150,7 @@ def test_pipeline_runs_chunked_asr_and_fake_deepseek_before_highlight_uses_final
         try:
             chunk_index = int(args[-1])
             child_indices.append(chunk_index)
+            from app.services.asr_whisperx import build_asr_cache_identity
             from app.services.media_chunks import load_media_chunk_manifest
             from app.services.storage import ensure_task_dirs
 
@@ -184,6 +185,7 @@ def test_pipeline_runs_chunked_asr_and_fake_deepseek_before_highlight_uses_final
                 json.dumps(
                     {
                         "status": "success",
+                        "cache_identity": build_asr_cache_identity(chunk.audio_path, get_settings()),
                         "elapsed_ms_total": 1,
                         "phases": [],
                         "artifacts": {

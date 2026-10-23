@@ -8,6 +8,13 @@ export const workstationEventNames = [
   "artifact.ready",
   "queue.updated",
   "runtime.warning",
+  "operation.updated",
+  "operation.queue",
+  "publication.committed",
+  "publication.reused",
+  "document.saved",
+  "settings.saved",
+  "stream.reset",
 ] as const;
 
 export type WorkstationEventName = (typeof workstationEventNames)[number];
@@ -19,11 +26,11 @@ function isDurableEventCursor(value: string | null | undefined): value is string
   return value !== null && value !== undefined && /^(?:0|[1-9]\d*)$/.test(value);
 }
 
-export function getWorkstationEventsUrl(cursor?: string | null): string {
+export function getWorkstationEventsUrl(cursor?: string | null, origin?: string): string {
   const apiOrigin = (import.meta.env.VITE_API_BASE_URL ?? defaultApiOrigin)
     .replace(/\/+$/, "")
     .replace(/\/api$/, "");
-  const eventsUrl = new URL("/api/v2/events", apiOrigin);
+  const eventsUrl = new URL("/api/v2/events", origin ?? apiOrigin);
 
   if (isDurableEventCursor(cursor)) {
     eventsUrl.searchParams.set("cursor", cursor);

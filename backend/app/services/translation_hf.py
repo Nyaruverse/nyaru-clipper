@@ -22,6 +22,7 @@ class HuggingFaceTranslationProvider:
     source_language_code: str
     target_language_code: str
     max_new_tokens: int = 256
+    local_files_only: bool = False
     _tokenizer: object | None = field(default=None, init=False, repr=False)
     _model: object | None = field(default=None, init=False, repr=False)
 
@@ -41,8 +42,9 @@ class HuggingFaceTranslationProvider:
             return self._tokenizer, self._model
 
         transformers = _load_transformers_module()
-        tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name)
-        model = transformers.AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
+        options = {'local_files_only': True} if self.local_files_only else {}
+        tokenizer = transformers.AutoTokenizer.from_pretrained(self.model_name, **options)
+        model = transformers.AutoModelForSeq2SeqLM.from_pretrained(self.model_name, **options)
         model = model.to(self.device)
         tokenizer.src_lang = self.source_language_code
         self._tokenizer = tokenizer

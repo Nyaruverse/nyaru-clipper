@@ -1,0 +1,10 @@
+[
+  {"text":"A👩‍💻B","lines":["A","👩‍💻","B"]},
+  {"text":"A🇨🇳B","lines":["A","🇨🇳","B"]},
+  {"text":"A👍🏽B","lines":["A","👍🏽","B"]},
+  {"text":"AéB","lines":["A","é","B"]},
+  {"text":"A☀️B","lines":["A","☀️","B"]},
+  {"text":"AकःB","lines":["A","कः","B"]},
+  {"text":"A B","lines":["A"," ","B"]},
+  {"text":"A\r\nB\rC\n\nD","lines":["A","B","C","","D"]}
+]

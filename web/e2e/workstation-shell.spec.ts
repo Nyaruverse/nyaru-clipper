@@ -1,5 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+test("declares Chinese as the document language for the workstation", async ({ page }) => {
+  // Given: the workstation is opened in a real browser.
+  await page.goto("/");
+
+  // Then: assistive technology and CJK typography receive the product's primary language.
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+});
+
 test("keeps legacy routes dark while workstation navigation has a three-pixel focus ring", async ({ page }) => {
   // Given: the legacy entry route and the workstation shell in one production-like browser session.
   await page.goto("/");

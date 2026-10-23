@@ -95,6 +95,13 @@ class SaoziSelector:
         translation.validate_model(self.model, self.request_json)
         data = {'start': start, 'candidates': candidates, 'segments': [
             {'start': cue.start_seconds, 'end': cue.end_seconds, 'text': cue.text} for cue in context]}
+        from app.services.task_execution import ExternalOutcomeUnknown, current_execution
+        from app.services.external_calls import ProviderRejected, external_value, inside_external_call
+        execution = current_execution.get()
+        if execution is not None and not inside_external_call.get():
+            return external_value(execution, {'version': 1, 'provider_model': self.model, 'prompt': PROMPT, 'data': data},
+                lambda: self._request(client, context, candidates, start), lambda choice: choice.model_dump(mode='json'),
+                lambda value: _Choice.model_validate(value))
         if self.request_json is not None:
             text = self.request_json(PROMPT, json.dumps(data, ensure_ascii=False))
             try:
@@ -113,10 +120,16 @@ class SaoziSelector:
                           'messages': [{'role': 'system', 'content': PROMPT},
                                        {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}]})
             except httpx.RequestError:
+                if execution is not None:
+                    raise ExternalOutcomeUnknown() from None
                 if attempt == 2:
                     raise ValueError('DeepSeek 网络连接失败或超时；已完成切点已保留') from None
                 time.sleep(2 ** attempt)
                 continue
+            if execution is not None and response.status_code >= 500:
+                raise ExternalOutcomeUnknown()
+            if execution is not None and 400 <= response.status_code < 500:
+                raise ProviderRejected('provider rejected request')
             if response.status_code in {429, 500, 502, 503, 504} and attempt < 2:
                 time.sleep(2 ** attempt)
                 continue
@@ -208,6 +221,11 @@ class SaoziSelector:
             media.write_json(checkpoint, state)
             return selections
         except Exception as exc:
+            from app.services.task_execution import current_execution
+            if current_execution.get() is not None:
+                state.update(state='failed', error='臊子处理已中断；已完成切点已保留，请检查操作状态')
+                media.write_json(checkpoint, state)
+                raise
             error = str(exc) if isinstance(exc, ValueError) else '臊子分析失败；已完成切点已保留，请重试'
             state.update(state='failed', error=error)
             media.write_json(checkpoint, state)

@@ -48,7 +48,7 @@ class QueueConflict(Exception):
 
 def get_queue_snapshot(session: Session) -> QueueSnapshot:
     """Return the queue projection in the same order used by scheduler clients."""
-    state = _queue_state(session)
+    state = session.get(QueueState, 1)
     entries = session.exec(select(QueueEntry)).all()
     active_entries = sorted(
         (entry for entry in entries if entry.state == "running"),
@@ -57,7 +57,7 @@ def get_queue_snapshot(session: Session) -> QueueSnapshot:
     active = _item(active_entries[0]) if active_entries else None
     queued = [_item(entry) for entry in _ordered(entries, "queued")]
     paused = [_item(entry) for entry in _ordered(entries, "paused")]
-    return QueueSnapshot(revision=state.revision, active=active, queued=queued, paused=paused)
+    return QueueSnapshot(revision=state.revision if state is not None else 0, active=active, queued=queued, paused=paused)
 
 
 def reorder_queue(session: Session, ordered_task_ids: list[str], expected_revision: int) -> QueueSnapshot:

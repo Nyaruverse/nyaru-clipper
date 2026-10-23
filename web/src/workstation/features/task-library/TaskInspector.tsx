@@ -25,7 +25,7 @@ function hasSameTags(left: readonly string[], right: readonly string[]): boolean
 
 export function TaskInspector({ taskId }: TaskInspectorProps): ReactNode {
   const queryClient = useQueryClient();
-  const taskQuery = useQuery({ queryKey: workstationKeys.detail(taskId), queryFn: () => getTaskOverview(taskId) });
+  const taskQuery = useQuery({ queryKey: workstationKeys.detail(taskId), queryFn: ({ signal }) => getTaskOverview(taskId, signal) });
   const [title, setTitle] = useState("");
   const [tags, setTags] = useState("");
   const saveMetadata = useMutation({
