@@ -7,9 +7,10 @@ import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
+from threading import Event
 
 import anyio
-from sqlalchemy import delete
+from sqlalchemy import Engine, delete, func
 from sqlmodel import Session, select
 
 from app.db import get_engine
@@ -65,13 +66,23 @@ def publish_stage_updated(session: Session, stage: TaskStage) -> WorkstationEven
     )
 
 
-async def iter_events(last_event_id: int | None, heartbeat_seconds: float) -> AsyncIterator[str]:
+async def iter_events(last_event_id: int | None, heartbeat_seconds: float, *, engine: Engine | None = None,
+                      stopped: Event | None = None) -> AsyncIterator[str]:
     """Replay committed events, then poll with short-lived sessions until disconnected."""
     cursor = last_event_id or 0
     last_activity = time.monotonic()
+    first_page = True
 
-    while True:
-        with Session(get_engine()) as session:
+    while stopped is None or not stopped.is_set():
+        reset = None
+        with Session(engine if engine is not None else get_engine()) as session:
+            if first_page and last_event_id is not None:
+                earliest, latest = session.exec(select(func.min(WorkstationEvent.id), func.max(WorkstationEvent.id))).one()
+                latest = latest or 0
+                if cursor > latest or (earliest is not None and cursor < earliest - 1):
+                    cursor = latest
+                    reset = f'id: {cursor}\nevent: stream.reset\ndata: {{"reason":"cursor_unavailable"}}\n\n'
+            first_page = False
             events = session.exec(
                 select(WorkstationEvent)
                 .where(WorkstationEvent.id > cursor)
@@ -84,6 +95,8 @@ async def iter_events(last_event_id: int | None, heartbeat_seconds: float) -> As
                 if event.id is not None
             ]
 
+        if reset is not None:
+            yield reset
         if frames:
             for event_id, frame in frames:
                 cursor = event_id

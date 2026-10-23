@@ -351,6 +351,81 @@
         "title": "CreateWorkstationTaskResponse",
         "type": "object"
       },
+      "Cue": {
+        "additionalProperties": false,
+        "properties": {
+          "end_seconds": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "id": {
+            "pattern": "^(cue-\\d{6}|edit-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+            "title": "Id",
+            "type": "string"
+          },
+          "original_emphasis": {
+            "items": {
+              "$ref": "#/components/schemas/Emphasis"
+            },
+            "maxItems": 1000,
+            "title": "Original Emphasis",
+            "type": "array"
+          },
+          "original_style": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start_seconds": {
+            "minimum": 0.0,
+            "title": "Start Seconds",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 10000,
+            "title": "Text",
+            "type": "string"
+          },
+          "translation": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Translation",
+            "type": "string"
+          },
+          "translation_emphasis": {
+            "items": {
+              "$ref": "#/components/schemas/Emphasis"
+            },
+            "maxItems": 1000,
+            "title": "Translation Emphasis",
+            "type": "array"
+          },
+          "translation_style": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "start_seconds",
+          "end_seconds",
+          "text"
+        ],
+        "title": "Cue",
+        "type": "object"
+      },
       "DownloadAsrModelRecoveryAction": {
         "additionalProperties": false,
         "description": "Download the ASR models required to recover a missing-model failure.",
@@ -463,6 +538,38 @@
           "model_keys"
         ],
         "title": "DownloadAsrModelsRequest",
+        "type": "object"
+      },
+      "Emphasis": {
+        "additionalProperties": false,
+        "properties": {
+          "bold": {
+            "title": "Bold",
+            "type": "boolean"
+          },
+          "color": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "end": {
+            "exclusiveMinimum": 0.0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0.0,
+            "title": "Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "color",
+          "bold"
+        ],
+        "title": "Emphasis",
         "type": "object"
       },
       "ExecutionProgressOverview": {
@@ -580,6 +687,86 @@
         "title": "ExportClipRequest",
         "type": "object"
       },
+      "ExportOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "export",
+            "title": "Kind",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/ExportRequest"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id",
+          "request"
+        ],
+        "title": "ExportOperation",
+        "type": "object"
+      },
+      "ExportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "arctime_template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arctime Template Id"
+          },
+          "bilingual": {
+            "default": false,
+            "title": "Bilingual",
+            "type": "boolean"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubtitleDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "ass",
+              "burn",
+              "arctime"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/SubtitleStyle"
+          },
+          "video": {
+            "pattern": "^(source|clip-\\d{3,})\\.mp4$",
+            "title": "Video",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "video",
+          "style"
+        ],
+        "title": "ExportRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -593,7 +780,258 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "JobInput": {
+        "properties": {
+          "engine": {
+            "default": "whisper.cpp",
+            "enum": [
+              "whisper.cpp",
+              "whisperx"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "highlights": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Highlights"
+          },
+          "language": {
+            "default": "auto",
+            "pattern": "^[a-z]{2,8}$",
+            "title": "Language",
+            "type": "string"
+          },
+          "live": {
+            "default": false,
+            "title": "Live",
+            "type": "boolean"
+          },
+          "ranges": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array"
+            },
+            "maxItems": 100,
+            "title": "Ranges",
+            "type": "array"
+          },
+          "saozi": {
+            "default": false,
+            "title": "Saozi",
+            "type": "boolean"
+          },
+          "subtitle_template_id": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[0-9a-f]{32}|nyaru|default|white)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitle Template Id"
+          },
+          "url": {
+            "maxLength": 8192,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "JobInput",
+        "type": "object"
+      },
       "JsonValue": {},
+      "LibraryItem": {
+        "properties": {
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "title",
+          "tags",
+          "status",
+          "archived",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "LibraryItem",
+        "type": "object"
+      },
+      "LibraryPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "LibraryPage",
+        "type": "object"
+      },
+      "LibraryPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "expected_version": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Expected Version",
+            "type": "string"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "LibraryPatch",
+        "type": "object"
+      },
+      "LiveOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "process_live",
+            "title": "Kind",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/JobInput"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id",
+          "request"
+        ],
+        "title": "LiveOperation",
+        "type": "object"
+      },
       "LocalDirectoryResponse": {
         "description": "The discovered roots and entries for one optional selected directory.",
         "properties": {
@@ -716,6 +1154,113 @@
         "title": "LocalTaskSource",
         "type": "object"
       },
+      "OperationView": {
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "cancel_requested": {
+            "title": "Cancel Requested",
+            "type": "boolean"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "process_recording",
+              "process_live",
+              "translate",
+              "export"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "priority": {
+            "title": "Priority",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "paused",
+              "running",
+              "succeeded",
+              "failed",
+              "interrupted",
+              "cancelled"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "kind",
+          "state",
+          "attempt",
+          "priority",
+          "position",
+          "cancel_requested",
+          "failure_code"
+        ],
+        "title": "OperationView",
+        "type": "object"
+      },
+      "OperationsSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationView"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "recovering": {
+            "title": "Recovering",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "paused",
+          "recovering",
+          "operations"
+        ],
+        "title": "OperationsSnapshot",
+        "type": "object"
+      },
       "ProcessingProfileResponse": {
         "description": "A fixed first-phase processing profile.",
         "properties": {
@@ -758,6 +1303,26 @@
           "profiles"
         ],
         "title": "ProcessingProfilesResponse",
+        "type": "object"
+      },
+      "QueueAdmissions": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "paused"
+        ],
+        "title": "QueueAdmissions",
         "type": "object"
       },
       "QueueItemResponse": {
@@ -872,6 +1437,76 @@
           "state"
         ],
         "title": "QueueStateRequest",
+        "type": "object"
+      },
+      "RecordingOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "enum": [
+              "whisper.cpp",
+              "whisperx"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "kind": {
+            "const": "process_recording",
+            "title": "Kind",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/JobInput"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id",
+          "engine",
+          "request"
+        ],
+        "title": "RecordingOperation",
+        "type": "object"
+      },
+      "ReorderOperations": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "ordered_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10000,
+            "title": "Ordered Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "ordered_ids"
+        ],
+        "title": "ReorderOperations",
+        "type": "object"
+      },
+      "RetryOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_external_outcome": {
+            "default": false,
+            "title": "Acknowledge External Outcome",
+            "type": "boolean"
+          }
+        },
+        "title": "RetryOperation",
         "type": "object"
       },
       "RetryStageRecoveryAction": {
@@ -1017,6 +1652,92 @@
           "display_label"
         ],
         "title": "SafeLogOverview",
+        "type": "object"
+      },
+      "SubtitleDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/Cue"
+            },
+            "maxItems": 50000,
+            "title": "Cues",
+            "type": "array"
+          },
+          "duration": {
+            "exclusiveMinimum": 0.0,
+            "title": "Duration",
+            "type": "number"
+          },
+          "fps": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1000.0,
+            "title": "Fps",
+            "type": "number"
+          },
+          "height": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 16384.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Source Fingerprint",
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/SubtitleStyle"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          },
+          "width": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 16384.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source_fingerprint",
+          "revision",
+          "style",
+          "cues",
+          "width",
+          "height",
+          "duration",
+          "fps"
+        ],
+        "title": "SubtitleDocument",
+        "type": "object"
+      },
+      "SubtitleStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "original": {
+            "$ref": "#/components/schemas/TextStyle"
+          },
+          "translation": {
+            "$ref": "#/components/schemas/TextStyle"
+          },
+          "version": {
+            "const": 1,
+            "default": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "title": "SubtitleStyle",
         "type": "object"
       },
       "TaskArtifactOverview": {
@@ -1557,6 +2278,280 @@
         "title": "TaskStageOverview",
         "type": "object"
       },
+      "TextStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "align": {
+            "default": 2,
+            "maximum": 9.0,
+            "minimum": 1.0,
+            "title": "Align",
+            "type": "integer"
+          },
+          "background_color": {
+            "default": "#000000",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Background Color",
+            "type": "string"
+          },
+          "background_opacity": {
+            "default": 0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Background Opacity",
+            "type": "number"
+          },
+          "bold": {
+            "default": false,
+            "title": "Bold",
+            "type": "boolean"
+          },
+          "color": {
+            "default": "#FFFFFF",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "font": {
+            "default": "Arial",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Font",
+            "type": "string"
+          },
+          "hidden": {
+            "default": false,
+            "title": "Hidden",
+            "type": "boolean"
+          },
+          "italic": {
+            "default": false,
+            "title": "Italic",
+            "type": "boolean"
+          },
+          "line_height": {
+            "default": 1.2,
+            "maximum": 3.0,
+            "minimum": 0.5,
+            "title": "Line Height",
+            "type": "number"
+          },
+          "margin": {
+            "default": 96,
+            "maximum": 1080.0,
+            "minimum": 0.0,
+            "title": "Margin",
+            "type": "number"
+          },
+          "margin_left": {
+            "default": 20,
+            "maximum": 32768.0,
+            "minimum": 0.0,
+            "title": "Margin Left",
+            "type": "number"
+          },
+          "margin_right": {
+            "default": 20,
+            "maximum": 32768.0,
+            "minimum": 0.0,
+            "title": "Margin Right",
+            "type": "number"
+          },
+          "max_width": {
+            "default": 100,
+            "maximum": 100.0,
+            "minimum": 10.0,
+            "title": "Max Width",
+            "type": "number"
+          },
+          "opacity": {
+            "default": 1,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Opacity",
+            "type": "number"
+          },
+          "outline": {
+            "default": 2,
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Outline",
+            "type": "number"
+          },
+          "outline_color": {
+            "default": "#000000",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Outline Color",
+            "type": "string"
+          },
+          "padding": {
+            "default": 0,
+            "maximum": 40.0,
+            "minimum": 0.0,
+            "title": "Padding",
+            "type": "number"
+          },
+          "position": {
+            "default": "bottom",
+            "enum": [
+              "top",
+              "bottom"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "rotation": {
+            "default": 0,
+            "maximum": 360.0,
+            "minimum": -360.0,
+            "title": "Rotation",
+            "type": "number"
+          },
+          "scale_x": {
+            "default": 100,
+            "maximum": 400.0,
+            "minimum": 10.0,
+            "title": "Scale X",
+            "type": "number"
+          },
+          "scale_y": {
+            "default": 100,
+            "maximum": 400.0,
+            "minimum": 10.0,
+            "title": "Scale Y",
+            "type": "number"
+          },
+          "shadow": {
+            "default": 0,
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Shadow",
+            "type": "number"
+          },
+          "shadow_color": {
+            "default": "#000000",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Shadow Color",
+            "type": "string"
+          },
+          "size": {
+            "default": 48,
+            "maximum": 200.0,
+            "minimum": 8.0,
+            "title": "Size",
+            "type": "number"
+          },
+          "spacing": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": -10.0,
+            "title": "Spacing",
+            "type": "number"
+          },
+          "underline": {
+            "default": false,
+            "title": "Underline",
+            "type": "boolean"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "maximum": 32768.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "maximum": 32768.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          }
+        },
+        "title": "TextStyle",
+        "type": "object"
+      },
+      "TranslateOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "document_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Revision"
+          },
+          "kind": {
+            "const": "translate",
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9:._/-]+$",
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "deepseek",
+              "chatgpt",
+              "hf"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "source_language": {
+            "enum": [
+              "ja",
+              "zh"
+            ],
+            "title": "Source Language",
+            "type": "string"
+          },
+          "target_language": {
+            "enum": [
+              "ja",
+              "zh"
+            ],
+            "title": "Target Language",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id",
+          "source_language",
+          "target_language",
+          "provider",
+          "model"
+        ],
+        "title": "TranslateOperation",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1595,6 +2590,37 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WaitingOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "priority": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": -100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "paused"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "WaitingOperation",
         "type": "object"
       }
     }
@@ -2278,6 +3304,465 @@
         "summary": "Workstation Events Endpoint",
         "tags": [
           "workstation-events"
+        ]
+      }
+    },
+    "/api/v2/library": {
+      "get": {
+        "operationId": "list_library_api_v2_library_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Library",
+        "tags": [
+          "unified-library"
+        ]
+      }
+    },
+    "/api/v2/library/{task_id}": {
+      "patch": {
+        "operationId": "update_library_api_v2_library__task_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Library",
+        "tags": [
+          "unified-library"
+        ]
+      }
+    },
+    "/api/v2/operations": {
+      "get": {
+        "operationId": "list_operations_api_v2_operations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Operations",
+        "tags": [
+          "operations"
+        ]
+      },
+      "post": {
+        "operationId": "create_operation_api_v2_operations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "export": "#/components/schemas/ExportOperation",
+                    "process_live": "#/components/schemas/LiveOperation",
+                    "process_recording": "#/components/schemas/RecordingOperation",
+                    "translate": "#/components/schemas/TranslateOperation"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RecordingOperation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LiveOperation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TranslateOperation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExportOperation"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Operation",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/operations/queue": {
+      "post": {
+        "operationId": "admissions_api_v2_operations_queue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueAdmissions"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Admissions",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/operations/reorder": {
+      "post": {
+        "operationId": "reorder_api_v2_operations_reorder_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderOperations"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reorder",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/operations/{operation_id}/cancel": {
+      "post": {
+        "operationId": "cancel_api_v2_operations__operation_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/operations/{operation_id}/retry": {
+      "post": {
+        "operationId": "retry_api_v2_operations__operation_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryOperation",
+                "default": {
+                  "acknowledge_external_outcome": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry",
+        "tags": [
+          "operations"
+        ]
+      }
+    },
+    "/api/v2/operations/{operation_id}/waiting": {
+      "post": {
+        "operationId": "waiting_api_v2_operations__operation_id__waiting_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "title": "Operation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WaitingOperation"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Waiting",
+        "tags": [
+          "operations"
         ]
       }
     },

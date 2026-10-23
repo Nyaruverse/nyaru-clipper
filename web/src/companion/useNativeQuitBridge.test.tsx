@@ -37,3 +37,17 @@ it('requires settings to be saved first, including settings edited during subtit
   await act(async () => { finish?.(null); });
   expect(await saving).toEqual(expect.any(String));
 });
+
+it('protects cached metadata drafts even when the task editor is closed', async () => {
+  const flush = vi.fn(async () => null);
+  let dirty = true;
+  renderHook(() => useNativeQuitBridge(false, () => false, flush, () => dirty));
+  expect(window.nyaruQuit?.status()).toBe('dirty');
+  expect(await window.nyaruQuit?.save()).toContain('任务标题与标签');
+  expect(flush).not.toHaveBeenCalled();
+  const event = new Event('beforeunload', {cancelable: true});
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+  dirty = false;
+  expect(window.nyaruQuit?.status()).toBe('clean');
+});

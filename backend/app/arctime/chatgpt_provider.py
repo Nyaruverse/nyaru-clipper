@@ -57,24 +57,37 @@ class ChatGPTProvider:
             raise ValueError('ChatGPT 请求总时长超时；已完成结果已保留') from None
 
     async def _request(self, instructions: str, input_json: str) -> str:
+        from app.services.task_execution import ExternalOutcomeUnknown, current_execution
+        from app.services.external_calls import ProviderRejected
+        execution = current_execution.get()
         with anyio.fail_after(TOTAL_TIMEOUT):
             async with httpx.AsyncClient(transport=self.transport, timeout=httpx.Timeout(30, connect=10),
                                          follow_redirects=False) as client:
                 for attempt in range(3):
+                    if execution is not None:
+                        execution.check()
                     received = False
                     try:
                         try:
                             credential = await anyio.to_thread.run_sync(self.token, abandon_on_cancel=True)
                             token = credential.get_secret_value()
                         except Exception:
+                            if execution is not None:
+                                raise ProviderRejected('authorization unavailable') from None
                             raise ValueError('ChatGPT 授权不可用，请重新连接账户') from None
                         if not token.strip():
+                            if execution is not None:
+                                raise ProviderRejected('authorization unavailable')
                             raise ValueError('ChatGPT 授权不可用，请重新连接账户')
                         async with client.stream('POST', 'https://api.openai.com/v1/responses',
                                 headers={'Authorization': f'Bearer {token}'},
                                 json={'model': self.model, 'instructions': instructions,
                                       'input': [{'role': 'user', 'content': input_json}],
                                       'store': False, 'stream': True}) as response:
+                            if execution is not None and response.status_code >= 500:
+                                raise ExternalOutcomeUnknown()
+                            if execution is not None and 400 <= response.status_code < 500:
+                                raise ProviderRejected('provider rejected request')
                             if response.status_code in {401, 403}:
                                 raise ValueError('ChatGPT 授权失效或无权限，请重新连接账户')
                             if response.status_code in {402, 429}:
@@ -88,6 +101,8 @@ class ChatGPTProvider:
                                 size = 0
                                 completed_items: dict[int, dict] = {}
                                 async for chunk in response.aiter_bytes():
+                                    if execution is not None:
+                                        execution.check()
                                     received = True
                                     size += len(chunk)
                                     if size > MAX_STREAM_BYTES:
@@ -123,6 +138,8 @@ class ChatGPTProvider:
                                             raise ValueError('ChatGPT 返回格式无效；已完成结果已保留') from None
                                 raise ValueError('ChatGPT 流中断，未收到完整结果；请重试')
                     except httpx.RequestError:
+                        if execution is not None:
+                            raise ExternalOutcomeUnknown() from None
                         if received or attempt == 2:
                             raise ValueError('ChatGPT 网络连接失败或流中断；已完成结果已保留') from None
                     await anyio.sleep(RETRY_DELAY * (attempt + 1))

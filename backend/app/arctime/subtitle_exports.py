@@ -23,6 +23,7 @@ from app.arctime.subtitle_render import render_document_ass
 from app.arctime.subtitle_style import SubtitleStyle
 from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
 from app.services.subtitles import render_bilingual_srt, render_srt
+from app.services.runtime_guard import engine_slot
 
 if TYPE_CHECKING:
     from app.arctime.gui import JobManager
@@ -161,7 +162,7 @@ def _package(working: Path, inputs: ExportInputs, request: ExportRequest, projec
 class SubtitleExports:
     def __init__(self, manager: JobManager):
         self.manager = manager
-        self.templates = TemplateStore(manager.root)
+        self.templates = manager.host.templates if manager.host is not None else TemplateStore(manager.settings_root)
         self.failures: dict[str, ExportActivity] = {}
         self._live_templates: dict[Path, StyleTemplate] = {}
         self._live_pending: dict[Path, dict[str, dict]] = {}
@@ -212,6 +213,10 @@ class SubtitleExports:
         workflow.write_manifest(directory, job)
 
     def snapshot(self, job_id: str) -> ExportSnapshot:
+        if self.manager.host is not None:
+            from app.arctime.native_exports import export_snapshot
+            self.manager.directory(job_id)
+            return export_snapshot(self.manager.host, job_id)
         directory = self.manager.directory(job_id)
         self.manager.detail(job_id, include_segments=False)
         with self.manager.lock:
@@ -228,10 +233,15 @@ class SubtitleExports:
                                                            for output in snapshot.outputs]})
 
     def submit(self, job_id: str, request: ExportRequest) -> str:
+        if self.manager.host is not None:
+            return self.manager.host.enqueue_export(job_id, request)
+        if self.manager.documents is not None and self.manager.documents.is_activated(job_id):
+            raise HTTPException(409, '请通过统一操作队列导出此任务')
         request = request.for_format()
         directory = self.manager.directory(job_id)
         try:
-            load_inputs(directory, request)
+            context = self.manager.artifacts(directory)
+            load_inputs(directory, request, artifacts=context) if context is not None else load_inputs(directory, request)
             project = self.templates.download_project(request.arctime_template_id) if request.arctime_template_id else None
             if request.kind == "burn" and not burn_available():
                 raise ExportError("当前 FFmpeg 不支持 libass 字幕烧录")
@@ -253,7 +263,7 @@ class SubtitleExports:
         directory = self.manager.directory(job_id)
         errors = (OSError, ValueError, RuntimeError, subprocess.SubprocessError, HTTPException)
         try:
-            with workflow.exclusive_lock(directory / ".lock"):
+            with engine_slot(), workflow.exclusive_lock(directory / ".lock"):
                 snapshot = read_exports(directory)
                 try:
                     self._run_locked(directory, request, project, snapshot)
@@ -281,7 +291,9 @@ class SubtitleExports:
         progress("正在校验字幕和媒体")
         request = request.for_format()
         project = project if request.arctime_template_id else None
-        inputs = load_inputs(directory, request, allow_live=True) if allow_live else load_inputs(directory, request)
+        context = self.manager.artifacts(directory)
+        inputs = (load_inputs(directory, request, artifacts=context) if context is not None else
+                  load_inputs(directory, request, allow_live=True) if allow_live else load_inputs(directory, request))
         identity = hashlib.sha256(json.dumps({"renderer_revision": 4, "package_revision": 1, "request": request.model_dump(), "inputs": inputs.digests,
             "project": hashlib.sha256(project).hexdigest() if project else None}, sort_keys=True).encode()).hexdigest()[:20]
         extension = {"ass": "ass", "burn": "mp4", "arctime": "zip"}[request.kind]

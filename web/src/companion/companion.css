@@ -1,4 +1,20 @@
 body { margin: 0; }
+.unified-queue {padding: var(--ny-space-5);}
+.unified-queue-scroll {overflow-x: auto;}
+.unified-queue table {width: 100%; border-collapse: collapse; text-align: left;}
+.unified-queue th, .unified-queue td {padding: var(--ny-space-3); border-bottom: 1px solid var(--ny-border); vertical-align: middle;}
+.unified-queue small {display: block; opacity: .8; overflow-wrap: anywhere;}
+.unified-queue-actions {display: flex; flex-wrap: wrap; gap: var(--ny-space-2);}
+.unified-queue td:first-child button {touch-action: none; width: var(--ny-target-min); padding-inline: 0; justify-content: center;}
+.unified-queue tr[data-queue-target] {outline: 2px solid var(--ny-focus); outline-offset: -2px;}
+@media (max-width: 700px) {
+  .unified-queue table, .unified-queue tbody {display: block;}
+  .unified-queue thead {display: none;}
+  .unified-queue tr {display: grid; grid-template-columns: calc(var(--ny-target-min) + 2 * var(--ny-space-2)) minmax(0, 1fr); border-bottom: 1px solid var(--ny-border); padding-block: var(--ny-space-3);}
+  .unified-queue td {border: 0; padding: var(--ny-space-2);}
+  .unified-queue td:nth-child(n+3) {grid-column: 2;}
+  .unified-queue td[data-label]::before {content: attr(data-label); display: block; margin-bottom: var(--ny-space-1);}
+}
 .ny-companion, .ny-companion * { box-sizing: border-box; }
 .ny-companion { --companion-command-height: 132px; min-height: 100dvh; background: var(--ny-canvas); color: var(--ny-ink); font: var(--ny-font-body)/var(--ny-line-body) var(--ny-font-sans); }
 .ny-companion [hidden] { display: none !important; }

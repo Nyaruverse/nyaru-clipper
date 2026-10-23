@@ -4,7 +4,7 @@ import json
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, assert_never
+from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -12,6 +12,9 @@ from app.arctime import media, workflow
 from app.arctime.subtitle_style import SubtitleStyle
 from app.arctime.subtitle_document import SubtitleDocument, base_document, clip_document, validate_source
 from app.services.subtitles import SubtitleSegment
+
+if TYPE_CHECKING:
+    from app.services.task_artifacts import ResolvedArtifacts
 
 
 class ExportError(ValueError):
@@ -85,7 +88,10 @@ def checked_artifact(directory: Path, name: str, digest: str) -> Path:
     return path
 
 
-def load_inputs(directory: Path, request: ExportRequest, *, allow_live: bool = False) -> ExportInputs:
+def load_inputs(directory: Path, request: ExportRequest, *, allow_live: bool = False,
+                artifacts: ResolvedArtifacts | None = None) -> ExportInputs:
+    if artifacts is not None:
+        return workstation_inputs(directory, request, artifacts)
     job_path = workflow._path(directory, "job.json")
     run = ManagedRun.model_validate_json(job_path.read_bytes())
     partial = allow_live and run.live and request.video != 'source.mp4' and request.document is None
@@ -146,3 +152,34 @@ def load_inputs(directory: Path, request: ExportRequest, *, allow_live: bool = F
         original = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.text) for cue in document.cues]
         translated = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.translation) for cue in document.cues] if request.bilingual else None
     return ExportInputs(source, original, translated, time_origin, digests, document)
+
+
+def workstation_inputs(directory: Path, request: ExportRequest, artifacts: ResolvedArtifacts) -> ExportInputs:
+    artifacts.verify()
+    source = artifacts.source
+    origin, end, video = 0., source.duration, source.video
+    if request.video != 'source.mp4':
+        index = int(request.video.removeprefix('clip-').removesuffix('.mp4')) - 1
+        if index < 0 or index >= len(source.clips):
+            raise ExportError('请选择当前任务的已登记切片')
+        clip = source.clips[index]
+        origin, end, video = clip.start, clip.end, clip.video
+    elif request.kind == 'burn':
+        raise ExportError('字幕烧录请选择已完成切片')
+    document = request.document
+    if document is not None:
+        validate_source(document, base_document(directory, document.style, artifacts=artifacts))
+        document = clip_document(document, origin, end) if origin or end != source.duration else document
+        original = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.text) for cue in document.cues]
+        translated = [SubtitleSegment(cue.id, cue.start_seconds, cue.end_seconds, cue.translation) for cue in document.cues] if request.bilingual else None
+    else:
+        original = [cue.segment() for cue in artifacts.cues]
+        translated = [cue.segment(translated=True) for cue in artifacts.cues] if request.bilingual else None
+        if request.bilingual and source.translation is None:
+            raise ExportError('请先完成当前语种方向的翻译')
+        if origin or end != source.duration:
+            original = media.clip_subtitles(original, origin, end)
+            translated = media.clip_subtitles(translated, origin, end) if translated is not None else None
+    return ExportInputs(source.checked(video), original, translated, origin,
+                        {'source_context': source.fingerprint,
+                         **{reference.storage + ':' + reference.path: reference.sha256 for reference in source.files}}, document)

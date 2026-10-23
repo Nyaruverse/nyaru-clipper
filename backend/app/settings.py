@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Final, Literal
 
@@ -53,7 +54,13 @@ class Settings(BaseSettings):
     scenedetect_min_scene_len: int = 15
 
 
+execution_settings: ContextVar[Settings | None] = ContextVar('execution_settings', default=None)
+
+
 def get_settings() -> Settings:
+    snapshot = execution_settings.get()
+    if snapshot is not None:
+        return snapshot
     configured_file = os.getenv("APP_DEEPSEEK_CONFIG_FILE")
     config_file = Path(configured_file) if configured_file is not None else DEFAULT_DEEPSEEK_CONFIG_FILE
     return Settings(_env_file=config_file)

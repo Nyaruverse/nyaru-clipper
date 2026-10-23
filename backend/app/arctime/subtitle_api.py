@@ -98,7 +98,7 @@ async def _bounded_body(request: Request, limit: int) -> bytes:
 def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
     router = APIRouter(prefix="/companion-api")
     store = exports.templates
-    documents = DocumentStore()
+    documents = DocumentStore(artifacts=manager.artifacts, persistent=manager.documents)
 
     @router.get('/jobs/{job_id}/subtitle-document')
     def document(job_id: str, source: bool = False) -> SubtitleDocument:
@@ -110,7 +110,7 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
         payload = _operation(lambda: SubtitleDocument.model_validate_json(content))
         def persist() -> SubtitleDocument:
             with manager.lock:
-                if manager.active:
+                if manager.active and (manager.host is None or manager.active.get('id') == job_id):
                     raise HTTPException(409, '已有任务正在处理，请等待完成')
                 return _operation(lambda: documents.save(manager.directory(job_id), payload))
         return await run_in_threadpool(persist)
@@ -133,7 +133,7 @@ def subtitle_router(manager: JobManager, exports: SubtitleExports) -> APIRouter:
             if payload.time > payload.document.duration:
                 raise ValueError('预览时间超过视频时长')
             pixels = preview_png(payload.document, payload.time, payload.bilingual)
-            if _source_signature(directory) != base._signature:
+            if _source_signature(directory, artifacts=manager.artifacts(directory)) != base._signature:
                 raise ValueError('字幕来源在预览期间改变，请重试')
             return pixels
         return Response(await run_in_threadpool(lambda: _operation(render)), media_type='image/png', headers={'Cache-Control': 'no-store'})

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -17,28 +19,79 @@ from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
 from app.arctime.subtitle_api import subtitle_router
 from app.arctime.subtitle_exports import SubtitleExports
 from app.arctime.saozi_api import saozi_router
+from app.services.task_artifacts import ResolvedArtifacts
+from app.services.task_documents import Documents
+from app.services.unified_database import DatabaseSafetyError
+
+if TYPE_CHECKING:
+    from app.arctime.unified_host import NativeHost
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
 
-def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_dist: Path = WEB_DIST) -> FastAPI:
-    manager = JobManager(root, model, threads)
+def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_dist: Path = WEB_DIST,
+               *, artifacts: tuple[ResolvedArtifacts, ...] = (), settings_root: Path | None = None,
+               credential_root: Path | None = None, documents: Documents | None = None, host: NativeHost | None = None,
+               bind_host: str = '127.0.0.1') -> FastAPI:
+    from app.services.host_binding import private_host
+    bind_host = private_host(bind_host)
+    if host is not None:
+        if root.absolute() != host.root:
+            raise ValueError('统一宿主与任务根不一致')
+        documents, settings_root, credential_root = host.documents, host.settings_root, host.credential_root
+    manager = JobManager(root, model, threads, artifacts=artifacts, settings_root=settings_root, credential_root=credential_root, documents=documents)
+    if documents is not None and documents.root != manager.root:
+        raise ValueError('文档索引与任务根不一致')
+    manager.host = host
+    if host is not None:
+        manager.preferences = host.globals
+        manager.load_preferences()
     exports = SubtitleExports(manager)
 
     @asynccontextmanager
     async def lifespan(app):
         manager.root.mkdir(parents=True, exist_ok=True)
+        for task_id in manager.artifact_contexts:
+            manager.directory(task_id).mkdir(mode=0o700, exist_ok=True)
         with workflow.exclusive_lock(manager.root / ".gui.lock"):
-            yield
-            manager.stop_event.set()
-            manager.executor.shutdown(wait=True)
-            manager.chatgpt.close()
+            started = False
+            try:
+                if host is not None:
+                    host.start()
+                    started = True
+                yield
+            finally:
+                if host is not None and started:
+                    host.stop()
+                manager.stop_event.set()
+                manager.executor.shutdown(wait=True)
+                manager.chatgpt.close()
 
     app = FastAPI(title="Nyaru Local Companion", lifespan=lifespan)
+    app.state.stream_stopping = threading.Event()
+    @app.middleware('http')
+    async def executor_readiness(request: Request, call_next):
+        if host is not None and host.failure_code and request.method not in {'GET', 'HEAD', 'OPTIONS'} and not request.url.path.startswith('/companion-api/chatgpt/'):
+            return JSONResponse(status_code=503, content={'detail': '统一执行器需要恢复；新写入已暂停，请保留数据并重开服务'})
+        return await call_next(request)
+    from app.api.body_limit import OperationsBodyLimit
+    app.add_middleware(OperationsBodyLimit)
+
+    @app.exception_handler(DatabaseSafetyError)
+    def database_safety_error(_request: Request, error: DatabaseSafetyError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={'detail': str(error)})
+
     app.include_router(subtitle_router(manager, exports))
     app.include_router(saozi_router(manager))
     app.include_router(chatgpt_router(manager))
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver"])
+    if host is not None:
+        from app.api.routes.operations import operations_router
+        from app.api.routes.unified_library import library_router
+        from app.api.routes.workstation_events import events_router
+        app.include_router(operations_router(host.sessions, configuration=host.configuration, input_root=host.root), prefix='/api')
+        app.include_router(library_router(host.sessions), prefix='/api')
+        app.include_router(events_router(host.engine, stopped=app.state.stream_stopping), prefix='/api')
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]", "testserver", bind_host])
 
     @app.middleware("http")
     async def same_origin(request: Request, call_next):
@@ -57,7 +110,18 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
                 missing.append(name)
         if not model.expanduser().is_file():
             missing.append("本地 Whisper 模型")
+        if host is not None and host.failure_code:
+            missing.append('统一执行器需要恢复，请保留数据并重新启动')
+        from app.arctime.engine_readiness import whisperx_missing
+        if host is not None:
+            from app.services.public_runtime_settings import effective_settings
+            engines = {'whisper.cpp': missing, 'whisperx': whisperx_missing(missing, effective_settings(host.globals.read('runtime/settings.json')))}
+        else:
+            engines = {'whisper.cpp': missing}
         return {"ready": not missing, "missing": missing, "translation_configured": manager.api_key is not None,
+                'unified_operations': host is not None,
+                'runtime_id': host.instance_id if host is not None else None,
+                'engine_missing': engines,
                 "subtitle_export_busy": bool(manager.active and manager.active.get("state") == "subtitle_export"),
                 "translation_model": manager.translation_model, "translation_models": translation.MODELS,
                 "translation_config_error": manager.config_error,
@@ -81,11 +145,13 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
             try:
                 key = new_key if new_key is not None else manager.api_key
                 selected_model = payload.model if payload.model is not None else manager.translation_model
-                media.write_json(manager.config_path, {"deepseek_api_key": key.get_secret_value() if key else "",
-                                                       "deepseek_model": selected_model,
-                                                       'llm_provider': manager.llm_provider,
-                                                       'chatgpt_model': manager.chatgpt_model})
-            except OSError:
+                manager.api_key, manager.translation_model = key, selected_model
+                companion_llm.persist(manager)
+            except (OSError, ValueError):
+                refreshed = companion_llm.LLMConfig(manager.root, settings_root=manager.settings_root,
+                    credential_root=manager.credential_root, preferences=manager.preferences)
+                manager.api_key, manager.translation_model = refreshed.api_key, refreshed.translation_model
+                refreshed.chatgpt.close()
                 raise HTTPException(500, "Key 配置保存失败，请检查数据目录权限后重试") from None
             manager.api_key = key
             manager.translation_model = selected_model
@@ -103,6 +169,9 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
     @app.get("/companion-api/jobs")
     def list_jobs():
         ids = {p.name for p in manager.root.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r"[0-9a-f]{12}", p.name)}
+        ids.update(manager.artifact_contexts)
+        if host is not None:
+            ids.update(host.ids())
         with manager.lock:
             if manager.active:
                 ids.add(manager.active["id"])
@@ -129,13 +198,17 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
 
     @app.get("/companion-api/jobs/{job_id}/files/{name}")
     def file(job_id: str, name: str, download: bool = False):
+        virtual = manager.virtual_artifact(job_id, name)
+        if virtual is not None:
+            return Response(virtual.content, media_type=virtual.media_type,
+                headers={'Content-Disposition': f'attachment; filename="{name}"'} if download else None)
         if name.endswith(".vtt"):
             path = manager.artifact(job_id, name.removesuffix(".vtt") + ".srt")
             cues = media.read_subtitles(path) if path.read_text().strip() else []
             content = "WEBVTT\n\n" + re.sub(r"(?<=\d{2}:\d{2}:\d{2}),", ".", media.render_srt(cues))
             return Response(content, media_type="text/vtt")
         path = manager.artifact(job_id, name)
-        return FileResponse(path, filename=path.name if download else None, content_disposition_type="attachment" if download else "inline")
+        return FileResponse(path, filename=name if download else None, content_disposition_type="attachment" if download else "inline")
 
     if (web_dist / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=web_dist / "assets"), name="assets")

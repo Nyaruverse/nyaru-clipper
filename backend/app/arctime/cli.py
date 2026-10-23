@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.arctime import companion_llm, media, workflow
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
+from app.services.runtime_guard import SlotBusy, execution_slot
 
 
 def _selector(config: companion_llm.LLMConfig, saved: dict):
@@ -28,6 +29,18 @@ def _asr_options(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] in {"run", "resume"}:
+        try:
+            with execution_slot():
+                return _main(arguments)
+        except SlotBusy:
+            print("其他入口正在处理，请稍后重试；已有结果已保留", file=sys.stderr)
+            return 1
+    return _main(arguments)
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="本地视频配套工具：链接下载、字幕识别、时间轴和切片")
     commands = parser.add_subparsers(dest="command", required=True)
     doctor = commands.add_parser("doctor", help="检查本地运行环境")

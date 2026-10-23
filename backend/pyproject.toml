@@ -15,6 +15,7 @@ dependencies = [
   "sqlmodel>=0.0.22,<0.1.0",
   "transformers>=4.46.0,<5.0.0",
   "uvicorn[standard]>=0.32.0,<1.0.0",
+  "yt-dlp==2026.8.19",
 ]
 
 [dependency-groups]

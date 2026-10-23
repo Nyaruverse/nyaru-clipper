@@ -124,6 +124,15 @@ def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[
 
 
 def tool_path(name: str) -> str:
+    from app.settings import execution_settings
+    settings = execution_settings.get()
+    if settings is not None:
+        configured = {'ffmpeg': settings.ffmpeg_binary, 'ffprobe': settings.ffprobe_binary, 'yt-dlp': settings.ytdlp_binary}.get(name)
+        if configured is not None and configured != name:
+            found = shutil.which(configured)
+            if found is None:
+                raise FileNotFoundError(f'Configured tool is missing: {name}')
+            return found
     if getattr(sys, "frozen", False):
         path = Path(sys.executable) if name == "yt-dlp" else Path(sys._MEIPASS) / name
         if path.is_file() and os.access(path, os.X_OK):
@@ -162,11 +171,14 @@ def download_video(url: str, directory: Path) -> Path:
     downloader = [tool_path("yt-dlp")]
     if getattr(sys, "frozen", False):
         downloader.append("--yt-dlp")
-    result = subprocess.run([*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
+    command = [*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
                              "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
                              "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
-                             "-o", str(directory / "source.%(ext)s"), "--", url],
-                            capture_output=True, text=True, timeout=7200, check=False)
+                             "-o", str(directory / "source.%(ext)s"), "--", url]
+    from app.services.task_execution import current_execution
+    execution = current_execution.get()
+    result = execution.run_command(command, timeout=7200) if execution else subprocess.run(
+        command, capture_output=True, text=True, timeout=7200, check=False)
     if result.returncode:
         raise RuntimeError("yt-dlp download failed; check URL access and downloader configuration")
     path = directory / "source.mp4"

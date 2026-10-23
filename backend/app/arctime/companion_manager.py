@@ -9,6 +9,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 from pydantic import SecretStr
@@ -19,13 +20,39 @@ from app.arctime.subtitle_exports import export_artifact, SubtitleExports
 from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
 from app.arctime.subtitle_encoding import burn_available
 from app.arctime.companion_projection import job_detail
+from app.arctime.workstation_projection import TextArtifact, project_artifacts, text_artifact
+from app.services.task_artifacts import ArtifactError, ResolvedArtifacts
+from app.services.runtime_guard import SlotBusy, engine_slot
+
+if TYPE_CHECKING:
+    from app.services.task_documents import Documents
+    from app.arctime.unified_host import NativeHost
 
 logger = logging.getLogger(__name__)
 
 
 class JobManager(companion_llm.LLMConfig):
-    def __init__(self, root: Path, model: Path, threads: int):
-        super().__init__(root)
+    def __init__(self, root: Path, model: Path, threads: int, *, artifacts: tuple[ResolvedArtifacts, ...] = (),
+                 settings_root: Path | None = None, credential_root: Path | None = None, documents: Documents | None = None):
+        self.documents = documents
+        self.host: NativeHost | None = None
+        self.artifact_contexts = {context.source.task_id: context for context in artifacts}
+        if len(self.artifact_contexts) != len(artifacts):
+            raise ArtifactError('来源身份重复，请核对来源实例与任务')
+        for context in artifacts:
+            output_root = root.resolve()
+            registered = bool(documents and documents.context_registered(context.source))
+            source_roots = [(context.source.root, registered)]
+            if context.source.media_root is not None:
+                source_roots.append((context.source.media_root, False))
+            for source_root, registered_root in source_roots:
+                source_root = source_root.resolve()
+                if registered_root and source_root == output_root:
+                    continue
+                if source_root.is_relative_to(output_root) or output_root.is_relative_to(source_root):
+                    raise ArtifactError('新编辑根不能与旧来源根重叠')
+            context.verify()
+        super().__init__(root, settings_root=settings_root, credential_root=credential_root)
         self.model = model
         self.threads = threads
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-companion")
@@ -36,11 +63,43 @@ class JobManager(companion_llm.LLMConfig):
 
     def directory(self, job_id: str) -> Path:
         path = self.root / job_id
-        if not re.fullmatch(r"[0-9a-f]{12}", job_id) or path.is_symlink():
+        owned = self.host is not None and self.documents is not None and self.documents.is_activated(job_id)
+        if (not re.fullmatch(r"[0-9a-f]{12}", job_id) and job_id not in self.artifact_contexts and not owned) or path.is_symlink():
             raise HTTPException(404, "任务不存在")
         return path
 
+    def artifacts(self, directory: Path) -> ResolvedArtifacts | None:
+        if self.host is not None and directory.parent == self.root:
+            return self.host.context(directory.name)
+        return self.artifact_contexts.get(directory.name) if directory.parent == self.root else None
+
+    def virtual_artifact(self, job_id: str, name: str) -> TextArtifact | None:
+        if re.fullmatch(r'styled-[0-9a-f]{20}\.(ass|mp4|zip)', name):
+            return None
+        context = self.artifacts(self.directory(job_id))
+        if self.host is not None and context is not None:
+            from app.arctime.native_document import saved_bilingual
+            saved = saved_bilingual(self.host, context, name)
+            if saved is not None:
+                return saved
+        return text_artifact(context, name) if context is not None else None
+
     def submit(self, request: JobInput | None, job_id: str | None = None, *, deferred: bool = False) -> str:
+        if self.host is not None:
+            from app.services.task_operations import OperationConflict
+            try:
+                with self.lock:
+                    if deferred and self.active:
+                        raise HTTPException(409, '已有录像正在导入，请等待导入完成')
+                    return self.host.submit(self, request, job_id, deferred=deferred)
+            except OperationConflict as error:
+                raise HTTPException(409, str(error)) from None
+        if request is not None and request.engine != 'whisper.cpp':
+            raise HTTPException(409, 'WhisperX 任务需要统一运行入口')
+        if self.documents is not None:
+            raise HTTPException(409, '此候选使用统一操作队列，请通过统一处理入口提交')
+        if job_id in self.artifact_contexts:
+            raise HTTPException(409, '此入口只编辑已载入结果，请使用处理队列启动新操作')
         with self.lock:
             if self.active:
                 raise HTTPException(409, "已有任务正在处理，请等待完成后再开始")
@@ -54,7 +113,7 @@ class JobManager(companion_llm.LLMConfig):
                 raise HTTPException(409, str(exc)) from None
             template = None
             if request and request.subtitle_template_id:
-                template = next((item for item in TemplateStore(self.root).list_styles()
+                template = next((item for item in TemplateStore(self.settings_root).list_styles()
                                  if item.id == request.subtitle_template_id), None)
                 if template is None:
                     raise HTTPException(409, '字幕模板不存在，请重新选择')
@@ -72,6 +131,9 @@ class JobManager(companion_llm.LLMConfig):
         return job_id
 
     def stop(self, job_id: str) -> None:
+        if self.host is not None:
+            self.host.stop_live(job_id)
+            return
         with self.lock:
             if not self.active or self.active["id"] != job_id or not self.active.get("live"):
                 raise HTTPException(409, "没有正在录制的臊子直播任务")
@@ -79,6 +141,15 @@ class JobManager(companion_llm.LLMConfig):
             self.active["message"] = "正在停止录制并处理剩余内容"
 
     def submit_translation(self, job_id: str) -> str:
+        if self.host is not None:
+            try:
+                return self.host.enqueue_translation(job_id, companion_llm.selected_model(self))
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from None
+        if self.documents is not None and self.documents.is_activated(job_id):
+            raise HTTPException(409, '请通过统一处理队列翻译此任务')
+        if job_id in self.artifact_contexts:
+            raise HTTPException(409, '请通过统一处理队列翻译此来源')
         record = self.detail(job_id)
         if record["state"] != "completed":
             raise HTTPException(409, "请等待视频任务完成后再生成双语字幕")
@@ -103,6 +174,15 @@ class JobManager(companion_llm.LLMConfig):
         return job_id
 
     def run_translation(self, job_id: str, key: SecretStr, model: str):
+        try:
+            with engine_slot():
+                return self._run_translation(job_id, key, model)
+        except SlotBusy:
+            with self.lock:
+                self.active["translation_error"] = "其他入口正在处理，请稍后重试翻译；已有结果已保留"
+                self.last, self.active = self.active, None
+
+    def _run_translation(self, job_id: str, key: SecretStr, model: str):
         def progress(message: str):
             with self.lock:
                 self.active["message"] = message
@@ -140,6 +220,22 @@ class JobManager(companion_llm.LLMConfig):
     def run(self, job_id: str, request: JobInput | None, key: SecretStr | None = None,
             model: str | None = None, local_source: Path | None = None, *, style_template: StyleTemplate | None = None,
             owned_upload: workflow.OwnedUpload | None = None):
+        try:
+            with engine_slot():
+                return self._run(job_id, request, key, model, local_source,
+                    style_template=style_template, owned_upload=owned_upload)
+        except SlotBusy:
+            try:
+                self.update("failed", "其他入口正在处理，请稍后重试", "执行槽被占用；已有结果已保留")
+            finally:
+                if owned_upload is not None:
+                    owned_upload.cleanup()
+                with self.lock:
+                    self.last, self.active = self.active, None
+
+    def _run(self, job_id: str, request: JobInput | None, key: SecretStr | None = None,
+             model: str | None = None, local_source: Path | None = None, *, style_template: StyleTemplate | None = None,
+             owned_upload: workflow.OwnedUpload | None = None):
         reservation = self.active
         try:
             directory = self.directory(job_id)
@@ -236,6 +332,13 @@ class JobManager(companion_llm.LLMConfig):
                         self.active = None
 
     def detail(self, job_id: str, *, include_segments: bool = True) -> dict:
+        if self.host is not None:
+            from app.arctime.native_projection import job_view
+            self.directory(job_id)
+            return job_view(self.host, job_id, include_segments=include_segments)
+        context = self.artifacts(self.directory(job_id))
+        if context is not None:
+            return project_artifacts(context, include_segments=include_segments).model_dump()
         return job_detail(self, job_id, include_segments=include_segments)
 
     @staticmethod
@@ -250,8 +353,25 @@ class JobManager(companion_llm.LLMConfig):
 
     def artifact(self, job_id: str, name: str) -> Path:
         directory = self.directory(job_id)
+        if self.host is not None:
+            from app.arctime.native_live import file
+            partial = file(self.host, job_id, name)
+            if partial is not None:
+                return partial
         if re.fullmatch(r"styled-[0-9a-f]{20}\.(ass|mp4|zip)", name):
+            if self.host is not None:
+                from app.arctime.native_exports import export_file
+                return export_file(self.host, job_id, name)
             return export_artifact(directory, name)
+        context = self.artifacts(directory)
+        if context is not None:
+            if name == 'source.mp4':
+                return context.source.checked(context.source.video)
+            if re.fullmatch(r'clip-\d{3,}\.mp4', name):
+                index = int(name.removeprefix('clip-').removesuffix('.mp4')) - 1
+                if 0 <= index < len(context.source.clips):
+                    return context.source.checked(context.source.clips[index].video)
+            raise HTTPException(404, '结果文件不存在')
         job = self.read_json(directory / "job.json")
         allowed = set(job.get("artifacts", {}))
         if job.get("video"):

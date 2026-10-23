@@ -13,6 +13,8 @@ from sqlmodel import select
 
 from app.db import session_scope
 from app.models import QueueEntry, Task, TaskJob, TaskStage, utc_now
+from app.models_unified import OperationProcess, TaskBinding, UnifiedOperation, UnifiedRuntime
+from app.services.runtime_guard import SlotBusy, execution_slot
 from app.repositories.tasks import clear_task_execution_progress
 from app.services import capability_checks
 from app.services.pipeline_support import append_stage_log
@@ -139,6 +141,9 @@ def _recover_stale_running_jobs(session) -> None:
         select(TaskJob).where(TaskJob.gpu_bound.is_(True)).where(TaskJob.status == "running")
     ).all()
     for job in running_jobs:
+        binding = session.get(TaskBinding, job.task_id)
+        if binding is not None and binding.state == "activated":
+            continue
         job_updated_at = _normalize_comparable_datetime(job.updated_at)
         if job_updated_at is None or job_updated_at > stale_before:
             continue
@@ -190,6 +195,13 @@ def _wait_for_recovered_process_group(process_group_id: int, *, deadline: float 
 def claim_next_job() -> ClaimedJob | None:
     with session_scope() as session:
         begin_queue_mutation(session)
+        unified = session.get(UnifiedRuntime, 1)
+        if unified is not None and unified.recovering:
+            return None
+        if session.exec(select(UnifiedOperation).where(UnifiedOperation.state == "running")).first():
+            return None
+        if session.exec(select(OperationProcess).where(OperationProcess.released == False)).first():
+            return None
         _recover_terminal_queue_entries(session)
         _recover_stale_running_jobs(session)
         running_gpu_job = session.exec(
@@ -201,6 +213,9 @@ def claim_next_job() -> ClaimedJob | None:
         queue_entry = claim_next_queue_entry(session)
         if queue_entry is None:
             return None
+        binding = session.get(TaskBinding, queue_entry.task_id)
+        if binding is not None and binding.state == "activated":
+            raise RuntimeError("Activated task reached the legacy queue; reconcile ownership before execution")
 
         job = session.exec(select(TaskJob).where(TaskJob.task_id == queue_entry.task_id)).first()
         task = session.get(Task, queue_entry.task_id)
@@ -311,6 +326,14 @@ def complete_job(task_id: str, *, success: bool) -> None:
 
 
 def run_worker_iteration(processor: Callable[[ClaimedJob], bool] | None = None) -> ClaimedJob | None:
+    try:
+        with execution_slot():
+            return _run_worker_iteration(processor)
+    except SlotBusy:
+        return None
+
+
+def _run_worker_iteration(processor: Callable[[ClaimedJob], bool] | None = None) -> ClaimedJob | None:
     claimed_job = claim_next_job()
     if claimed_job is None:
         return None

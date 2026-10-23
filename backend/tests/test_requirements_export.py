@@ -109,6 +109,7 @@ def test_export_script_generates_accelerator_neutral_repo_root_installable_requi
     package_names = _package_names(lines)
 
     assert "./backend" in lines
+    assert 'yt-dlp' in package_names
     assert "." not in lines
     assert "-e ." not in lines
     assert package_names.isdisjoint(ACCELERATOR_PACKAGE_NAMES)
@@ -366,6 +367,7 @@ def test_wsl_rocm_installer_dry_run_includes_hip_ctranslate2_build() -> None:
     assert "-DWITH_HIP=ON" in output
     assert "-DCMAKE_HIP_COMPILER=/opt/rocm/lib/llvm/bin/clang++" in output
     assert "-DCMAKE_PREFIX_PATH=/opt/rocm" in output
+    assert "-DCMAKE_INSTALL_LIBDIR=lib" in output
 
 
 def test_wsl_rocm_installer_creates_the_python_311_venv_before_validating_requirements() -> None:

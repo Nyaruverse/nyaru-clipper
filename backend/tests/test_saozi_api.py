@@ -31,7 +31,7 @@ def saozi_client(tmp_path, monkeypatch):
     from app.arctime.companion_manager import JobManager
     from app.arctime.local_asr import DEFAULT_MODEL
     manager = JobManager(tmp_path, DEFAULT_MODEL, 4)
-    monkeypatch.setattr("app.arctime.gui.JobManager", lambda *args: manager)
+    monkeypatch.setattr("app.arctime.gui.JobManager", lambda *args, **kwargs: manager)
     with TestClient(create_app(tmp_path)) as client:
         client.app.state.manager = manager
         yield client

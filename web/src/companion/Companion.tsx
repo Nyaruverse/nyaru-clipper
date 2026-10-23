@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, Captions, Check, Film, History, Plus, Scissors, SlidersHorizontal, X } from "lucide-react";
 
 import { StudioToolbar, type StudioMode } from "./StudioToolbar";
+import {UnifiedQueue} from './UnifiedQueue';
+import {metadataDraftKey, UnifiedLibrary, type MetadataDraft} from './UnifiedLibrary';
+import {useUnifiedOperations} from './unifiedOperations';
+import {useWorkstationEvents} from '../workstation/api/useWorkstationEvents';
 import { StudioSettings, type SettingsCategory } from "./StudioSettings";
 import { TemplatePreview } from "./TemplatePreview";
 import { parseStudioDefaults } from "./studioModel";
@@ -11,13 +15,14 @@ import { SubtitleEditor } from "./SubtitleEditor";
 import { CueEditor } from "./CueEditor";
 import { useSubtitleDocument } from "./useSubtitleDocument";
 import { useNativeQuitBridge } from "./useNativeQuitBridge";
+import {useRetainedTask} from './useRetainedTask';
 import { documentProblem, nudgeCueStyle, patchCues, type Language } from "./subtitleDocument";
 import type { FontCatalog } from './TextStyleFields';
 import { SubtitlePreview } from "./SubtitlePreview";
 import { SubtitleExports, useSubtitleExports } from "./SubtitleExports";
 import { defaultStyle, subtitleApi, type SubtitleStyle, type SubtitleSettings } from "./subtitleStyle";
 
-import { api, time, parseTime, running, statusLabel, fileUrl, type Job, type JobInput, type CompanionConfig } from "./companionApi";
+import { api, time, parseTime, running, statusLabel, fileUrl, bilingualFile, type Job, type JobInput, type CompanionConfig } from "./companionApi";
 
 const TOOLS = [
   { id: "create", label: "新建任务", icon: Plus },
@@ -67,6 +72,7 @@ export function Companion() {
   const [ranges, setRanges] = useState<[string, string][]>([["00:00", "00:30"]]);
   const [highlights, setHighlights] = useState(3);
   const [language, setLanguage] = useState("auto");
+  const [engine, setEngine] = useState<'whisper.cpp' | 'whisperx'>('whisper.cpp');
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [preview, setPreview] = useState<string>("source.mp4");
@@ -76,6 +82,11 @@ export function Companion() {
   const [exportFormat,setExportFormat] = useState<'ass'|'mp4'|'arctime'>('ass');
   const video = useRef<HTMLVideoElement>(null);
   const config = useQuery({ queryKey: ["companion", "config"], queryFn: () => api<CompanionConfig>("/config"), refetchInterval: 15000 });
+  const unified = config.data?.unified_operations === true;
+  const engineMissing = config.data?.engine_missing?.[source === 'live' ? 'whisper.cpp' : engine];
+  const processingReady = engineMissing ? engineMissing.length === 0 : config.data?.ready;
+  const operations = useUnifiedOperations(unified);
+  useWorkstationEvents({enabled: unified, origin: window.location.origin});
   const history = useQuery({ queryKey: ["companion", "jobs"], queryFn: () => api<Job[]>("/jobs"), refetchInterval: 3000 });
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
@@ -97,7 +108,8 @@ export function Companion() {
   const [projectOverrides,setProjectOverrides] = useState<Record<string,string|null>>({});
   const setProject = (id:string|null)=>{if(selectedId)setProjectOverrides(current=>({...current,[selectedId]:id}));};
   const editing = useSubtitleDocument(selectedId, detail.data?.state === 'completed', detail.data?.translation?.state);
-  useNativeQuitBridge(settingsDirty, editing.hasUnsaved, editing.flush);
+  const metadataUnsaved = useCallback(() => queryClient.getQueriesData<MetadataDraft>({queryKey: metadataDraftKey}).some(([, draft]) => draft?.dirty), [queryClient]);
+  useNativeQuitBridge(settingsDirty, editing.hasUnsaved, editing.flush, metadataUnsaved);
   const documentDraft = editing.document;
   const style = documentDraft?.style ?? detail.data?.subtitle_template?.style ?? styleDraft ?? settings.data?.style ?? defaultStyle;
   const [cueSelection,setCueSelection] = useState<string[]>([]);
@@ -127,10 +139,13 @@ export function Companion() {
   const job = detail.data;
   const project = selectedId && Object.prototype.hasOwnProperty.call(projectOverrides,selectedId) ? projectOverrides[selectedId] : job?.subtitle_template?.arctime_template_id ?? null;
   const visibleJobs = history.data?.map(item => item.id === job?.id ? job : item);
-  const busy = visibleJobs?.some(running) || running(job) || exportBusy;
+  const legacyBusy = visibleJobs?.some(running) || running(job) || exportBusy;
+  const busy = unified ? operations.data?.operations.some(item => item.task_id === selectedId && item.state === 'running' && item.kind !== 'export') : legacyBusy;
+  const createBusy = unified ? false : legacyBusy;
   const create = useMutation({ mutationFn: async (payload: JobInput & {file?:File}) => {
     if (!payload.file) return api<{id:string}>("/jobs", payload);
     const params = new URLSearchParams({language:payload.language,saozi:String(!!payload.saozi),ranges:JSON.stringify(payload.ranges)});
+    if (payload.engine) params.set('engine', payload.engine);
     if (payload.subtitle_template_id) params.set("subtitle_template_id",payload.subtitle_template_id);
     if (payload.highlights !== null) params.set("highlights", String(payload.highlights));
     const response = await fetch(`/companion-api/jobs/upload?${params}`, {method:"POST",body:payload.file});
@@ -149,7 +164,7 @@ export function Companion() {
   const stop = useMutation({mutationFn:(id:string)=>api(`/jobs/${id}/stop`,{}),
     onSuccess:()=>{void queryClient.invalidateQueries({queryKey:["companion"]});},onError:err=>setError(err.message)});
 
-  useEffect(() => { if (!selectedId && history.data?.length) setSelectedId(history.data[0].id); }, [selectedId, history.data]);
+  useRetainedTask(config.data, history.data, selectedId, setSelectedId);
   useEffect(() => { setPreview("source.mp4"); setSeek(null); }, [selectedId]);
   useEffect(() => { if (job?.live && !job.has_source && preview === "source.mp4" && job.clips.length) setPreview(job.clips[0].video); }, [job,preview]);
   useEffect(() => {
@@ -173,6 +188,7 @@ export function Companion() {
       if (source === "file" && !localFile) throw new Error("请选择本地视频文件");
       create.mutate({url:source === "live" ? room.trim() : url.trim(),ranges:processingMode === "ranges" ? ranges : [],
         highlights:processingMode === "highlights" ? highlights : null,language,
+        ...(unified ? {engine: source === 'live' ? 'whisper.cpp' : engine} : {}),
         ...(processingMode === "saozi" ? {saozi:true,live:source === "live"} : {}),
         ...(liveTemplateId ? {subtitle_template_id:liveTemplateId} : {}),
         ...(source === "file" && localFile ? {file:localFile} : {})});
@@ -183,9 +199,9 @@ export function Companion() {
   const stage = job?.state === "completed" ? 4 : ({ preparing: 0, downloading: 1, download_failed: 1, downloaded: 2, transcribing: 2, subtitles_ready: 3, exporting: 3 }[job?.phase ?? ""] ?? 0);
   const unavailable = config.isError || history.isError || detail.isError;
   const hasBilingual = job?.translation?.state === "completed";
-  const hasPreviewBilingual = job?.bilingual_files?.includes((clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, ".ja-zh.srt")) ?? hasBilingual;
+  const hasPreviewBilingual = job?.bilingual_files?.includes(bilingualFile(job, clip?.subtitles ?? "subtitles.srt")) ?? hasBilingual;
   const showBilingual = (documentDraft ? documentDraft.cues.some(cue => !!cue.translation) : hasPreviewBilingual) && subtitleMode === "bilingual";
-  const subtitleFile = (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, showBilingual ? ".ja-zh.vtt" : ".vtt");
+  const subtitleFile = showBilingual ? bilingualFile(job, clip?.subtitles ?? "subtitles.srt", 'vtt') : (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, '.vtt');
   const visibleSegments = documentDraft ? documentDraft.cues.map(cue => ({...cue,text:showBilingual && cue.translation ? `${cue.text}\n${cue.translation}` : cue.text})) : (showBilingual ? job?.bilingual_segments : job?.segments) ?? [];
   const seekSource = (at: number) => {
     if (job?.has_source) { setPreview('source.mp4'); setSeek(at); }
@@ -227,7 +243,7 @@ export function Companion() {
             setError(invalid.validationMessage);
             requestAnimationFrame(() => invalid.focus());
           }}>
-            <fieldset disabled={busy || create.isPending}>
+            <fieldset disabled={createBusy || create.isPending}>
               <div className="companion-task-fields" data-tool-pane="create" hidden={tool !== "create"}>
               <div className="companion-sources" role="group" aria-label="视频来源">
                 {SOURCES.map(({id,label}) => <button key={id} type="button" className="ny-button" aria-pressed={source === id} onClick={() => {setSource(id);setError(null);}}>{label}</button>)}
@@ -235,6 +251,8 @@ export function Companion() {
               <label className="ny-field" hidden={source !== "live"}>直播间号<input className="ny-input" type="text" inputMode="numeric" disabled={source !== "live"} required={source === "live"} pattern="[1-9][0-9]*" title="只需输入数字直播间号，例如 12345" placeholder="例如：12345" value={room} onChange={event => setRoom(event.target.value)} /></label>
               <label className="ny-field" hidden={source !== "replay"}>BV 号<input className="ny-input" type="text" disabled={source !== "replay"} required={source === "replay"} pattern="BV[A-Za-z0-9]{10}" title="只需输入 BV 开头的视频编号，例如 BV1xx411c7mD" placeholder="例如：BV1xx411c7mD" value={url} onChange={event => setUrl(event.target.value)} /></label>
               <label className="ny-field" hidden={source !== "file"}>本地视频文件<input className="ny-input" type="file" disabled={source !== "file"} accept="video/*,.mkv,.flv,.ts" onChange={event=>setLocalFile(event.target.files?.[0] ?? null)} /></label>
+              {unified && source !== 'live' && <label className="ny-field">语音识别引擎<select className="ny-input" value={engine} onChange={event => setEngine(event.target.value === 'whisperx' ? 'whisperx' : 'whisper.cpp')}><option value="whisper.cpp">whisper.cpp · 桌面</option><option value="whisperx">WhisperX · GPU 工作站</option></select></label>}
+              {unified && engine === 'whisperx' && source !== 'live' && <p className="companion-footnote">使用工作站现有的模型与对齐缓存；缺少缓存时会停止并保留任务。</p>}
               {source === "live" && <p className="companion-muted">录制正在直播的房间，按约 1–2 分钟连续处理；需要先配置 AI。点击停止后处理剩余内容。</p>}
               {<>
                 <label className="ny-field">{source === 'live' ? '实时切片字幕模板' : '工作模板'}<select className="ny-input" value={liveTemplateId} onChange={event=>{setLiveTemplate(event.target.value);const chosen=settings.data?.templates?.find(item=>item.id===event.target.value);if(chosen?.workflow){setLanguage(chosen.workflow.language);setMode(chosen.workflow.mode);setHighlights(chosen.workflow.highlights);setSubtitleMode(chosen.workflow.bilingual?'bilingual':'original');setExportFormat(chosen.workflow.export_format);}}} disabled={!settings.data || settings.isError}>
@@ -268,7 +286,7 @@ export function Companion() {
               </div> : <p className="companion-muted">连续切为约 1–2 分钟，{chatgptSelected ? "ChatGPT" : "DeepSeek Flash"} 根据字幕段落选择切点，并自动生成中日双语字幕，会使用{chatgptSelected ? "订阅" : " API "}额度。短尾段完整保留。{source === "live" ? "实时结果会有缓冲与处理延迟；停止后导出剩余内容。" : "原视频保留，切片按顺序覆盖全部内容。"}</p>}
               </div>
             </fieldset>
-            <button className="ny-button ny-button--primary companion-start" type="submit" disabled={!config.data?.ready || !!busy || create.isPending || unavailable || (source === 'live' && !settings.data)}><Scissors size={16} />{create.isPending ? "正在提交…" : busy ? "已有任务处理中" : "开始处理"}</button>
+            <button className="ny-button ny-button--primary companion-start" type="submit" disabled={!processingReady || !!createBusy || create.isPending || unavailable || (source === 'live' && !settings.data)}><Scissors size={16} />{create.isPending ? "正在提交…" : createBusy ? "已有任务处理中" : unified ? "加入队列" : "开始处理"}</button>
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
@@ -288,15 +306,16 @@ export function Companion() {
         </section>
         <section className="companion-panel companion-history" aria-label="任务记录" hidden={tool !== "history"}>
           <h2>任务记录 <span>{history.data?.length ?? 0}</span></h2>
+          {unified && <UnifiedLibrary selectedId={selectedId} onSelect={id => {setSelectedId(id);setError(null);}}/>}
           {!history.data?.length && <p className="companion-muted">开始第一个任务后，结果会保存在这里。</p>}
-          {visibleJobs?.map(item => <button className="companion-history-item" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { setSelectedId(item.id); setError(null); }}><span><strong>{item.mode === "saozi" ? item.live ? "臊子 · 实时" : "臊子" : item.mode === "highlights" ? "高光切片" : "指定片段"}</strong><small>{new Date(item.started_at * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {item.id.slice(0, 6)}</small></span><span>{statusLabel(item)}</span></button>)}
+          {!unified && visibleJobs?.map(item => <button className="companion-history-item" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { setSelectedId(item.id); setError(null); }}><span><strong>{item.mode === "saozi" ? item.live ? "臊子 · 实时" : "臊子" : item.mode === "highlights" ? "高光切片" : "指定片段"}</strong><small>{new Date(item.started_at * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {item.id.slice(0, 6)}</small></span><span>{statusLabel(item)}</span></button>)}
         </section>
         <section className="companion-panel companion-results" aria-label="导出结果" hidden={tool !== "export"}>
           <p className="companion-muted">{job?.clips.length ?? 0} 个切片</p>
           {job?.segments.length ? <div className="companion-downloads"><a className="ny-button" href={fileUrl(job.id, "subtitles.srt", true)}><ArrowDownToLine size={16} />完整字幕 SRT</a><a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a></div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
-          {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.ja-zh.srt", true)}>完整双语字幕 SRT</a>}
+          {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, bilingualFile(job, 'subtitles.srt'), true)}>完整双语字幕 SRT</a>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
-          {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{(item.bilingual_subtitles || (hasBilingual && !job.bilingual_files)) && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.bilingual_subtitles ?? item.subtitles.replace(/\.srt$/, ".ja-zh.srt"), true)}>双语 SRT</a>}</div></div>)}
+          {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{(item.bilingual_subtitles || (hasBilingual && !job.bilingual_files)) && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.bilingual_subtitles ?? bilingualFile(job, item.subtitles), true)}>双语 SRT</a>}</div></div>)}
           {job&&<label className="ny-field">本次任务 ArcTime 工程模板<select className="ny-input" value={project??''} disabled={!!busy} onChange={event=>setProject(event.target.value||null)}><option value="">不附带工程模板</option>{project&&!settings.data?.arctime_templates?.some(item=>item.id===project)&&<option value={project}>任务快照绑定工程</option>}{settings.data?.arctime_templates?.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
           {job && (job.segments.length > 0 || (exports.data?.outputs?.length ?? 0) > 0) && <SubtitleExports preferredFormat={exportFormat} id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} document={documentDraft} busy={!!busy || !settings.data?.style || editing.dirty || !!editing.error} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时，下载视频与同名 SRT 即可继续编辑。</p>}
@@ -304,6 +323,8 @@ export function Companion() {
         </div>
       </aside>
       <div className="companion-workspace">
+        {unified && studioMode === 'daily' && tool === 'history' && <UnifiedQueue onSelect={id => {setSelectedId(id);setError(null);}}/>}
+        {unified && operations.data?.paused && tool !== 'history' && <button className="ny-button" onClick={() => setTool('history')}>队列已暂停 · 查看任务队列</button>}
         {studioMode === 'design' && <TemplatePreview style={designStyle}/>}
         <section hidden={studioMode === 'design'} className={`companion-panel companion-progress ${job?.state === 'completed' ? 'is-completed' : ''}`} aria-label="处理进度">
           <div className="companion-section-heading"><div className="companion-panel-title"><h2>处理进度</h2></div>{job && <span className={`ny-stamp ny-stamp--${job.state === "completed" ? "success" : ["failed", "interrupted"].includes(job.state) ? "failed" : "running"}`}>{statusLabel(job)}</span>}</div>
@@ -311,7 +332,7 @@ export function Companion() {
           <ol hidden={job?.state === 'completed'} className="ny-progress companion-stages" aria-label="处理阶段">{(job?.live ? ["检查环境", "录制直播", "字幕段落分析", "连续输出切片"] : ["检查环境", "下载／导入", "字幕与段落", "导出片段"]).map((label, index) => <li className={`ny-progress__stage ${job && index < stage ? "ny-progress__stage--complete" : job && index === stage ? ["failed", "interrupted"].includes(job.state) ? "ny-progress__stage--failed" : "ny-progress__stage--running" : ""}`} key={label}>{job && index < stage ? <Check size={14} /> : <span>{index + 1}</span>}{label}</li>)}</ol>
           <p className="companion-status" role="status">{job?.message ?? "等待创建任务"}</p>
           {error && <div className="companion-error" role="alert">{error}</div>}
-          {config.data && !config.data.ready && <p className="companion-error" role="alert">缺少：{config.data.missing.join("、")}。请按使用指南准备环境。</p>}
+          {config.data && !processingReady && <p className="companion-error" role="alert">缺少：{(engineMissing ?? config.data.missing).join("、")}。请按使用指南准备环境。</p>}
           {job?.can_stop && <button className="ny-button" disabled={stop.isPending} onClick={()=>stop.mutate(job.id)}>停止直播并导出剩余内容</button>}
           {job?.error && <p className="companion-error" role="alert">{job.error}</p>}
           {job?.capture_warning && <p className="companion-error" role="alert">{job.capture_warning}</p>}

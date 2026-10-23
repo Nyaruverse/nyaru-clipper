@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Callable, Literal, Mapping
+from typing import TYPE_CHECKING, Callable, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, JsonValue, SecretStr, StrictStr, ValidationError
 
@@ -11,18 +11,32 @@ from app.arctime import media, translation
 from app.arctime.chatgpt_auth import ChatGPTAuth
 from app.arctime.companion_models import validated_api_key
 
+if TYPE_CHECKING:
+    from app.services.global_documents import GlobalDocuments
+
+
+class PublicPreferences(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    deepseek_model: str
+    llm_provider: Literal['deepseek', 'chatgpt']
+    chatgpt_model: str
+
 
 class LLMConfig:
     """Mutable provider settings shared by the CLI and companion manager."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, settings_root: Path | None = None, credential_root: Path | None = None,
+                 preferences: GlobalDocuments | None = None):
         self.root = root.expanduser().resolve()
+        self.settings_root = (settings_root or self.root).expanduser().resolve()
+        self.credential_root = (credential_root or self.root).expanduser().resolve()
+        self.preferences = preferences
         self.api_key: SecretStr | None = None
         self.translation_model = translation.MODEL
         self.llm_provider = 'deepseek'
         self.chatgpt_model = ''
-        self.chatgpt = ChatGPTAuth(self.root)
-        self.config_path = self.root / 'config.json'
+        self.chatgpt = ChatGPTAuth(self.credential_root)
+        self.config_path = self.credential_root / 'config.json'
         self.config_error: str | None = None
         try:
             if self.config_path.is_symlink():
@@ -49,6 +63,14 @@ class LLMConfig:
                 self.chatgpt_model = model
         except (OSError, ValueError, UnicodeError):
             self.config_error = '无法读取翻译配置；请检查 runs/config.json 或重新保存 Key／模型'
+        self.load_preferences()
+
+    def load_preferences(self) -> None:
+        if self.preferences is not None:
+            content = self.preferences.read('llm/preferences.json')
+            if content is not None:
+                value = PublicPreferences.model_validate_json(content)
+                self.translation_model, self.llm_provider, self.chatgpt_model = value.deepseek_model, value.llm_provider, value.chatgpt_model
 
 
 class _JobModel(BaseModel):
@@ -110,6 +132,21 @@ def requester(manager: LLMConfig, model: str) -> Callable[[str, str], str] | Non
 def persist(manager: LLMConfig) -> None:
     if manager.config_path.is_symlink():
         raise ValueError('配置文件不能是符号链接，请检查 runs/config.json')
+    if manager.preferences is not None:
+        from app.arctime.workflow import exclusive_lock
+        manager.credential_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with exclusive_lock(manager.credential_root / '.config.lock'):
+            current = json.loads(manager.config_path.read_bytes()) if manager.config_path.exists() else {}
+            key = manager.api_key.get_secret_value() if manager.api_key else ''
+            if current.get('deepseek_api_key', '') != key:
+                current['deepseek_api_key'] = key
+                media.write_json(manager.config_path, current)
+        value = PublicPreferences(deepseek_model=manager.translation_model, llm_provider=manager.llm_provider, chatgpt_model=manager.chatgpt_model)
+        body = value.model_dump_json().encode()
+        with manager.preferences.mutation():
+            if manager.preferences.read('llm/preferences.json') != body:
+                manager.preferences.write('llm/preferences.json', body)
+        return
     media.write_json(manager.config_path, {
         'deepseek_api_key': manager.api_key.get_secret_value() if manager.api_key else '',
         'deepseek_model': manager.translation_model,

@@ -13,6 +13,7 @@ from typing import Final
 
 from app.arctime import media
 from app.services.subtitles import SubtitleSegment
+from app.services.task_execution import current_execution
 
 DEFAULT_MODEL = Path.home() / ".cache" / "nyaru-clipper" / "models" / "ggml-small.bin"
 CHUNK_SECONDS = 300
@@ -126,7 +127,9 @@ class LocalASR:
                         log.flush()
                         prefix.with_suffix('.srt').unlink()
                     for command in pending:
-                        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
+                        execution = current_execution.get()
+                        result = execution.run_command(command, log=log, timeout=7200,
+                            env=environment if command[0] == identity['binary'] else None) if execution else subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
                                                 stderr=subprocess.STDOUT, timeout=7200, check=False,
                                                 env=environment if command[0] == identity['binary'] else None)
                         if result.returncode:

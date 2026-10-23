@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import threading
+from contextvars import copy_context
 from pathlib import Path
 
 import httpx
@@ -47,9 +48,12 @@ class LiveCapture:
         downloader = [media.tool_path('yt-dlp')]
         if getattr(sys, 'frozen', False):
             downloader.append('--yt-dlp')
-        result = subprocess.run([*downloader, '--no-playlist', '--no-warnings',
-                                 '-f', 'best[vcodec=avc][protocol=https][ext=flv]', '-g', '--', self.url],
-                                capture_output=True, text=True, timeout=30, check=False)
+        command = [*downloader, '--no-playlist', '--no-warnings',
+            '-f', 'best[vcodec=avc][protocol=https][ext=flv]', '-g', '--', self.url]
+        from app.services.task_execution import current_execution
+        execution = current_execution.get()
+        result = execution.run_command(command, timeout=30) if execution else subprocess.run(
+            command, capture_output=True, text=True, timeout=30, check=False)
         lines = result.stdout.strip().splitlines()
         if result.returncode or len(lines) != 1 or not lines[0].startswith(('https://', 'http://')):
             raise ValueError('无法获取兼容的 AVC/FLV 直播流，请确认直播间正在直播')
@@ -71,6 +75,8 @@ class LiveCapture:
             return None
 
     def _record(self):
+        from app.services.task_execution import current_execution
+        execution = current_execution.get()
         try:
             for attempt in range(3):
                 if self.stop.is_set():
@@ -81,22 +87,37 @@ class LiveCapture:
                         break
                     session = self.directory / f'capture-{len(list(self.directory.glob("capture-*"))):04d}'
                     session.mkdir()
-                    self.process = subprocess.Popen([
+                    command = [
                         media.tool_path('ffmpeg'), '-nostdin', '-hide_banner', '-loglevel', 'error',
                         '-rw_timeout', '15000000', '-i', stream, '-map', '0:v:0', '-map', '0:a:0?',
                         '-c', 'copy', '-f', 'segment', '-segment_time', '20', '-reset_timestamps', '1',
-                        '-segment_list', 'closed.csv', '-segment_list_type', 'csv', 'chunk-%05d.mp4'],
-                        cwd=session, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL)
-                    while self.process.poll() is None:
-                        if self.stop.wait(.2):
+                        '-segment_list', 'closed.csv', '-segment_list_type', 'csv', 'chunk-%05d.mp4']
+                    scope = execution.process(command, cwd=session, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) if execution else subprocess.Popen(
+                        command, cwd=session, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    with scope as process:
+                        self.process = process
+                        try:
+                            while self.process.poll() is None:
+                                if execution is not None:
+                                    execution.check()
+                                if self.stop.wait(.2):
+                                    self._terminate()
+                                    break
+                        finally:
                             self._terminate()
-                            break
                 except Exception:
                     # Stream URLs and downloader diagnostics may contain reusable tokens.
                     pass
                 if self.stop.is_set():
                     break
+                if execution is not None:
+                    from app.services.task_execution import ExecutionCancelled
+                    from app.services.task_operations import OperationConflict
+                    try:
+                        execution.check()
+                    except (ExecutionCancelled, OperationConflict):
+                        self.stop.set()
+                        break
                 offline = self._is_offline()
                 if self.stop.is_set():
                     break
@@ -126,10 +147,14 @@ class LiveCapture:
             pass
 
     def chunks(self):
-        self.thread = threading.Thread(target=self._record, name='bilibili-capture', daemon=True)
+        self.thread = threading.Thread(target=copy_context().run, args=(self._record,), name='bilibili-capture', daemon=True)
         self.thread.start()
         seen = set()
         while True:
+            from app.services.task_execution import current_execution
+            execution = current_execution.get()
+            if execution is not None:
+                execution.check()
             finished = self.done.is_set()
             for path in self.recorded(self.directory):
                 if path not in seen:

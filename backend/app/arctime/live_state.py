@@ -121,9 +121,12 @@ def concatenate(directory, chunks, target):
         listing = work / 'inputs.txt'
         listing.write_text(''.join("file '" + str((directory / c['path']).resolve()).replace("'", "'\\''") + "'\n" for c in chunks))
         output = work / 'source.mp4'
-        result = subprocess.run([media.tool_path('ffmpeg'), '-nostdin', '-v', 'error', '-f', 'concat',
-                                 '-safe', '0', '-i', str(listing), '-c', 'copy', '-movflags', '+faststart', str(output)],
-                                capture_output=True, timeout=600, check=False)
+        command = [media.tool_path('ffmpeg'), '-nostdin', '-v', 'error', '-f', 'concat',
+                   '-safe', '0', '-i', str(listing), '-c', 'copy', '-movflags', '+faststart', str(output)]
+        from app.services.task_execution import current_execution
+        execution = current_execution.get()
+        result = execution.run_command(command, timeout=600) if execution else subprocess.run(
+            command, capture_output=True, timeout=600, check=False)
         if result.returncode:
             raise ValueError('合并已关闭录制块失败，原文件已保留')
         actual = media.probe_video(output)

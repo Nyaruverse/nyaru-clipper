@@ -34,9 +34,9 @@ def test_frame_cache_builds_source_once_then_rejects_changed_source(document_job
     media.write_json(directory / 'job.json', job)
     build = subtitle_document.base_document
     calls = []
-    def counted(*args):
+    def counted(*args, **kwargs):
         calls.append(1)
-        return build(*args)
+        return build(*args, **kwargs)
     monkeypatch.setattr(subtitle_document, 'base_document', counted)
     doc = client.get(URL).json()
     assert len(doc['cues']) == cue_count

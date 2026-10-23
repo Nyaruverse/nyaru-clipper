@@ -262,6 +262,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Library */
+        get: operations["list_library_api_v2_library_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/library/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Library */
+        patch: operations["update_library_api_v2_library__task_id__patch"];
+        trace?: never;
+    };
+    "/api/v2/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Operations */
+        get: operations["list_operations_api_v2_operations_get"];
+        put?: never;
+        /** Create Operation */
+        post: operations["create_operation_api_v2_operations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/operations/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Admissions */
+        post: operations["admissions_api_v2_operations_queue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/operations/reorder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reorder */
+        post: operations["reorder_api_v2_operations_reorder_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/operations/{operation_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel */
+        post: operations["cancel_api_v2_operations__operation_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/operations/{operation_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry */
+        post: operations["retry_api_v2_operations__operation_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/operations/{operation_id}/waiting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Waiting */
+        post: operations["waiting_api_v2_operations__operation_id__waiting_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/processing-profiles": {
         parameters: {
             query?: never;
@@ -627,6 +764,28 @@ export interface components {
             /** Task Id */
             task_id: string;
         };
+        /** Cue */
+        Cue: {
+            /** End Seconds */
+            end_seconds: number;
+            /** Id */
+            id: string;
+            /** Original Emphasis */
+            original_emphasis?: components["schemas"]["Emphasis"][];
+            original_style?: components["schemas"]["TextStyle"] | null;
+            /** Start Seconds */
+            start_seconds: number;
+            /** Text */
+            text: string;
+            /**
+             * Translation
+             * @default
+             */
+            translation: string;
+            /** Translation Emphasis */
+            translation_emphasis?: components["schemas"]["Emphasis"][];
+            translation_style?: components["schemas"]["TextStyle"] | null;
+        };
         /**
          * DownloadAsrModelRecoveryAction
          * @description Download the ASR models required to recover a missing-model failure.
@@ -683,6 +842,17 @@ export interface components {
             /** Model Keys */
             model_keys: ("whisperx" | "alignment")[];
         };
+        /** Emphasis */
+        Emphasis: {
+            /** Bold */
+            bold: boolean;
+            /** Color */
+            color: string;
+            /** End */
+            end: number;
+            /** Start */
+            start: number;
+        };
         /**
          * ExecutionProgressOverview
          * @description Current worker progress, when a stage reports it.
@@ -716,12 +886,135 @@ export interface components {
             /** Start S */
             start_s?: number | null;
         };
+        /** ExportOperation */
+        ExportOperation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "export";
+            request: components["schemas"]["ExportRequest"];
+            /** Task Id */
+            task_id: string;
+        };
+        /** ExportRequest */
+        ExportRequest: {
+            /** Arctime Template Id */
+            arctime_template_id?: string | null;
+            /**
+             * Bilingual
+             * @default false
+             */
+            bilingual: boolean;
+            document?: components["schemas"]["SubtitleDocument"] | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "ass" | "burn" | "arctime";
+            style: components["schemas"]["SubtitleStyle"];
+            /** Video */
+            video: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** JobInput */
+        JobInput: {
+            /**
+             * Engine
+             * @default whisper.cpp
+             * @enum {string}
+             */
+            engine: "whisper.cpp" | "whisperx";
+            /** Highlights */
+            highlights?: number | null;
+            /**
+             * Language
+             * @default auto
+             */
+            language: string;
+            /**
+             * Live
+             * @default false
+             */
+            live: boolean;
+            /** Ranges */
+            ranges?: [
+                string,
+                string
+            ][];
+            /**
+             * Saozi
+             * @default false
+             */
+            saozi: boolean;
+            /** Subtitle Template Id */
+            subtitle_template_id?: string | null;
+            /** Url */
+            url: string;
+        };
         JsonValue: unknown;
+        /** LibraryItem */
+        LibraryItem: {
+            /** Archived */
+            archived: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Status */
+            status: string;
+            /** Tags */
+            tags: string[];
+            /** Task Id */
+            task_id: string;
+            /** Title */
+            title: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: string;
+        };
+        /** LibraryPage */
+        LibraryPage: {
+            /** Items */
+            items: components["schemas"]["LibraryItem"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total */
+            total: number;
+        };
+        /** LibraryPatch */
+        LibraryPatch: {
+            /** Archived */
+            archived?: boolean | null;
+            /** Expected Version */
+            expected_version: string;
+            /** Tags */
+            tags?: string[] | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** LiveOperation */
+        LiveOperation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "process_live";
+            request: components["schemas"]["JobInput"];
+            /** Task Id */
+            task_id: string;
+        };
         /**
          * LocalDirectoryResponse
          * @description The discovered roots and entries for one optional selected directory.
@@ -778,6 +1071,44 @@ export interface components {
             /** Root Id */
             root_id: string;
         };
+        /** OperationView */
+        OperationView: {
+            /** Attempt */
+            attempt: number;
+            /** Cancel Requested */
+            cancel_requested: boolean;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "process_recording" | "process_live" | "translate" | "export";
+            /** Position */
+            position: number;
+            /** Priority */
+            priority: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "paused" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
+            /** Task Id */
+            task_id: string;
+        };
+        /** OperationsSnapshot */
+        OperationsSnapshot: {
+            /** Operations */
+            operations: components["schemas"]["OperationView"][];
+            /** Paused */
+            paused: boolean;
+            /** Recovering */
+            recovering: boolean;
+            /** Revision */
+            revision: number;
+        };
         /**
          * ProcessingProfileResponse
          * @description A fixed first-phase processing profile.
@@ -797,6 +1128,13 @@ export interface components {
         ProcessingProfilesResponse: {
             /** Profiles */
             profiles: components["schemas"]["ProcessingProfileResponse"][];
+        };
+        /** QueueAdmissions */
+        QueueAdmissions: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Paused */
+            paused: boolean;
         };
         /**
          * QueueItemResponse
@@ -845,6 +1183,37 @@ export interface components {
              * @enum {string}
              */
             state: "queued" | "paused";
+        };
+        /** RecordingOperation */
+        RecordingOperation: {
+            /**
+             * Engine
+             * @enum {string}
+             */
+            engine: "whisper.cpp" | "whisperx";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "process_recording";
+            request: components["schemas"]["JobInput"];
+            /** Task Id */
+            task_id: string;
+        };
+        /** ReorderOperations */
+        ReorderOperations: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Ordered Ids */
+            ordered_ids: string[];
+        };
+        /** RetryOperation */
+        RetryOperation: {
+            /**
+             * Acknowledge External Outcome
+             * @default false
+             */
+            acknowledge_external_outcome: boolean;
         };
         /**
          * RetryStageRecoveryAction
@@ -918,6 +1287,41 @@ export interface components {
             status: "pending" | "planned" | "running" | "success" | "failed" | "cancelled" | "skipped";
             /** Summary */
             summary: string | null;
+        };
+        /** SubtitleDocument */
+        SubtitleDocument: {
+            /** Cues */
+            cues: components["schemas"]["Cue"][];
+            /** Duration */
+            duration: number;
+            /** Fps */
+            fps: number;
+            /** Height */
+            height: number;
+            /** Revision */
+            revision: number;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            style: components["schemas"]["SubtitleStyle"];
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
+            /** Width */
+            width: number;
+        };
+        /** SubtitleStyle */
+        SubtitleStyle: {
+            original?: components["schemas"]["TextStyle"];
+            translation?: components["schemas"]["TextStyle"];
+            /**
+             * Version
+             * @default 1
+             * @constant
+             */
+            version: 1;
         };
         /**
          * TaskArtifactOverview
@@ -1104,6 +1508,173 @@ export interface components {
             /** Summary */
             summary: string | null;
         };
+        /** TextStyle */
+        TextStyle: {
+            /**
+             * Align
+             * @default 2
+             */
+            align: number;
+            /**
+             * Background Color
+             * @default #000000
+             */
+            background_color: string;
+            /**
+             * Background Opacity
+             * @default 0
+             */
+            background_opacity: number;
+            /**
+             * Bold
+             * @default false
+             */
+            bold: boolean;
+            /**
+             * Color
+             * @default #FFFFFF
+             */
+            color: string;
+            /**
+             * Font
+             * @default Arial
+             */
+            font: string;
+            /**
+             * Hidden
+             * @default false
+             */
+            hidden: boolean;
+            /**
+             * Italic
+             * @default false
+             */
+            italic: boolean;
+            /**
+             * Line Height
+             * @default 1.2
+             */
+            line_height: number;
+            /**
+             * Margin
+             * @default 96
+             */
+            margin: number;
+            /**
+             * Margin Left
+             * @default 20
+             */
+            margin_left: number;
+            /**
+             * Margin Right
+             * @default 20
+             */
+            margin_right: number;
+            /**
+             * Max Width
+             * @default 100
+             */
+            max_width: number;
+            /**
+             * Opacity
+             * @default 1
+             */
+            opacity: number;
+            /**
+             * Outline
+             * @default 2
+             */
+            outline: number;
+            /**
+             * Outline Color
+             * @default #000000
+             */
+            outline_color: string;
+            /**
+             * Padding
+             * @default 0
+             */
+            padding: number;
+            /**
+             * Position
+             * @default bottom
+             * @enum {string}
+             */
+            position: "top" | "bottom";
+            /**
+             * Rotation
+             * @default 0
+             */
+            rotation: number;
+            /**
+             * Scale X
+             * @default 100
+             */
+            scale_x: number;
+            /**
+             * Scale Y
+             * @default 100
+             */
+            scale_y: number;
+            /**
+             * Shadow
+             * @default 0
+             */
+            shadow: number;
+            /**
+             * Shadow Color
+             * @default #000000
+             */
+            shadow_color: string;
+            /**
+             * Size
+             * @default 48
+             */
+            size: number;
+            /**
+             * Spacing
+             * @default 0
+             */
+            spacing: number;
+            /**
+             * Underline
+             * @default false
+             */
+            underline: boolean;
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
+        };
+        /** TranslateOperation */
+        TranslateOperation: {
+            /** Document Revision */
+            document_revision?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "translate";
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "deepseek" | "chatgpt" | "hf";
+            /**
+             * Source Language
+             * @enum {string}
+             */
+            source_language: "ja" | "zh";
+            /**
+             * Target Language
+             * @enum {string}
+             */
+            target_language: "ja" | "zh";
+            /** Task Id */
+            task_id: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1116,6 +1687,16 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WaitingOperation */
+        WaitingOperation: {
+            /** Priority */
+            priority?: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "paused";
         };
     };
     responses: never;
@@ -1589,6 +2170,296 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_library_api_v2_library_get: {
+        parameters: {
+            query?: {
+                search?: string;
+                tag?: string | null;
+                include_archived?: boolean;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_library_api_v2_library__task_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_operations_api_v2_operations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+        };
+    };
+    create_operation_api_v2_operations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingOperation"] | components["schemas"]["LiveOperation"] | components["schemas"]["TranslateOperation"] | components["schemas"]["ExportOperation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    admissions_api_v2_operations_queue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueAdmissions"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reorder_api_v2_operations_reorder_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReorderOperations"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_api_v2_operations__operation_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_api_v2_operations__operation_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RetryOperation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    waiting_api_v2_operations__operation_id__waiting_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                operation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WaitingOperation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationsSnapshot"];
                 };
             };
             /** @description Validation Error */

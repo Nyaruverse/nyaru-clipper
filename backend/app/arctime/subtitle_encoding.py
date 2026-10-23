@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.arctime import media
 from app.arctime.subtitle_inputs import ExportError
+from app.services.task_execution import current_execution
 
 
 def subtitle_ffmpeg() -> str:
@@ -61,8 +62,11 @@ def burn_clip(source: Path, working: Path, duration: float, notify: Callable[[st
         "-c:v", "libx264", "-preset", "fast", "-crf", "20", "-c:a", "aac", "-movflags", "+faststart",
         "-progress", "pipe:1", "-nostats", str(target)]
     messages: queue.Queue[str | None] = queue.Queue()
+    execution = current_execution.get()
     with (working / "encoder.log").open("w", encoding="utf-8") as log:
-        with subprocess.Popen(command, cwd=working, stdout=subprocess.PIPE, stderr=log, text=True) as process:
+        process_scope = execution.process(command, cwd=working, stderr=log) if execution else subprocess.Popen(
+            command, cwd=working, stdout=subprocess.PIPE, stderr=log, text=True)
+        with process_scope as process:
             if process.stdout is None:
                 raise ExportError("编码进度管道不可用")
             def read_progress() -> None:
@@ -75,6 +79,8 @@ def burn_clip(source: Path, working: Path, duration: float, notify: Callable[[st
             deadline = time.monotonic() + max(300, duration * 10)
             try:
                 while time.monotonic() < deadline:
+                    if execution:
+                        execution.check()
                     try:
                         line = messages.get(timeout=.25)
                     except queue.Empty:

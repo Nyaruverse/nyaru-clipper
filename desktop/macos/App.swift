@@ -49,7 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         NSApp.activate(ignoringOtherApps: true)
         web.loadHTMLString("<html lang='zh-CN'><body style='font:16px -apple-system;padding:48px;background:#f3f5f7;color:#20292e'><h1 style='font-size:24px'>Nyaru Clipper</h1><p>正在启动本地工作台…</p><p style='color:#58666e'>首次启动需要准备语音模型，请稍候。</p></body></html>", baseURL: nil)
         do {
-            let data = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Nyaru Clipper", isDirectory: true)
+            let arguments = CommandLine.arguments
+            func option(_ name: String) throws -> String? {
+                guard let index = arguments.firstIndex(of: name) else { return nil }
+                guard index + 1 < arguments.count, arguments[index + 1].hasPrefix("/") else {
+                    throw NSError(domain: "NyaruStartup", code: 1, userInfo: [NSLocalizedDescriptionKey: "启动参数需要绝对路径：\(name)"])
+                }
+                return arguments[index + 1]
+            }
+            let runtime = try option("--unified-runtime")
+            let guardRecipe = try option("--migration-guard")
+            let data = runtime.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
+                ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Nyaru Clipper", isDirectory: true)
             try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             ready = data.appendingPathComponent("startup-\(UUID().uuidString).json")
             let logURL = data.appendingPathComponent("app.log")
@@ -61,6 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
             let process = Process()
             process.executableURL = Bundle.main.resourceURL!.appendingPathComponent("runtime/nyaru-backend/nyaru-backend")
             process.arguments = ["--data", data.path, "--ready", ready.path, "--parent-pid", String(getpid())]
+            if let runtime { process.arguments?.append(contentsOf: ["--unified-runtime", runtime]) }
+            if let guardRecipe { process.arguments?.append(contentsOf: ["--migration-guard", guardRecipe]) }
             process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory(), "LANG": "en_US.UTF-8"]
             process.standardOutput = log
             process.standardError = log
@@ -130,12 +143,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         guard let process = helper, process.isRunning else { return .terminateNow }
         let pid = process.processIdentifier
         if kill(-pid, SIGTERM) != 0 { process.terminate() }
-        DispatchQueue.global().async {
-            Thread.sleep(forTimeInterval: 3)
-            kill(-pid, SIGKILL)
-            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
-        }
+        waitForHelper(process)
         return .terminateLater
+    }
+
+    func waitForHelper(_ process: Process) {
+        DispatchQueue.global().async {
+            let deadline = Date().addingTimeInterval(20)
+            while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+            DispatchQueue.main.async {
+                guard process.isRunning else { NSApp.reply(toApplicationShouldTerminate: true); return }
+                let alert = NSAlert()
+                alert.messageText = "本地服务仍在结束当前操作"
+                alert.informativeText = "继续等待可保留正常收尾。强制退出会中断未完成的操作；下次启动时将核对已发布结果。"
+                alert.addButton(withTitle: "继续等待")
+                alert.addButton(withTitle: "强制退出").hasDestructiveAction = true
+                alert.beginSheetModal(for: self.window) { response in
+                    if response == .alertSecondButtonReturn {
+                        DispatchQueue.global().async {
+                            kill(-process.processIdentifier, SIGKILL)
+                            process.waitUntilExit()
+                            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+                        }
+                    } else { self.waitForHelper(process) }
+                }
+            }
+        }
     }
 
     func quitBridge(_ script: String, completion: @escaping (Result<Any, Error>) -> Void) {

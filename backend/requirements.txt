@@ -50,3 +50,4 @@ uvicorn==0.51.0
 uvloop==0.22.1
 watchfiles==1.2.0
 websockets==16.1
+yt-dlp==2026.8.19

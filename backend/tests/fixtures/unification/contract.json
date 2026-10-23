@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "source_instances": [
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000002"
+  ],
+  "legacy_id": "abcdef123456",
+  "media": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "frame_count": 4501,
+    "speech": [
+      {"language": "ja", "voice": "Kyoko", "start": 1, "text": "今日はいい天気です。字幕の位置と時間を確認します。", "translation": "今天天气很好。我们检查字幕的位置和时间。"},
+      {"language": "zh", "voice": "Tingting", "start": 21, "text": "这是统一架构的测试录像。请检查字幕和视频是否一致。", "translation": "これは統一アーキテクチャのテスト映像です。字幕と映像が一致しているか確認してください。"}
+    ]
+  },
+  "edit": {"cue_count": 5000, "step_ms": 30, "duration_ms": 20},
+  "live": {"closed_chunks": 7, "chunk_seconds": 20, "tail_seconds": 7, "cut_seconds": 120, "expected_clip_seconds": [120, 27], "discontinuity": [60, 65]},
+  "product": {
+    "clip_start": 1,
+    "clip_end": 6,
+    "cue_start": 2,
+    "cue_end": 4,
+    "text": "Unified fixture",
+    "translation": "统一测试字幕",
+    "font": "Arial",
+    "font_size": 48,
+    "roi": [0, 480, 1280, 240],
+    "sample_frames": [29, 30, 31, 60, 88, 89, 90],
+    "visible_frames": [30, 31, 60, 88, 89],
+    "cpu": {"video": "libx264", "preset": "fast", "crf": 20, "audio": "aac", "container": "mp4", "movflags": "+faststart"},
+    "reference": {"video": "ffv1", "bbox_px": 1, "rgb_rmse": 3.0},
+    "tolerance": {"bbox_px": 2, "rgb_rmse": 8.0, "boundary_frames": 1, "srt_ms": 1, "ass_ms": 10}
+  },
+  "rollback": ["R0", "R1", "R2"],
+  "roots": ["task_root", "settings_root", "global_package_root", "migration_registry", "guard_root"],
+  "credential_policy": "protected_reference_only",
+  "evidence_limits": ["synthetic speech requires recognition review", "frozen WhisperX records are format fixtures, not GPU evidence", "discovery is not prepare, verify, activate or rollback acceptance"]
+}

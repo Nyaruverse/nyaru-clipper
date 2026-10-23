@@ -15,12 +15,16 @@ class VideoDecodeError(ValueError):
 
 def validate_video_decode(path: Path, duration: float) -> None:
     try:
-        with tempfile.TemporaryFile() as diagnostics:
-            result = subprocess.run([
+        with tempfile.TemporaryFile(mode='w+b') as diagnostics:
+            command = [
                 media.tool_path('ffmpeg'), '-nostdin', '-hide_banner', '-v', 'error', '-threads', '2',
                 '-i', str(path), '-map', '0:v:0', '-an', '-sn', '-dn',
                 '-fps_mode', 'passthrough', '-enc_time_base', 'demux', '-f', 'null', '-',
-            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=diagnostics,
+            ]
+            from app.services.task_execution import current_execution
+            execution = current_execution.get()
+            result = execution.run_command(command, timeout=max(60, duration * 2), log=diagnostics) if execution else subprocess.run(
+                command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=diagnostics,
                 timeout=max(60, duration * 2), check=False)
             diagnostics.seek(0, os.SEEK_END)
             if result.returncode or diagnostics.tell():

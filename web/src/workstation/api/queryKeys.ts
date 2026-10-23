@@ -10,4 +10,5 @@ export const workstationKeys = {
   list: (filters: WorkstationTaskListFilters) => ["workstation", "tasks", "list", filters] as const,
   detail: (taskId: string) => ["workstation", "tasks", "detail", taskId] as const,
   queue: ["workstation", "queue"] as const,
+  operations: ['workstation', 'operations'] as const,
 } as const;

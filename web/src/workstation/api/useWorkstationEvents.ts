@@ -37,18 +37,21 @@ function isTaskProjectionEvent(eventName: string): boolean {
   return eventName === "task.created" || eventName === "task.deleted" || eventName === "task.updated" || eventName === "stage.updated" || eventName === "artifact.ready";
 }
 
-export function useWorkstationEvents(): WorkstationEventConnection {
+export function useWorkstationEvents(options: {enabled?: boolean; origin?: string} = {}): WorkstationEventConnection {
+  const {enabled = true, origin} = options;
   const queryClient = useQueryClient();
   const [state, setState] = useState<WorkstationConnectionState>("connecting");
   const [lastEventId, setLastEventId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     let eventSource: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     let tasksPending = false;
     let queuePending = false;
+    let operationsPending = false;
     const pendingTaskIds = new Set<string>();
     let consecutiveFailures = 0;
     let lastReceivedEventId: string | null = null;
@@ -66,13 +69,21 @@ export function useWorkstationEvents(): WorkstationEventConnection {
         refreshTimer = null;
       }
       if (tasksPending) {
+        refreshProjection(['companion', 'library']);
         refreshProjection(workstationKeys.summary);
         refreshProjection(["workstation", "tasks", "list"]);
         for (const taskId of pendingTaskIds) refreshProjection(workstationKeys.detail(taskId));
       }
       if (queuePending) refreshProjection(workstationKeys.queue);
+      if (operationsPending) {
+        refreshProjection(workstationKeys.operations);
+        refreshProjection(["companion", "jobs"]);
+        refreshProjection(["companion", "job"]);
+        refreshProjection(["companion", "subtitle-exports"]);
+      }
       tasksPending = false;
       queuePending = false;
+      operationsPending = false;
       pendingTaskIds.clear();
     };
 
@@ -81,8 +92,16 @@ export function useWorkstationEvents(): WorkstationEventConnection {
     };
 
     const invalidateFallbackProjections = () => {
+      void queryClient.invalidateQueries({ queryKey: ['companion', 'library'] });
+      void queryClient.invalidateQueries({ queryKey: ['companion', 'config'] });
+      void queryClient.invalidateQueries({ queryKey: ['companion', 'studio-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['companion', 'subtitle-settings'] });
       void queryClient.invalidateQueries({ queryKey: ["workstation", "tasks"] });
       void queryClient.invalidateQueries({ queryKey: workstationKeys.queue });
+      void queryClient.invalidateQueries({ queryKey: workstationKeys.operations });
+      void queryClient.invalidateQueries({ queryKey: ["companion", "job"] });
+      void queryClient.invalidateQueries({ queryKey: ["companion", "jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["companion", "subtitle-exports"] });
     };
 
     const stopFallbackPolling = () => {
@@ -104,7 +123,7 @@ export function useWorkstationEvents(): WorkstationEventConnection {
       }
 
       setState(consecutiveFailures >= workstationReconnectDelays.length ? "fallback" : "connecting");
-      eventSource = new EventSource(getWorkstationEventsUrl(lastReceivedEventId));
+      eventSource = new EventSource(getWorkstationEventsUrl(lastReceivedEventId, origin));
       eventSource.onopen = () => {
         if (disposed) {
           return;
@@ -143,6 +162,16 @@ export function useWorkstationEvents(): WorkstationEventConnection {
             lastReceivedEventId = event.lastEventId;
             setLastEventId(event.lastEventId);
           }
+          if (eventName === "settings.saved" || eventName === "stream.reset") {
+            refreshProjection(["companion", "config"]);
+            refreshProjection(["companion", "studio-settings"]);
+            refreshProjection(["companion", "subtitle-settings"]);
+          }
+          if (eventName.startsWith("operation.") || eventName.startsWith("publication.") || eventName === "document.saved" || eventName === "stream.reset") {
+            operationsPending = true;
+            if (eventName === "stream.reset") {tasksPending = true; queuePending = true;}
+            scheduleRefresh();
+          }
           if (isTaskProjectionEvent(eventName)) {
             tasksPending = true;
             const taskId = parseEventPayload(event.data).task_id;
@@ -169,7 +198,7 @@ export function useWorkstationEvents(): WorkstationEventConnection {
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       stopFallbackPolling();
     };
-  }, [queryClient]);
+  }, [queryClient, enabled, origin]);
 
   return { state, lastEventId };
 }

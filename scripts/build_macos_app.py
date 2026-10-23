@@ -61,6 +61,7 @@ def main() -> int:
     parser.add_argument("--vad-model", type=Path, default=Path.home() / ".cache/nyaru-clipper/models/ggml-silero-v6.2.0.bin")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--ffmpeg", type=Path, default=Path("/opt/homebrew/opt/ffmpeg@7/bin/ffmpeg"))
+    parser.add_argument('--unified-candidate', action='store_true')
     options = parser.parse_args()
     if sys.platform != "darwin" or platform.machine() != "arm64":
         parser.error("This build requires an Apple Silicon macOS host")
@@ -112,6 +113,11 @@ def main() -> int:
                "--workpath", str(work / "pyinstaller"), "--specpath", str(work), "--collect-all", "yt_dlp",
                "--add-data", f"{ROOT / 'web/dist'}:web", "--add-data", f"{model_source}:models",
                "--add-data", f"{vad_source}:models"]
+    if options.unified_candidate:
+        command.extend(['--add-data', f'{ROOT / "backend/alembic"}:alembic',
+            '--add-data', f'{ROOT / "backend/alembic.ini"}:.', '--collect-all', 'sqlmodel',
+            '--collect-all', 'alembic', '--collect-all', 'pydantic_settings', '--collect-submodules', 'app.api',
+            '--hidden-import', 'app.arctime.unified_cli', '--hidden-import', 'app.arctime.migration_cli'])
     for source, destination in binaries:
         command.extend(["--add-binary", f"{source}:{destination}"])
     command.append(str(ROOT / "scripts/macos_companion.py"))
@@ -123,6 +129,9 @@ def main() -> int:
         (work / "pyinstaller.log").write_text(exc.stdout)
         raise
     validate_subtitle_tool(resources / "runtime/nyaru-backend/_internal/ffmpeg")
+    if options.unified_candidate:
+        from build_unified_recovery import freeze
+        freeze(resources / 'recovery', legacy_helper=True, tools_root=resources / 'runtime/nyaru-backend/_internal')
 
     print("Compiling native window…", flush=True)
     print(run(["xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macos27.0", "-framework", "AppKit", "-framework", "WebKit",

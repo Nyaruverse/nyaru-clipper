@@ -24,11 +24,14 @@ class WorkstationMetadataBackfillError(OSError):
         return f"Unable to backfill metadata for: {', '.join(self.task_ids)}"
 
 
-def upgrade_database(database_url: str | None = None) -> None:
+def upgrade_database(database_url: str | None = None, *, tasks_root: Path | None = None) -> None:
     """Upgrade a database and complete any pending metadata backfill."""
     from app.db import get_database_url
 
-    ensure_data_dir()
+    if tasks_root is None:
+        ensure_data_dir()
+    elif database_url is None:
+        raise ValueError('an explicit task root requires an explicit database URL')
     resolved_url = database_url or get_database_url()
     backend_dir = Path(__file__).resolve().parents[1]
     config = Config(str(backend_dir / "alembic.ini"))
@@ -36,7 +39,7 @@ def upgrade_database(database_url: str | None = None) -> None:
     command.upgrade(config, "head")
 
     if _metadata_backfill_is_pending(resolved_url):
-        _run_pending_metadata_backfill(resolved_url)
+        _run_pending_metadata_backfill(resolved_url, tasks_root=tasks_root)
 
 
 def _metadata_backfill_is_pending(database_url: str) -> bool:
@@ -49,12 +52,12 @@ def _metadata_backfill_is_pending(database_url: str) -> bool:
     return completed_at is None
 
 
-def _run_pending_metadata_backfill(database_url: str) -> None:
+def _run_pending_metadata_backfill(database_url: str, *, tasks_root: Path | None = None) -> None:
     engine = create_engine(database_url, connect_args={"check_same_thread": False})
     try:
         with Session(engine) as session:
             try:
-                backfill_workstation_metadata(session, get_tasks_root())
+                backfill_workstation_metadata(session, tasks_root if tasks_root is not None else get_tasks_root())
             except WorkstationMetadataBackfillError:
                 session.commit()
                 raise
@@ -73,7 +76,8 @@ def backfill_workstation_metadata(session: Session, tasks_root: Path) -> None:
     for task in session.exec(select(Task)).all():
         try:
             task_root = tasks_root / task.id
-            task.title = _task_title(task, task_root)
+            if task.title is None:
+                task.title = _task_title(task, task_root)
             task.storage_bytes = _directory_size(task_root)
         except OSError:
             failed_task_ids.append(task.id)

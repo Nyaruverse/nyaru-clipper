@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import shutil
@@ -55,11 +56,19 @@ def main(argv: list[str] | None = None) -> int:
         import yt_dlp
         yt_dlp.main(args[1:])
         return 0
+    if args and args[0] == '--unified-cli':
+        from app.arctime.unified_cli import main as unified_main
+        return unified_main(args[1:])
+    if args and args[0] == '--migration-cli':
+        from app.arctime.migration_cli import main as migration_main
+        return migration_main(args[1:])
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--ready", type=Path, required=True)
     parser.add_argument("--parent-pid", type=int, required=True)
+    parser.add_argument('--unified-runtime', type=Path)
+    parser.add_argument('--migration-guard', type=Path)
     options = parser.parse_args(args)
     if os.getpgrp() != os.getpid():
         os.setsid()
@@ -67,18 +76,39 @@ def main(argv: list[str] | None = None) -> int:
     resources = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[3]
     os.environ["GGML_BACKEND_PATH"] = str(resources)
     os.environ["APP_DATA_DIR"] = str(options.data)
-    model = prepare_model(resources, options.data)
+    with ExitStack() as stack:
+        return serve(options, resources, stack)
+
+
+def serve(options: argparse.Namespace, resources: Path, stack: ExitStack) -> int:
+    host = None
+    if options.unified_runtime is not None:
+        from app.services.unified_runtime import open_runtime
+        host = open_runtime(options.unified_runtime)
+        if options.migration_guard is not None:
+            from app.arctime.migration_cli import GuardRecipe
+            from app.services.source_seal import Supervisor
+            recipe = GuardRecipe.model_validate_json(options.migration_guard.read_bytes())
+            if not recipe.guard_root.absolute().is_relative_to(host.guard_root):
+                raise ValueError('registered source guard domain required')
+            supervisor = stack.enter_context(Supervisor(recipe.domains, recipe.guard_root, host.credential_root, recipe.group_id, recipe.locks))
+            supervisor.verify()
+            host.supervisor = supervisor
+        model = host.model
+    else:
+        model = prepare_model(resources, options.data)
     from app.arctime.gui import create_app
     import uvicorn
+    from app.arctime.http_server import CompanionServer
 
-    app = create_app(options.data / "runs", model=model, web_dist=resources / "web")
+    app = create_app(host.root if host else options.data / 'runs', model=model, web_dist=resources / "web", host=host)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(128)
         port = listener.getsockname()[1]
         write_json(options.ready, {"url": f"http://127.0.0.1:{port}", "pid": os.getpid()})
         try:
-            uvicorn.Server(uvicorn.Config(app, log_level="warning", access_log=False)).run(sockets=[listener])
+            CompanionServer(uvicorn.Config(app, log_level="warning", access_log=False)).run(sockets=[listener])
         finally:
             options.ready.unlink(missing_ok=True)
     return 0

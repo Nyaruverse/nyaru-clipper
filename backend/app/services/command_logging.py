@@ -46,7 +46,9 @@ def run_logged_command(
         return redact(message)
 
     append_stage_log(log_path, redact(f"$ {' '.join(args)}"))
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    from app.services.task_execution import current_execution
+    execution = current_execution.get()
+    result = execution.run_command(args) if execution else subprocess.run(args, capture_output=True, text=True, check=False)
     if redact_output:
         result.stdout = redact_diagnostic(result.stdout)
         result.stderr = redact_diagnostic(result.stderr)

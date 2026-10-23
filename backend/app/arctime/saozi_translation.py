@@ -198,6 +198,11 @@ def translate(directory: Path, key: SecretStr, *, model: str = translation.MODEL
             media.write_json(checkpoint, state)
             return state
         except Exception as exc:
+            from app.services.task_execution import current_execution
+            if current_execution.get() is not None:
+                state.update(state='failed', error='翻译已中断；已完成批次已保留，请检查操作状态')
+                media.write_json(checkpoint, state)
+                raise
             message = str(exc) if isinstance(exc, ValueError) else "翻译处理失败；已完成批次和原视频已保留，请重试"
             state.update(state="failed", error=message.replace(key.get_secret_value(), "[REDACTED]") if key.get_secret_value() else message)
             media.write_json(checkpoint, state)

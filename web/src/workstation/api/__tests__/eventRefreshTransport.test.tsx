@@ -101,6 +101,9 @@ describe("event projection refresh at the fetch boundary", () => {
     act(() => latestStream().onerror?.());
     await tick(15_000);
     expect(requests).toHaveLength(4);
+    for (const name of ['library', 'config', 'studio-settings', 'subtitle-settings']) {
+      expect(invalidations).toHaveBeenCalledWith({queryKey: ['companion', name]});
+    }
     await respondAll(requests.slice(-2), 2);
     await tick(15_000);
     act(() => latestStream().onopen?.());

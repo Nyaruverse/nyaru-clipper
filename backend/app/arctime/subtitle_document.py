@@ -5,13 +5,18 @@ import json
 import os
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from app.arctime import media, workflow
 from app.arctime.subtitle_style import SubtitleStyle, TextStyle, _text
+
+if TYPE_CHECKING:
+    from app.services.task_artifacts import ResolvedArtifacts
+    from app.services.task_documents import Documents
 
 
 class Emphasis(BaseModel):
@@ -81,7 +86,9 @@ class SourceProof(BaseModel):
     content: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
-def base_document(directory: Path, style: SubtitleStyle) -> SubtitleDocument:
+def base_document(directory: Path, style: SubtitleStyle, *, artifacts: ResolvedArtifacts | None = None) -> SubtitleDocument:
+    if artifacts is not None:
+        return artifacts.document(style)
     # Import here to keep the request models independent of filesystem operations.
     from app.arctime.subtitle_inputs import ExportError, ExportRequest, load_inputs
     from app.arctime.subtitle_encoding import video_metadata
@@ -158,11 +165,12 @@ def load_document(directory: Path, style: SubtitleStyle, *, source: bool = False
     return document.model_copy(update={'source_fingerprint': base.source_fingerprint})
 
 
-def save_document(directory: Path, document: SubtitleDocument, *, base: SubtitleDocument | None = None) -> SubtitleDocument:
+def save_document(directory: Path, document: SubtitleDocument, *, base: SubtitleDocument | None = None,
+                  artifacts: ResolvedArtifacts | None = None) -> SubtitleDocument:
     with workflow.exclusive_lock(workflow._path(directory, '.lock')):
-        base = base or base_document(directory, document.style)
-        if base._signature != _source_signature(directory):
-            base = base_document(directory, document.style)
+        base = base or base_document(directory, document.style, artifacts=artifacts)
+        if base._signature != _source_signature(directory, artifacts=artifacts):
+            base = base_document(directory, document.style, artifacts=artifacts)
         validate_source(document, base)
         document = document.model_copy(update={'source_fingerprint': base.source_fingerprint})
         path = workflow._path(directory, 'subtitle-document.json')
@@ -188,7 +196,9 @@ def clip_document(document: SubtitleDocument, start: float, end: float) -> Subti
     return document.model_copy(update={'cues': cues, 'duration': end - start})
 
 
-def _source_signature(directory: Path) -> tuple:
+def _source_signature(directory: Path, *, artifacts: ResolvedArtifacts | None = None) -> tuple:
+    if artifacts is not None:
+        return artifacts.signature()
     job_path = workflow._path(directory, 'job.json')
     job = json.loads(job_path.read_bytes())
     names = {'job.json', 'translation.json', 'subtitle-source-proof.json', job['video'], job['subtitles'], *job['artifacts']}
@@ -209,19 +219,23 @@ def _source_signature(directory: Path) -> tuple:
 
 
 class DocumentStore:
-    def __init__(self) -> None:
+    def __init__(self, *, artifacts: Callable[[Path], ResolvedArtifacts | None] | None = None,
+                 persistent: Documents | None = None) -> None:
+        self.artifacts = artifacts
+        self.persistent = persistent
         self.lock = threading.Lock()
         self.bases: OrderedDict[Path, tuple[tuple, SubtitleDocument]] = OrderedDict()
 
     def base(self, directory: Path, style: SubtitleStyle) -> SubtitleDocument:
-        signature = _source_signature(directory)
+        artifacts = self.artifacts(directory) if self.artifacts else None
+        signature = _source_signature(directory, artifacts=artifacts)
         with self.lock:
             cached = self.bases.get(directory)
             if cached and cached[0] == signature:
                 self.bases.move_to_end(directory)
                 return cached[1].model_copy(update={'style': style})
-        document = base_document(directory, style)
-        if _source_signature(directory) != signature:
+        document = base_document(directory, style, artifacts=artifacts)
+        if _source_signature(directory, artifacts=artifacts) != signature:
             raise ValueError('字幕来源在校验期间改变，请重试')
         with self.lock:
             self.bases[directory] = signature, document
@@ -231,10 +245,18 @@ class DocumentStore:
         return document
 
     def load(self, directory: Path, style: SubtitleStyle, *, source: bool = False) -> SubtitleDocument:
-        job = json.loads(workflow._path(directory, 'job.json').read_bytes())
-        if job.get('subtitle_template'):
-            style = SubtitleStyle.model_validate(job['subtitle_template']['style'])
-        return load_document(directory, style, source=source, base=self.base(directory, style))
+        if self.artifacts is None or self.artifacts(directory) is None:
+            job = json.loads(workflow._path(directory, 'job.json').read_bytes())
+            if job.get('subtitle_template'):
+                style = SubtitleStyle.model_validate(job['subtitle_template']['style'])
+        base = self.base(directory, style)
+        if self.persistent is not None and self.persistent.is_activated(directory.name):
+            return self.persistent.load(directory.name, base, source=source)
+        return load_document(directory, style, source=source, base=base)
 
     def save(self, directory: Path, document: SubtitleDocument) -> SubtitleDocument:
-        return save_document(directory, document, base=self.base(directory, document.style))
+        artifacts = self.artifacts(directory) if self.artifacts else None
+        if self.persistent is not None and self.persistent.is_activated(directory.name):
+            base = self.base(directory, document.style)
+            return self.persistent.save(directory.name, document, base=base)
+        return save_document(directory, document, base=self.base(directory, document.style), artifacts=artifacts)

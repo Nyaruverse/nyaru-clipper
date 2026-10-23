@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseTime, time } from "./companionApi";
+import { bilingualFile, parseTime, time } from "./companionApi";
+
+it('uses the supplied language direction for bilingual files', () => {
+  expect(bilingualFile({bilingual_suffix: '.zh-ja'}, 'subtitles.srt')).toBe('subtitles.zh-ja.srt');
+  expect(bilingualFile({bilingual_suffix: '.zh-ja'}, 'clip-001.srt', 'vtt')).toBe('clip-001.zh-ja.vtt');
+  expect(bilingualFile(undefined, 'subtitles.srt')).toBe('subtitles.ja-zh.srt');
+});
 
 describe("time", () => {
   it.each([

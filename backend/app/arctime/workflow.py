@@ -17,6 +17,7 @@ from typing import Callable, TYPE_CHECKING
 
 from app.arctime import media
 from app.arctime.local_asr import LocalASR
+from app.services.asr_adapter import AsrAdapter
 from app.services.subtitles import render_srt
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ def write_manifest(directory: Path, job: dict) -> None:
 
 
 def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highlight_count: int | None,
-               transcriber: LocalASR | None = None, *, run_id: str | None = None,
+               transcriber: AsrAdapter | None = None, *, run_id: str | None = None,
                progress: Callable[[str], None] | None = None, saozi: bool = False,
                local_source: Path | None = None, llm_model: str | None = None,
                owned_upload: OwnedUpload | None = None) -> Path:
@@ -97,7 +98,10 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
         raise OSError(errno.EINVAL, "Choose one local input")
     identity = (transcriber or LocalASR()).identity()
     run_id = run_id or uuid.uuid4().hex[:12]
-    if not re.fullmatch(r"[0-9a-f]{12}", run_id):
+    from app.services.task_execution import current_execution
+    execution = current_execution.get()
+    owned_unified_id = bool(execution and execution.task_id == run_id and re.fullmatch(r"[0-9a-f]{32}", run_id))
+    if not re.fullmatch(r"[0-9a-f]{12}", run_id) and not owned_unified_id:
         raise ValueError("Invalid run identifier")
     root.mkdir(parents=True, exist_ok=True)
     directory = root.resolve() / run_id
@@ -174,7 +178,7 @@ def _publish_text(path: Path, content: str) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def resume_run(directory: Path, transcriber: LocalASR | None = None,
+def resume_run(directory: Path, transcriber: AsrAdapter | None = None,
                *, progress: Callable[[str], None] | None = None,
                selector: SaoziSelector | None = None) -> dict:
     directory = directory.resolve()
