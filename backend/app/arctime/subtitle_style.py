@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import math
 import re
 import unicodedata
+import regex
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -91,12 +92,12 @@ def _text(value: str) -> str:
 def wrap_text(text: str, size: float, width: float) -> str:
     result = []
     used = 0.0
-    for char in text.replace('\r\n', '\n').replace('\r', '\n'):
+    for char in regex.findall(r'\X', text.replace('\r\n', '\n').replace('\r', '\n')):
         if char == '\n':
             result.append(char)
             used = 0.0
             continue
-        advance = 0 if unicodedata.combining(char) else size * 1.2
+        advance = sum(size * 1.2 for point in char if not unicodedata.category(point).startswith('M'))
         if used and used + advance > width - 40:
             result.append('\n')
             used = 0.0
@@ -105,20 +106,61 @@ def wrap_text(text: str, size: float, width: float) -> str:
     return ''.join(result)
 
 
+def alignment_for(style: TextStyle) -> int:
+    return 8 if style.position == 'top' and style.align == 2 and style.x is None and style.y is None else style.align
+
+
+def automatic_layout(items: Sequence[tuple[int, TextStyle, float]], canvas_width: float = 1920) -> list[float]:
+    """Return reference-canvas anchors, reserving visible language blocks before checking fit."""
+    heights = [((count - 1) * style.line_height + max(1.2, style.line_height)) * style.size * style.scale_y / 100 for count, style, _ in items]
+    rows = [(alignment_for(style) - 1) // 3 for _, style, _ in items]
+    margins = [style.margin for _, style, _ in items]
+    centers = [540.0 for _ in items]
+    if len(items) == 2:
+        for index, (_, style, _) in enumerate(items):
+            other = 1 - index
+            if style.x is not None or style.y is not None:
+                continue
+            if rows[index] == rows[other] == 1:
+                centers[index] += (-1 if index == 0 else 1) * (heights[other] + 8) / 2
+            elif rows[index] == rows[other] and ((rows[index] == 0 and index == 0) or (rows[index] == 2 and index == 1)):
+                margins[index] = max(margins[index], margins[other] + heights[other] + 8)
+    anchors = [margins[i] if rows[i] == 2 else centers[i] if rows[i] == 1 else 1080 - margins[i] for i in range(len(items))]
+    for i, (_, style, text_width) in enumerate(items):
+        if style.x is not None or style.y is not None or style.hidden:
+            continue
+        extent = heights[i] + style.outline + style.padding + style.shadow
+        fits = (anchors[i] + extent <= 1060 if rows[i] == 2 else
+                anchors[i] - extent >= 20 if rows[i] == 0 else
+                anchors[i] - extent / 2 >= 20 and anchors[i] + extent / 2 <= 1060)
+        column = (alignment_for(style) - 1) % 3
+        x = style.margin_left if column == 0 else (canvas_width + style.margin_left - style.margin_right) / 2 if column == 1 else canvas_width - style.margin_right
+        left = -text_width * column / 2
+        edge = style.outline + style.padding + style.shadow
+        if style.rotation % 360:
+            top = -heights[i] * (2 - rows[i]) / 2
+            angle = math.radians(style.rotation)
+            corners = [(x + dx * math.cos(angle) + dy * math.sin(angle), anchors[i] - dx * math.sin(angle) + dy * math.cos(angle))
+                       for dx in (left - edge, left + text_width + edge) for dy in (top - edge, top + heights[i] + edge)]
+            fits = all(0 <= px <= canvas_width and 20 <= py <= 1060 for px, py in corners)
+        else:
+            fits = fits and x + left - edge >= 0 and x + left + text_width + edge <= canvas_width
+        if not fits:
+            raise ValueError('Subtitle layout does not fit the canvas; reduce font size, margins, or text length.')
+    return anchors
+
+
 def layout_cues(original: str, translation: str | None, style: SubtitleStyle,
                 width: float) -> tuple[str, str | None, float, float]:
     source = wrap_text(original, style.original.size, width)
     target = wrap_text(translation, style.translation.size, width) if translation is not None else None
-    original_margin, translation_margin = style.original.margin, style.translation.margin
-    if target is not None and style.original.position == style.translation.position:
-        match style.original.position:
-            case 'bottom':
-                original_margin = max(original_margin, translation_margin + len(target.split('\n')) * style.translation.size * 1.2 + 8)
-            case 'top':
-                translation_margin = max(translation_margin, original_margin + len(source.split('\n')) * style.original.size * 1.2 + 8)
-    for text, text_style, margin in ((source, style.original, original_margin), (target, style.translation, translation_margin)):
-        if text is not None and margin + len(text.split('\n')) * text_style.size * 1.2 + text_style.outline > 1060:
-            raise ValueError('Subtitle layout does not fit the canvas; reduce font size, margins, or text length.')
+    visible = [(name, text, item) for name, text, item in (('original', source, style.original), ('translation', target, style.translation)) if text and not item.hidden]
+    anchors = automatic_layout([(len(text.split('\n')), item,
+        max(sum(item.size * 1.2 for point in line if not unicodedata.category(point).startswith('M')) for line in text.split('\n')))
+        for _, text, item in visible], width)
+    margins = {name: anchor if alignment_for(item) >= 7 else 1080 - anchor for (name, _, item), anchor in zip(visible, anchors, strict=True)}
+    original_margin = margins.get('original', style.original.margin)
+    translation_margin = margins.get('translation', style.translation.margin)
     return source, target, original_margin, translation_margin
 
 

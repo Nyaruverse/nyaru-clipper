@@ -1,12 +1,10 @@
 # 本地视频配套工具
 
-输入一个视频链接，自动下载、在本机生成字幕文字和时间轴，再按指定时间段或高光评分导出切片。提供本地浏览器图形界面和命令行；GUI 另支持可选 DeepSeek 双语翻译、[字幕样式、两类模板、ASS、烧录与 ArcTime 精修交接](subtitle-styles.zh-CN.md)。识别和切片在本机进行；ArcTime 采用文件交接，不调用其云转写。
+输入一个视频链接，自动下载、在本机生成字幕文字和时间轴，再按指定时间段或高光评分导出切片。提供本地浏览器图形界面和命令行，支持 macOS/Linux；不启动 ArcTime，不调用其云服务，也不调用翻译或 DeepSeek 校对。生成的 SRT 可以交给字幕编辑器继续校对。
 
 ## 图形界面
 
-顶部「新建任务／切片方式／字幕样式／AI 设置／任务记录／导出」点击后在右侧展开，再点同一入口收起；也可点击关闭按钮或按 Escape。切换入口保留已填写内容和本地文件选择。进度与直播停止按钮始终位于主工作区。见[本次界面验证](toolbar-drawer-acceptance-2026-10-16.zh-CN.md)。
-
-双击启动且内置工具及模型的版本见 [macOS 分支的 App 指南](https://github.com/Nyaruverse/nyaru-clipper/blob/codex/local-companion-macos/docs/macos-app.zh-CN.md)。
+双击启动且内置工具及模型的版本见 [macOS App](macos-app.zh-CN.md)。
 
 在项目根目录执行。首次构建界面需要 Node.js 20 以上和项目指定的 pnpm；Corepack 会使用 `web/package.json` 指定的版本。
 
@@ -20,8 +18,8 @@ cd ..
 
 打开 [本地视频工作台](http://127.0.0.1:8787)。本开发机已安装依赖并完成构建。修改前端源码后需重新构建；无需启动原工作站数据库或 GPU 后端。
 
-1. 在「新建任务」选择「实时录播」「下载视频」或「本地视频」：分别输入 Bilibili 直播间号、BV 号或选择本地视频文件。只需填写编号，程序自动生成地址；切换来源保留各自输入。
-2. 下载视频和本地视频可在「切片方式」选择指定时间段、高光自动切片或臊子。实时录播固定使用臊子，需先配置 AI；切回视频后恢复此前切片选项。本地视频导入独立副本，原文件不修改。指定时间段和高光不要求 AI 授权。
+1. 输入视频链接和视频语种。
+2. 选择指定时间段，可添加多个片段；或选择高光自动切片，设置最多导出数量。
 3. 点击「开始处理」，查看环境检查、下载、字幕识别和逐片导出进度。进度来自实际阶段，不显示估算百分比；一次处理一个任务。
 4. 下载结束后可预览原视频。完成的片段会陆续出现；播放器可显示识别字幕，点击完整字幕的时间可跳转原视频，点击切片时间轴可切换预览。
 5. 下载完整 SRT／TXT，或每段 MP4 和配套 SRT。任务记录在刷新页面和重启服务后保留。
@@ -50,7 +48,7 @@ cd ..
 
 ```bash
 uv venv --python 3.11 ~/.cache/nyaru-clipper/companion-venv
-uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' 'httpx>=0.28,<1' 'PyJWT[crypto]>=2.10,<3' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
+uv pip install --python ~/.cache/nyaru-clipper/companion-venv/bin/python 'pydantic-settings>=2.6,<3' 'sqlmodel>=0.0.22,<1' 'anyio>=4,<5' yt-dlp 'fastapi>=0.115,<1' 'uvicorn>=0.32,<1'
 ```
 
 macOS 可用 Homebrew 安装本地工具：
@@ -65,7 +63,7 @@ Linux 安装 FFmpeg，并按 [whisper.cpp 官方说明](https://github.com/ggml-
 
 ## Windows 部署
 
-安装依赖、启动与关闭命令见 [Windows 部署](deployment-windows.zh-CN.md)。
+安装依赖、启动与关闭命令见 [Windows 部署](deployment-windows.zh-CN.md)。该入口继续运行独立 Companion；不代表统一迁移、恢复与 Windows AMF 已获原生平台验收。
 
 ## 输出与恢复
 
@@ -74,7 +72,7 @@ Linux 安装 FFmpeg，并按 [whisper.cpp 官方说明](https://github.com/ggml-
 - `source.mp4`：下载的视频。
 - `subtitles.srt`：完整字幕文字和句级时间轴。
 - `transcript.txt`、`transcript.json`：全文，以及含时间戳的结构化字幕。
-- `clip-001.mp4`、`clip-001.srt`：切片和从零开始的外挂字幕；GUI 可另导出 `styled-*.mp4` 烧录版本，保留原切片。
+- `clip-001.mp4`、`clip-001.srt`：切片和从零开始的外挂字幕；本轮不把字幕烧录到画面中。
 - `job.json`：选择方式、处理状态和产物校验和。
 - `gui.json`：图形界面的处理消息和失败信息，不存储原链接。
 - `clip-001.log`：FFmpeg 导出诊断，失败后仍保留。

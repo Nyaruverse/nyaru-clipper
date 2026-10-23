@@ -13,12 +13,15 @@ interface Session {
 const empty: Session = { document: null, saved: null, past: [], future: [], saving: false, error: null };
 
 export function useSubtitleDocument(id: string | null, enabled: boolean, sourceToken = '') {
-  const [sessions, setSessions] = useState<Readonly<Record<string, Session>>>({});
+  const [sessions, renderSessions] = useState<Readonly<Record<string, Session>>>({});
   const loading = useRef(new Set<string>());
-  const inFlight = useRef(new Set<string>());
+  const inFlight = useRef(new Map<string, Promise<boolean>>());
   const sourceTokens = useRef(new Map<string, string>());
   const latest = useRef(sessions);
-  latest.current = sessions;
+  const setSessions = useCallback((update: (current: Readonly<Record<string, Session>>) => Readonly<Record<string, Session>>) => {
+    latest.current = update(latest.current);
+    renderSessions(latest.current);
+  }, []);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
@@ -49,22 +52,49 @@ export function useSubtitleDocument(id: string | null, enabled: boolean, sourceT
     }
   }, [id, enabled, sourceToken, load]);
 
-  const save = useCallback(async (key: string, sent: SubtitleDocument) => {
-    if (inFlight.current.has(key)) return;
-    inFlight.current.add(key);
-    setSessions(current => ({ ...current, [key]: { ...current[key], saving: true } }));
-    try {
-      const saved = parseDocument(await subtitleApi<unknown>(`/jobs/${key}/subtitle-document`, sent));
-      if (mounted.current) setSessions(current => {
-        const session = current[key];
-        if (!session?.document) return current;
-        return { ...current, [key]: { ...session, saved,
-          document: session.document === sent ? saved : { ...session.document, revision: saved.revision }, saving: false, error: null } };
-      });
-    } catch (error) {
-      if (mounted.current) setSessions(current => ({ ...current, [key]: { ...current[key], saving: false, error: error instanceof Error ? error.message : '保存失败，请重试' } }));
-    } finally { inFlight.current.delete(key); }
+  const save = useCallback((key: string, sent: SubtitleDocument): Promise<boolean> => {
+    const pending = inFlight.current.get(key);
+    if (pending) return pending;
+    const request = (async () => {
+      setSessions(current => ({ ...current, [key]: { ...current[key], saving: true } }));
+      try {
+        const saved = parseDocument(await subtitleApi<unknown>(`/jobs/${key}/subtitle-document`, sent));
+        if (mounted.current) setSessions(current => {
+          const session = current[key];
+          if (!session?.document) return current;
+          return { ...current, [key]: { ...session, saved,
+            document: session.document === sent ? saved : { ...session.document, revision: saved.revision }, saving: false, error: null } };
+        });
+        return true;
+      } catch (error) {
+        if (mounted.current) setSessions(current => ({ ...current, [key]: { ...current[key], saving: false, error: error instanceof Error ? error.message : '保存失败，请重试' } }));
+        return false;
+      } finally { inFlight.current.delete(key); }
+    })();
+    inFlight.current.set(key, request);
+    return request;
   }, []);
+
+  const hasUnsaved = useCallback(() => inFlight.current.size > 0 || Object.values(latest.current).some(session =>
+    !!session.document && (session.document !== session.saved || !!session.error || !!documentProblem(session.document))), []);
+
+  const flush = useCallback(async (): Promise<string | null> => {
+    while (hasUnsaved()) {
+      const pending = [...inFlight.current.values()];
+      if (pending.length) {
+        if ((await Promise.all(pending)).some(saved => !saved)) return '字幕保存失败；修改已保留，请修复后重试';
+        continue;
+      }
+      for (const key of Object.keys(latest.current)) {
+        const session = latest.current[key];
+        if (!session.document) continue;
+        const problem = documentProblem(session.document) || (session.document === session.saved ? session.error : null);
+        if (problem) return problem;
+        if (session.document !== session.saved && !await save(key, session.document)) return latest.current[key].error ?? '字幕保存失败';
+      }
+    }
+    return null;
+  }, [hasUnsaved, save]);
 
   useEffect(() => {
     const pending = Object.entries(sessions).filter(([, session]) => session.document && session.document !== session.saved && !session.saving && !session.error && !documentProblem(session.document));
@@ -107,7 +137,7 @@ export function useSubtitleDocument(id: string | null, enabled: boolean, sourceT
         future: redo ? previous.future.slice(0, -1) : [...previous.future, previous.document] } };
     });
   };
-  return { document: session.document, change, dirty: !!session.document && session.document !== session.saved,
+  return { document: session.document, change, hasUnsaved, flush, dirty: !!session.document && session.document !== session.saved,
     saving: session.saving, error: session.error, canUndo: !!session.past.length, canRedo: !!session.future.length,
     undo: () => travel(false), redo: () => travel(true),
     retry: () => { if (id && session.document && !documentProblem(session.document)) void save(id, session.document); else if (id) load(id); },

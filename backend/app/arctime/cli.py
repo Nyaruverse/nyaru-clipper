@@ -10,26 +10,16 @@ import threading
 import uuid
 from pathlib import Path
 
-from app.arctime import media, workflow
+from app.arctime import companion_llm, media, workflow
 from app.arctime.local_asr import DEFAULT_MODEL, LocalASR
+from app.services.runtime_guard import SlotBusy, execution_slot
 
 
-def _selector(root: Path, saved: dict):
-    from app.arctime.companion_models import validated_api_key
+def _selector(config: companion_llm.LLMConfig, saved: dict):
     from app.arctime.saozi import SaoziSelector
-    from app.arctime.translation import MODEL, MODELS
-    path = root / "config.json"
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > 16384:
-        raise ValueError("臊子需要先在同一输出目录的图形界面保存 DeepSeek Key")
-    try:
-        config = json.loads(path.read_text())
-        key = validated_api_key(config["deepseek_api_key"])
-        model = saved.get("saozi_model", config.get("deepseek_model", MODEL))
-        if model not in MODELS:
-            raise ValueError("无效模型")
-        return SaoziSelector(key, model)
-    except (KeyError, TypeError, ValueError):
-        raise ValueError("请在图形界面修复 DeepSeek 配置后继续臊子") from None
+    model = companion_llm.job_model(config, saved)
+    key = companion_llm.require_key(config, model)
+    return SaoziSelector(key, model, request_json=companion_llm.requester(config, model))
 
 
 def _asr_options(parser: argparse.ArgumentParser) -> None:
@@ -39,6 +29,18 @@ def _asr_options(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] in {"run", "resume"}:
+        try:
+            with execution_slot():
+                return _main(arguments)
+        except SlotBusy:
+            print("其他入口正在处理，请稍后重试；已有结果已保留", file=sys.stderr)
+            return 1
+    return _main(arguments)
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="本地视频配套工具：链接下载、字幕识别、时间轴和切片")
     commands = parser.add_subparsers(dest="command", required=True)
     doctor = commands.add_parser("doctor", help="检查本地运行环境")
@@ -50,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     selection.add_argument("--range", dest="ranges", action="append", nargs=2, metavar=("START", "END"),
                            help="秒数或 HH:MM:SS.mmm，可重复指定")
     selection.add_argument("--highlights", type=int, help="按本地规则选择最多 N 个非重叠高光")
-    selection.add_argument("--saozi", action="store_true", help="臊子：DeepSeek 连续语义切片，每片约1–2分钟")
+    selection.add_argument("--saozi", action="store_true", help="臊子：使用已配置供应商连续语义切片，每片约1–2分钟")
     run.add_argument("--local", action="store_true", help="将输入作为本地录像路径（仅臊子）")
     run.add_argument("--live", action="store_true", help="Bilibili 实时臊子；Ctrl+C停止录制并导出尾段")
     _asr_options(run)
@@ -63,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     gui.add_argument("--threads", type=int, default=4)
     args = parser.parse_args(argv)
     directory: Path | None = None
+    config: companion_llm.LLMConfig | None = None
     try:
         if args.command == "gui":
             import uvicorn
@@ -99,7 +102,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("本地或实时输入需要臊子模式，且不能同时选择")
             ranges = [(media.parse_time(s), media.parse_time(e)) for s, e in (args.ranges or [])]
             adapter = LocalASR(args.model, args.language, args.threads)
-            selector = _selector(args.output_dir, {}) if args.saozi else None
+            config = companion_llm.LLMConfig(args.output_dir) if args.saozi else None
+            selector = _selector(config, {}) if config is not None else None
             print("正在检查环境并下载视频", file=sys.stderr, flush=True)
             if args.live:
                 from app.arctime.companion_models import JobInput
@@ -107,13 +111,15 @@ def main(argv: list[str] | None = None) -> int:
                 directory = args.output_dir.expanduser().resolve() / uuid.uuid4().hex[:12]
                 directory.mkdir(mode=0o700, parents=True)
             else:
-                options = {"saozi":True,"local_source":Path(args.url).expanduser().resolve() if args.local else None} if args.saozi else {}
+                options = {"saozi":True,"local_source":Path(args.url).expanduser().resolve() if args.local else None,
+                           "llm_model": selector.model} if args.saozi else {}
                 directory = workflow.create_run(args.url, args.output_dir, ranges, args.highlights, adapter, **options)
         else:
             directory = args.directory.expanduser().resolve()
             adapter = None
             saved = json.loads((directory / "job.json").read_text()) if (directory / "job.json").is_file() else {}
-            selector = _selector(directory.parent, saved) if saved.get("saozi") else None
+            config = companion_llm.LLMConfig(directory.parent) if saved.get('saozi') else None
+            selector = _selector(config, saved) if config is not None else None
         print(f"任务目录：{directory}", file=sys.stderr, flush=True)
         notify = lambda message: print(message, file=sys.stderr, flush=True)
         saved = json.loads((directory / "job.json").read_text()) if (directory / "job.json").is_file() else {}
@@ -124,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                 return
             from app.arctime.saozi_translation import translate
             try:
-                translate(path, selector.key, model=selector.model, final=final, locked=locked, progress=notify)
+                options = {'request_json': selector.request_json} if selector.request_json is not None else {}
+                translate(path, selector.key, model=selector.model, final=final, locked=locked, progress=notify, **options)
                 translation_failed = False
             except (ValueError, OSError):
                 translation_failed = True
@@ -159,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         message = "外部工具执行超时" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
         print(json.dumps({"error": message, "directory": str(directory) if directory else None}, ensure_ascii=False), file=sys.stderr)
         return 1
+    finally:
+        if config is not None:
+            config.chatgpt.close()
 
 
 if __name__ == "__main__":

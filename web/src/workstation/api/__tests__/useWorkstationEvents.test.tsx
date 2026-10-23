@@ -37,9 +37,11 @@ describe("useWorkstationEvents", () => {
   afterEach(() => {
     EventSourceHarness.instances = [];
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("invalidates task projections when another tab deletes a task", () => {
+    vi.useFakeTimers();
     vi.stubGlobal("EventSource", EventSourceHarness);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
@@ -49,6 +51,7 @@ describe("useWorkstationEvents", () => {
     expect(source).toBeDefined();
 
     act(() => source?.emit("task.deleted", { task_id: "task-deleted" }, "23"));
+    act(() => vi.advanceTimersByTime(50));
 
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workstation", "tasks", "summary"] });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workstation", "tasks", "list"] });

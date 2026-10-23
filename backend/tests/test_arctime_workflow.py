@@ -1,4 +1,8 @@
 import json
+import errno
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -198,3 +202,86 @@ def test_resume_recovers_subtitle_only_publication_gap(tmp_path, fake_media, mon
     monkeypatch.setattr(workflow.media, "export_clip", export)
     assert workflow.resume_run(directory, asr)["state"] == "completed"
     assert asr.calls == 1
+
+
+@pytest.fixture
+def owned_upload(tmp_path):
+    descriptor, name = tempfile.mkstemp(prefix=".saozi-upload-", dir=tmp_path)
+    with os.fdopen(descriptor, "wb") as handle:
+        upload = workflow.OwnedUpload.from_descriptor(Path(name), tmp_path, descriptor)
+        handle.write(b"owned-original")
+    return upload
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "regular", "directory"])
+def test_owned_upload_rejects_replaced_path_without_consuming_it(tmp_path, fake_media, owned_upload, replacement):
+    original = tmp_path / "original-retained"
+    owned_upload.path.rename(original)
+    other = tmp_path / "external"
+    other.write_bytes(b"external-original")
+    if replacement == "symlink":
+        owned_upload.path.symlink_to(other)
+    elif replacement == "regular":
+        owned_upload.path.write_bytes(b"replacement")
+    else:
+        owned_upload.path.mkdir()
+    with pytest.raises(OSError, match="ownership changed"):
+        workflow.create_run("", tmp_path, [(0, 5)], None, FakeASR(), owned_upload=owned_upload)
+    with pytest.raises(OSError, match="ownership changed"):
+        owned_upload.cleanup()
+    assert original.read_bytes() == b"owned-original"
+    assert other.read_bytes() == b"external-original"
+    assert owned_upload.path.exists()
+    assert not list(tmp_path.glob("*/source.mp4"))
+    assert json.loads(next(tmp_path.glob("*/job.json")).read_text())["state"] == "download_failed"
+
+
+def test_owned_upload_rejects_outside_root_and_wrong_root(tmp_path, fake_media, owned_upload):
+    other_root = tmp_path / "other-root"
+    other_root.mkdir()
+    with owned_upload.path.open("rb") as handle:
+        with pytest.raises(OSError, match="ownership changed"):
+            workflow.OwnedUpload.from_descriptor(owned_upload.path, other_root, handle.fileno())
+    with pytest.raises(OSError, match="ownership changed"):
+        workflow.create_run("", other_root, [(0, 5)], None, FakeASR(), owned_upload=owned_upload)
+    assert owned_upload.path.read_bytes() == b"owned-original"
+    assert not list(other_root.glob("*/source.mp4"))
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_owned_upload_never_overwrites_unknown_destination(tmp_path, fake_media, owned_upload, symlink):
+    run_id = "012345abcdef"
+    target = tmp_path / run_id / "source.mp4"
+    external = tmp_path / "external"
+    external.write_bytes(b"unknown-original")
+
+    def insert_unknown(message):
+        if symlink:
+            target.symlink_to(external)
+        else:
+            target.write_bytes(b"unknown-original")
+
+    with pytest.raises(FileExistsError):
+        workflow.create_run("", tmp_path, [(0, 5)], None, FakeASR(), run_id=run_id,
+                            progress=insert_unknown, owned_upload=owned_upload)
+    assert target.read_bytes() == b"unknown-original"
+    assert external.read_bytes() == b"unknown-original"
+    assert owned_upload.path.read_bytes() == b"owned-original"
+
+
+def test_owned_upload_exdev_does_not_fall_back_to_copy(tmp_path, fake_media, owned_upload, monkeypatch):
+    def cross_device(*args):
+        raise OSError(errno.EXDEV, "cross device")
+
+    def reject_copy(*args):
+        pytest.fail("unbudgeted cross-device copy")
+
+    monkeypatch.setattr(Path, "rename", cross_device)
+    monkeypatch.setattr(workflow.shutil, "copyfile", reject_copy)
+    with pytest.raises(OSError, match="no copy attempted") as raised:
+        workflow.create_run("", tmp_path, [(0, 5)], None, FakeASR(), owned_upload=owned_upload)
+    assert raised.value.errno == errno.EXDEV
+    assert owned_upload.path.read_bytes() == b"owned-original"
+    assert not list(tmp_path.glob("*/source.mp4"))
+    owned_upload.cleanup()
+    assert not owned_upload.path.exists()

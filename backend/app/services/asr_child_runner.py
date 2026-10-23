@@ -18,6 +18,8 @@ from app.services.asr_whisperx import (
     AsrPipelineObserver,
     AsrPipelineResult,
     execute_asr_pipeline,
+    build_asr_cache_identity,
+    _write_json_atomically,
     asr_chunk_work_dir,
 )
 from app.services.media_chunks import load_media_chunk_manifest, media_chunk_manifest_path
@@ -134,6 +136,8 @@ def run_asr_child(
     audio_path = chunk.audio_path
     manifest_path = chunk_work_dir / ASR_RESULT_MANIFEST_FILENAME
 
+    manifest_path.unlink(missing_ok=True)
+    identity = build_asr_cache_identity(audio_path, effective_settings) if audio_path.is_file() else None
     try:
         with redirect_stdout(sys.stderr):
             pipeline_result = execute_asr_pipeline(
@@ -160,7 +164,14 @@ def run_asr_child(
         observer.emit_failure(phase=exc.phase, code=exc.code, message=str(exc))
         return AsrChildRunResult(status="failed", manifest_path=manifest_path)
 
-    _write_manifest(manifest_path, _build_success_manifest(pipeline_result))
+    if build_asr_cache_identity(audio_path, effective_settings) != identity:
+        message = "ASR input or model changed during processing"
+        _write_manifest(manifest_path, {"status": "failed", "error": {"code": "invalid_chunk_output", "message": message}})
+        observer.emit_failure(phase="persist", code="invalid_chunk_output", message=message)
+        return AsrChildRunResult(status="failed", manifest_path=manifest_path)
+    payload = _build_success_manifest(pipeline_result)
+    payload["cache_identity"] = identity
+    _write_manifest(manifest_path, payload)
     observer.emit_success(
         phase=ASR_PIPELINE_PHASES[-1],
         elapsed_ms_total=pipeline_result.elapsed_ms_total,
@@ -241,8 +252,7 @@ def _serialize_optional_path(path: Path | None) -> str | None:
 
 
 def _write_manifest(manifest_path: Path, payload: dict[str, object]) -> None:
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json_atomically(manifest_path, payload)
 
 
 def _resolve_child_work_dir(task_id: str) -> Path:

@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { SubtitleEditor } from './SubtitleEditor';
 import { SubtitleExports } from './SubtitleExports';
+import { defaultWorkflow } from './studioModel';
 import { defaultStyle, type SubtitleSettings } from './subtitleStyle';
 const settings: SubtitleSettings = {style:defaultStyle,templates:[{id:'user1',name:'测试模板',style:defaultStyle,builtin:false,arctime_template_id:'project1'}],arctime_templates:[{id:'project1',name:'工程',sha256:'a',size:1}],burn_available:true,native_handoff_available:false};
 afterEach(()=>vi.unstubAllGlobals());
@@ -19,7 +20,7 @@ it('saves current default, copies binding, confirms rename/delete and uploads ra
  await waitFor(()=>expect(screen.getByLabelText('样式模板')).toBeEnabled());
  fireEvent.change(screen.getByLabelText('样式模板'),{target:{value:'user1'}});
  fireEvent.click(screen.getByText('复制模板'));
- await waitFor(()=>expect(requests[1]).toEqual({url:'/companion-api/style-templates',body:{name:'测试模板 副本',style:defaultStyle,arctime_template_id:'project1'}}));
+ await waitFor(()=>expect(requests[1]).toEqual({url:'/companion-api/style-templates',body:{name:'测试模板 副本',style:defaultStyle,arctime_template_id:'project1',streamer:'',workflow:defaultWorkflow}}));
  await waitFor(()=>expect(screen.getByText('更新 / 重命名模板')).toBeEnabled());
  fireEvent.change(screen.getByLabelText('模板名称'),{target:{value:'改名'}});fireEvent.click(screen.getByText('更新 / 重命名模板'));
  expect(requests).toHaveLength(2);fireEvent.click(screen.getByText('确认'));
@@ -59,11 +60,14 @@ it('inspects ASS and saves explicitly mapped original and translation styles',as
  expect(posts[1]).toEqual({url:'/companion-api/style-templates',body:{name:'直播双语',style:{version:1,original,translation}}});
  expect(screen.getByLabelText('原文字号')).toHaveValue(62);
 });
-it('exports explicit style, language and project; blocks full source burn and busy exports',async()=>{
+it('exports style and language with project only for ArcTime; blocks full source burn',async()=>{
  const fetch=vi.fn(async()=>new Response('{}'));vi.stubGlobal('fetch',fetch);
  mount(<SubtitleExports id="job1" video="source.mp4" bilingual style={defaultStyle} project="project1" busy={false} burnAvailable nativeAvailable={false} error={null}/>);
  expect(screen.getByText('烧录切片 MP4')).toBeDisabled();fireEvent.click(screen.getByText('导出 ASS'));
- await waitFor(()=>expect(fetch).toHaveBeenCalledWith('/companion-api/jobs/job1/subtitle-export',expect.objectContaining({body:JSON.stringify({kind:'ass',video:'source.mp4',bilingual:true,style:defaultStyle,arctime_template_id:'project1'})})));
+ await waitFor(()=>expect(fetch).toHaveBeenNthCalledWith(1,'/companion-api/jobs/job1/subtitle-export',expect.objectContaining({body:JSON.stringify({kind:'ass',video:'source.mp4',bilingual:true,style:defaultStyle})})));
+ await waitFor(()=>expect(screen.getByText('导出 ArcTime ZIP')).toBeEnabled());
+ fireEvent.click(screen.getByText('导出 ArcTime ZIP'));
+ await waitFor(()=>expect(fetch).toHaveBeenNthCalledWith(2,'/companion-api/jobs/job1/subtitle-export',expect.objectContaining({body:JSON.stringify({kind:'arctime',video:'source.mp4',bilingual:true,style:defaultStyle,arctime_template_id:'project1'})})));
 });
 it('disables all export actions while busy and names prior output scope',()=>{
  mount(<SubtitleExports id="job1" video="clip-001.mp4" bilingual={false} style={defaultStyle} project={null} busy burnAvailable nativeAvailable={false} error={null} status={{active:{state:'running',message:'烧录中',error:null},outputs:[{id:'out1',kind:'ass',video:'source.mp4',bilingual:true,filename:'styled.ass'}]}}/>);
@@ -83,4 +87,36 @@ it('labels exports with their captured style rather than the current draft',()=>
  const captured={...defaultStyle,original:{...defaultStyle.original,font:'Saved Font',size:72,color:'#123456'}};
  mount(<SubtitleExports id="job1" video="clip-001.mp4" bilingual style={defaultStyle} project={null} busy={false} burnAvailable nativeAvailable={false} error={null} status={{active:null,outputs:[{id:'one',kind:'burn',video:'clip-001.mp4',bilingual:true,filename:'hash-one.mp4',style:captured},{id:'two',kind:'arctime',video:'source.mp4',bilingual:false,filename:'hash-two.zip',style:null}]}}/>);
  expect(screen.getByText('字幕视频 MP4 · 切片 1 · 中日双语')).toBeVisible();expect(screen.getByText(/原文：Saved Font · 72 · #123456/)).toBeVisible();expect(screen.getByText('样式信息未记录')).toBeVisible();expect(screen.getByRole('link',{name:'下载字幕视频 MP4 · 切片 1 · 中日双语'})).toHaveAttribute('title','hash-one.mp4');
+});
+it('sends template metadata and the selected revision when updating a saved template',async()=>{
+ const requests:Record<string,unknown>[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(_url:string,init:RequestInit)=>{requests.push(JSON.parse(String(init.body)));return new Response('{}');}));
+ const versioned={...settings,templates:[{...settings.templates[0],revision:4,streamer:'猫雷',workflow:{...defaultWorkflow,language:'ja' as const}}]};
+ mount(<SubtitleEditor settings={versioned} error={null} style={defaultStyle} onStyle={()=>{}} project={null} onProject={()=>{}} busy={false}/>);
+ fireEvent.click(screen.getByText('字幕样式与模板'));
+ fireEvent.change(screen.getByLabelText('样式模板'),{target:{value:'user1'}});
+ expect(screen.getByLabelText('主播 / 工作系列')).toHaveValue('猫雷');
+ fireEvent.click(screen.getByText('更新 / 重命名模板'));fireEvent.click(screen.getByText('确认'));
+ await waitFor(()=>expect(requests[0]).toMatchObject({id:'user1',expected_revision:4,streamer:'猫雷',workflow:{language:'ja'}}));
+});
+it('retains the draft revision when a background template refresh advances the server revision',async()=>{
+ const requests:Record<string,unknown>[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(_url:string,init:RequestInit)=>{requests.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({detail:'模板已更新，请重新载入'}),{status:409});}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}});
+ const view=(revision:number)=><QueryClientProvider client={client}><SubtitleEditor settings={{...settings,templates:[{...settings.templates[0],revision}]}} error={null} style={defaultStyle} onStyle={()=>{}} project={null} onProject={()=>{}} busy={false}/></QueryClientProvider>;
+ const result=render(view(4));fireEvent.click(screen.getByText('字幕样式与模板'));
+ fireEvent.change(screen.getByLabelText('样式模板'),{target:{value:'user1'}});
+ result.rerender(view(5));
+ fireEvent.click(screen.getByText('更新 / 重命名模板'));fireEvent.click(screen.getByText('确认'));
+ await waitFor(()=>expect(requests[0]).toMatchObject({id:'user1',expected_revision:4}));
+ expect(await screen.findByRole('alert')).toHaveTextContent('模板已更新');
+});
+it('primary save updates a selected user template using its captured revision',async()=>{
+ const requests:Record<string,unknown>[]=[];
+ vi.stubGlobal('fetch',vi.fn(async(_url:string,init:RequestInit)=>{requests.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({...settings.templates[0],revision:5}));}));
+ mount(<SubtitleEditor settings={{...settings,templates:[{...settings.templates[0],revision:4}]}} error={null} style={defaultStyle} onStyle={()=>{}} project={null} onProject={()=>{}} busy={false}/>);
+ fireEvent.click(screen.getByText('字幕样式与模板'));fireEvent.change(screen.getByLabelText('样式模板'),{target:{value:'user1'}});
+ fireEvent.click(screen.getByText('保存当前模板'));fireEvent.click(screen.getByText('确认'));
+ await waitFor(()=>expect(requests[0]).toMatchObject({id:'user1',expected_revision:4}));
+ expect(await screen.findByText(/已选模板：测试模板 · v5/)).toBeVisible();
 });

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import wave
 
 from fastapi.testclient import TestClient
 import pytest
@@ -312,7 +313,11 @@ def test_v2_local_reference_task_keeps_trusted_root_paths_out_of_persisted_and_r
             )
         if args[0] == "ffmpeg":
             output_path = Path(args[-1])
-            output_path.write_bytes(b"wav")
+            with wave.open(str(output_path), "wb") as output:
+                output.setnchannels(1)
+                output.setsampwidth(2)
+                output.setframerate(16_000)
+                output.writeframes(b"\0\0" * round(float(args[args.index("-t") + 1]) * 16_000))
             return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
         raise AssertionError(f"unexpected command: {args}")
 

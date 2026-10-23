@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import pytest
 
 from app.arctime import workflow
@@ -49,3 +52,36 @@ def test_real_asr_empty_speech_exception_preserves_silent_video(tmp_path, fake_m
     asr.transcribe = silent
     directory = workflow.create_run("https://example.org/replay", tmp_path, [], None, asr, saozi=True)
     assert workflow.resume_run(directory, asr, selector=Selector())["state"] == "completed"
+
+
+@pytest.mark.parametrize("filename", ["original.mp4", ".saozi-upload-lookalike"])
+def test_real_cli_local_call_keeps_original_and_copies_once(tmp_path, fake_media, monkeypatch, record_property, filename):
+    from app.arctime import cli, translation
+    (tmp_path / "config.json").write_text(json.dumps({"deepseek_api_key": "synthetic-test-key"}))
+    source = tmp_path / filename
+    payload = b"external-original" * 4096
+    source.write_bytes(payload)
+    inode = source.stat().st_ino
+    copies = []
+    copyfile = workflow.shutil.copyfile
+
+    def capture_copy(original, target, *args, **kwargs):
+        copies.append((original, target))
+        return copyfile(original, target, *args, **kwargs)
+
+    monkeypatch.setattr(workflow.shutil, "copyfile", capture_copy)
+    monkeypatch.setattr(cli, "LocalASR", lambda *args: FakeASR())
+    monkeypatch.setattr(translation, "_request", lambda client, key, cues, start, model, **kwargs:
+                        [{"id": start + index + 1, "zh": "字幕译文"} for index, cue in enumerate(cues)])
+    assert cli.main(["run", str(source), "--saozi", "--local", "--language", "zh",
+                     "--output-dir", str(tmp_path)]) == 0
+    directory = next(tmp_path.glob("*/job.json")).parent
+    saved = json.loads((directory / "job.json").read_text())
+    assert saved["state"] == "completed"
+    assert source.read_bytes() == (directory / "source.mp4").read_bytes() == payload
+    assert source.stat().st_ino == inode
+    assert (directory / "source.mp4").stat().st_ino != inode
+    assert copies == [(source, directory / "source.mp4")]
+    assert saved["video_sha256"] == hashlib.sha256(payload).hexdigest()
+    record_property("external_copy", json.dumps({"original_sha256": saved["video_sha256"],
+                                                 "original_inode_retained": True, "copy_count": len(copies)}))

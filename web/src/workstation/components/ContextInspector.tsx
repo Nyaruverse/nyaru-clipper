@@ -46,15 +46,15 @@ export function ContextInspector(): ReactNode {
   const selectedTaskId = searchParams.get("selected");
   const isQueueRoute = location.pathname === "/workstation/queue";
   const showWorkspaceSummary = !isQueueRoute && selectedTaskId === null && taskId === undefined;
-  const summaryQuery = useQuery({ queryKey: workstationKeys.summary, queryFn: getTaskLibrarySummary, enabled: showWorkspaceSummary });
+  const summaryQuery = useQuery({ queryKey: workstationKeys.summary, queryFn: ({ signal }) => getTaskLibrarySummary(signal), enabled: showWorkspaceSummary });
   const activeTaskQuery = useQuery({
     queryKey: workstationKeys.list({ direction: "desc", page: 1, page_size: 25, sort: "updated_at", statuses: ["running"] }),
-    queryFn: () => getTaskLibraryPage(runningTaskFilters),
+    queryFn: ({ signal }) => getTaskLibraryPage(runningTaskFilters, signal),
     enabled: showWorkspaceSummary,
   });
 
   const queueQuery = useQuery({ queryKey: workstationKeys.queue, queryFn: ({ signal }) => getQueue(signal), enabled: isQueueRoute });
-  const overviewQuery = useQuery({ queryKey: workstationKeys.detail(taskId ?? ""), queryFn: () => getWorkstationTaskOverview(taskId ?? ""), enabled: taskId !== undefined });
+  const overviewQuery = useQuery({ queryKey: workstationKeys.detail(taskId ?? ""), queryFn: ({ signal }) => getWorkstationTaskOverview(taskId ?? "", signal), enabled: taskId !== undefined });
 
   if (isQueueRoute) {
     return (

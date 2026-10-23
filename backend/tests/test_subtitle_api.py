@@ -1,7 +1,9 @@
 import json
+import io
 import time
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,6 +45,58 @@ def wait_export(client):
             return result
         time.sleep(.01)
     pytest.fail("export did not finish")
+
+
+@pytest.mark.parametrize('milliseconds', [1, 2])
+def test_bilingual_export_tolerates_only_one_millisecond_rounding(finished, milliseconds):
+    from app.arctime.subtitle_inputs import ExportRequest, load_inputs
+    client, directory = finished
+    original = media.read_subtitles(directory / 'clip-001.srt')
+    paired = [SubtitleSegment(cue.id, cue.start_seconds + milliseconds / 1000,
+                              cue.end_seconds + milliseconds / 1000, cue.text + '\ntranslation')
+              for cue in original]
+    bilingual = directory / 'clip-001.ja-zh.srt'
+    bilingual.write_text(render_srt(paired))
+    media.write_json(directory / 'translation.json', {'state': 'completed', 'artifacts': {
+        bilingual.name: media.fingerprint(bilingual)}})
+    request = ExportRequest.model_validate(payload(client, bilingual=True))
+
+    if milliseconds == 2:
+        with pytest.raises(ValueError, match='时间轴'):
+            load_inputs(directory, request)
+    else:
+        inputs = load_inputs(directory, request)
+        assert [(cue.start_seconds, cue.end_seconds) for cue in inputs.translated] == [
+            (cue.start_seconds, cue.end_seconds) for cue in original]
+
+
+def test_live_style_failure_does_not_block_later_clips(finished, monkeypatch):
+    from app.arctime.companion_manager import JobManager
+    from app.arctime.subtitle_exports import SubtitleExports, read_exports
+    from app.arctime.subtitle_inputs import ExportError
+    client, directory = finished
+    job = json.loads((directory / 'job.json').read_text())
+    job['subtitle_template'] = client.get('/companion-api/subtitle-settings').json()['templates'][0]
+    job['completed_clips'].append({**job['completed_clips'][0], 'video': 'clip-002.mp4'})
+    manager = JobManager(directory.parent, directory / 'unused', 1)
+    exports = SubtitleExports(manager)
+    attempted = []
+
+    def run(directory, request, project, snapshot, *, allow_live=False):
+        attempted.append((request.video, request.kind))
+        if request.video == 'clip-001.mp4':
+            raise ExportError('invalid first clip')
+
+    monkeypatch.setattr(exports, '_run_locked', run)
+    try:
+        exports.export_live(directory, job)
+    finally:
+        manager.executor.shutdown(wait=True)
+        manager.chatgpt.close()
+
+    assert ('clip-002.mp4', 'ass') in attempted and ('clip-002.mp4', 'burn') in attempted
+    assert 'clip-001.mp4' in job['subtitle_style_error']
+    assert read_exports(directory).active.state == 'failed'
 
 
 def test_style_template_routes_and_restart_keep_key_separate(finished):
@@ -368,14 +422,18 @@ def test_publication_gap_recovers_verified_file_without_encoding_again(finished,
     calls = 0
     def checkpoint_gap(source, target):
         nonlocal calls
-        calls += 1
         link(source, target)
-        raise RuntimeError("simulated interruption after publication")
+        if target.suffix == ".ass":
+            calls += 1
+            raise RuntimeError("simulated interruption after publication")
     monkeypatch.setattr(subtitle_exports.os, "link", checkpoint_gap)
     request = payload(client)
     assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
     assert wait_export(client)["active"]["state"] == "failed"
     assert calls == 1
+    def no_encoding(*args):
+        pytest.fail("verified output must not be encoded again")
+    monkeypatch.setattr(subtitle_exports, "video_dimensions", no_encoding)
     assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
     result = wait_export(client)
     assert result["active"]["state"] == "completed"
@@ -390,7 +448,8 @@ def test_recovery_refuses_unverified_existing_file(finished, monkeypatch, damage
     link = subtitle_exports.os.link
     def gap(source, target):
         link(source, target)
-        raise RuntimeError("publication gap")
+        if target.suffix == ".ass":
+            raise RuntimeError("publication gap")
     monkeypatch.setattr(subtitle_exports.os, "link", gap)
     request = payload(client)
     assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
@@ -413,6 +472,137 @@ def test_recovery_refuses_unverified_existing_file(finished, monkeypatch, damage
     result = wait_export(client)
     assert result["active"]["state"] == "failed" and result["active"]["error"]
     assert result["outputs"] == [] and product.read_bytes() == before
+
+
+def test_partial_receipt_write_can_retry_after_restart(finished, monkeypatch):
+    import errno
+    from app.arctime import subtitle_exports
+
+    # Given a real file write interrupted after ten bytes.
+    client, directory = finished
+    monkeypatch.setattr(subtitle_exports, "video_dimensions", lambda path: (640, 360))
+    before = {p.name: media.fingerprint(p) for p in directory.iterdir() if p.is_file()}
+    request = payload(client)
+    open_file = io.open
+    partials = []
+
+    def interrupted_open(path, mode="r", *args, **kwargs):
+        handle = open_file(path, mode, *args, **kwargs)
+        if mode in {"x", "w"}:
+            write = handle.write
+
+            def partial_write(content: str) -> int:
+                if "receipt.json" not in str(handle.name):
+                    return write(content)
+                write(content[:10])
+                handle.flush()
+                partials.append(Path(handle.name).read_bytes())
+                raise OSError(errno.ENOSPC, "injected partial receipt write")
+
+            handle.write = partial_write
+        return handle
+
+    # When export fails and a fresh service retries the same request.
+    with monkeypatch.context() as failure:
+        failure.setattr(io, "open", interrupted_open)
+        assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
+        assert wait_export(client)["active"]["state"] == "failed"
+    assert len(partials) == 1 and len(partials[0]) == 10
+    assert not list(directory.glob("styled-*.ass"))
+    assert not list(directory.glob("styled-*.receipt.json"))
+    client.__exit__(None, None, None)
+    with TestClient(create_app(directory.parent)) as restarted:
+        assert restarted.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
+        result = wait_export(restarted)
+
+    # Then the complete product and receipt agree, and source hashes are unchanged.
+    assert result["active"]["state"] == "completed"
+    output = result["outputs"][0]
+    receipt = next(directory.glob("styled-*.receipt.json"))
+    assert json.loads(receipt.read_bytes()) == output
+    assert media.fingerprint(directory / output["filename"]) == output["sha256"]
+    assert all(media.fingerprint(directory / name) == digest for name, digest in before.items())
+
+
+@pytest.mark.parametrize("existing_product", [False, True])
+def test_malformed_receipt_preserved_and_retry_only_without_product(finished, monkeypatch, existing_product):
+    from app.arctime import subtitle_exports
+
+    # Given an interrupted publication with a malformed legacy final receipt.
+    client, directory = finished
+    monkeypatch.setattr(subtitle_exports, "video_dimensions", lambda path: (640, 360))
+    request = payload(client)
+    link = subtitle_exports.os.link
+
+    def gap(source, target):
+        link(source, target)
+        if target.suffix == ".ass":
+            raise RuntimeError("publication gap")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(subtitle_exports.os, "link", gap)
+        assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
+        assert wait_export(client)["active"]["state"] == "failed"
+    receipt = next(directory.glob("styled-*.receipt.json"))
+    product = next(directory.glob("styled-*.ass"))
+    before = product.read_bytes()
+    corrupt = b'{"id":"par'
+    receipt.write_bytes(corrupt)
+    if not existing_product:
+        product.unlink()
+    source_digest = media.fingerprint(directory / "clip-001.mp4")
+
+    # When a fresh service retries the original request.
+    client.__exit__(None, None, None)
+    with TestClient(create_app(directory.parent)) as restarted:
+        assert restarted.post("/companion-api/jobs/abcdef123456/subtitle-export", json=request).status_code == 202
+        result = wait_export(restarted)
+
+    # Then only the unpublished output is regenerated; corrupt evidence survives.
+    assert product.read_bytes() == before
+    assert media.fingerprint(directory / "clip-001.mp4") == source_digest
+    if existing_product:
+        assert result["active"]["state"] == "failed" and result["outputs"] == []
+        assert receipt.read_bytes() == corrupt
+    else:
+        assert result["active"]["state"] == "completed"
+        assert json.loads(receipt.read_bytes()) == result["outputs"][0]
+        preserved = list(directory.glob(receipt.name + ".corrupt-*"))
+        assert len(preserved) == 1 and preserved[0].read_bytes() == corrupt
+
+
+@pytest.mark.parametrize("conflict", ["receipt", "product"])
+def test_export_publication_conflict_preserves_winner(finished, monkeypatch, conflict):
+    from app.arctime import subtitle_exports
+
+    # Given another publisher wins immediately before the exclusive link.
+    client, directory = finished
+    monkeypatch.setattr(subtitle_exports, "video_dimensions", lambda path: (640, 360))
+    link = subtitle_exports.os.link
+    winner = b"other publisher won"
+    targets = []
+
+    def competing_link(source, target):
+        if target.name.endswith(".receipt.json"):
+            assert Path(source).parent == target.parent
+            subtitle_exports.ExportOutput.model_validate_json(Path(source).read_bytes())
+        if (conflict == "receipt" and target.name.endswith(".receipt.json")) or (
+            conflict == "product" and target.suffix == ".ass"
+        ):
+            target.write_bytes(winner)
+            targets.append(target)
+        link(source, target)
+
+    # When publication races with that existing name.
+    monkeypatch.setattr(subtitle_exports.os, "link", competing_link)
+    assert client.post("/companion-api/jobs/abcdef123456/subtitle-export", json=payload(client)).status_code == 202
+    result = wait_export(client)
+
+    # Then the export fails without replacing the winner or registering a product.
+    assert result["active"]["state"] == "failed" and result["outputs"] == []
+    assert len(targets) == 1 and targets[0].read_bytes() == winner
+    if conflict == "receipt":
+        assert not list(directory.glob("styled-*.ass"))
 
 
 def test_encoder_log_copy_failure_keeps_published_output_reusable(finished, monkeypatch):

@@ -22,6 +22,11 @@ interface BilibiliDraft {
   readonly url: string;
 }
 
+interface InspectionRequest {
+  readonly generation: number;
+  readonly source: BilibiliDraft;
+}
+
 interface LocalDraft {
   readonly importMode: ImportMode;
   readonly kind: "local";
@@ -35,16 +40,17 @@ type ValidatedSource =
   | { readonly inspection: BilibiliInspection; readonly kind: "bilibili"; readonly url: string }
   | LocalDraft;
 
-type CreateTaskState =
+type CreateTaskState = { readonly generation: number } & (
   | { readonly bilibiliUrl: string; readonly errors: FieldErrors; readonly sourceKind: SourceKind | null; readonly step: "source" }
   | { readonly errors: FieldErrors; readonly inspection: BilibiliInspection | null; readonly source: DraftSource; readonly step: "inspect" }
   | { readonly errors: FieldErrors; readonly footerError: string | null; readonly highlightFilteringEnabled: boolean; readonly priority: number; readonly profileId: string; readonly source: ValidatedSource; readonly step: "options" }
-  | { readonly highlightFilteringEnabled: boolean; readonly priority: number; readonly profileId: string; readonly request: CreateTaskRequest; readonly source: ValidatedSource; readonly step: "submitting" };
+  | { readonly highlightFilteringEnabled: boolean; readonly priority: number; readonly profileId: string; readonly request: CreateTaskRequest; readonly source: ValidatedSource; readonly step: "submitting" });
 
 type CreateTaskAction =
   | { readonly kind: "select-source"; readonly sourceKind: SourceKind }
   | { readonly kind: "set-bilibili-url"; readonly url: string }
-  | { readonly kind: "set-inspected-source"; readonly inspection: BilibiliInspection; readonly source: BilibiliDraft }
+  | { readonly kind: "set-inspected-source"; readonly inspection: BilibiliInspection; readonly request: InspectionRequest }
+  | { readonly kind: "inspection-failed"; readonly message: string; readonly request: InspectionRequest }
   | { readonly kind: "set-local-source"; readonly source: LocalDraft }
   | { readonly importMode: ImportMode; readonly kind: "set-import-mode" }
   | { readonly kind: "open-options" }
@@ -55,18 +61,25 @@ type CreateTaskAction =
   | { readonly kind: "back-to-source" }
   | { readonly kind: "reset" };
 
-const initialState: CreateTaskState = { bilibiliUrl: "", errors: {}, sourceKind: null, step: "source" };
+const initialState: CreateTaskState = { bilibiliUrl: "", errors: {}, generation: 0, sourceKind: null, step: "source" };
+
+function isCurrentInspection(state: CreateTaskState, request: InspectionRequest | undefined): state is Extract<CreateTaskState, { readonly step: "source" }> {
+  return request !== undefined && state.step === "source" && state.sourceKind === request.source.kind
+    && state.bilibiliUrl === request.source.url && state.generation === request.generation;
+}
 
 function createTaskReducer(state: CreateTaskState, action: CreateTaskAction): CreateTaskState {
   switch (action.kind) {
     case "select-source":
-      return { bilibiliUrl: "", errors: {}, sourceKind: action.sourceKind, step: "source" };
+      return { bilibiliUrl: "", errors: {}, generation: state.generation + 1, sourceKind: action.sourceKind, step: "source" };
     case "set-bilibili-url":
-      return state.step === "source" ? { ...state, bilibiliUrl: action.url, errors: {} } : state;
+      return state.step === "source" ? { ...state, bilibiliUrl: action.url, errors: {}, generation: state.generation + 1 } : state;
     case "set-inspected-source":
-      return { errors: {}, inspection: action.inspection, source: action.source, step: "inspect" };
+      return isCurrentInspection(state, action.request) ? { errors: {}, generation: state.generation, inspection: action.inspection, source: action.request.source, step: "inspect" } : state;
+    case "inspection-failed":
+      return isCurrentInspection(state, action.request) ? { ...state, errors: { source: action.message } } : state;
     case "set-local-source":
-      return { errors: {}, inspection: null, source: action.source, step: "inspect" };
+      return { errors: {}, generation: state.generation, inspection: null, source: action.source, step: "inspect" };
     case "set-import-mode":
       return state.step === "inspect" && state.source.kind === "local" ? { ...state, source: { ...state.source, importMode: action.importMode } } : state;
     case "open-options": {
@@ -82,6 +95,7 @@ function createTaskReducer(state: CreateTaskState, action: CreateTaskAction): Cr
       return {
         errors: {},
         footerError: null,
+        generation: state.generation,
         highlightFilteringEnabled: false,
         priority: 0,
         profileId: "standard",
@@ -92,15 +106,14 @@ function createTaskReducer(state: CreateTaskState, action: CreateTaskAction): Cr
     case "set-options":
       return state.step === "options" ? { ...state, errors: {}, footerError: null, highlightFilteringEnabled: action.highlightFilteringEnabled ?? state.highlightFilteringEnabled, priority: action.priority ?? state.priority, profileId: action.profileId ?? state.profileId } : state;
     case "set-submit":
-      return state.step === "options" ? { highlightFilteringEnabled: state.highlightFilteringEnabled, priority: state.priority, profileId: state.profileId, request: action.request, source: state.source, step: "submitting" } : state;
+      return state.step === "options" ? { generation: state.generation, highlightFilteringEnabled: state.highlightFilteringEnabled, priority: state.priority, profileId: state.profileId, request: action.request, source: state.source, step: "submitting" } : state;
     case "submission-failed":
-      return state.step === "submitting" ? { errors: action.errors, footerError: action.footerError, highlightFilteringEnabled: state.highlightFilteringEnabled, priority: state.priority, profileId: state.profileId, source: state.source, step: "options" } : state;
+      return state.step === "submitting" ? { errors: action.errors, footerError: action.footerError, generation: state.generation, highlightFilteringEnabled: state.highlightFilteringEnabled, priority: state.priority, profileId: state.profileId, source: state.source, step: "options" } : state;
     case "set-source-error":
       return state.step === "source" ? { ...state, errors: { source: action.message } } : state;
     case "back-to-source":
-      return initialState;
     case "reset":
-      return initialState;
+      return { ...initialState, generation: state.generation + 1 };
     default:
       return state;
   }
@@ -147,7 +160,12 @@ export function NewTaskDrawer({ onOpenChange, open }: NewTaskDrawerProps): React
   const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(createTaskReducer, initialState);
   const [discardOpen, setDiscardOpen] = useState(false);
-  const inspectionMutation = useMutation({ mutationFn: inspectBilibiliSource, onError: (error) => dispatch({ kind: "set-source-error", message: messageFor(error) }), onSuccess: (inspection, url) => dispatch({ inspection, kind: "set-inspected-source", source: { kind: "bilibili", url } }) });
+  const inspectionMutation = useMutation({
+    mutationFn: (request: InspectionRequest) => inspectBilibiliSource(request.source.url.trim()),
+    onError: (error, request) => dispatch({ kind: "inspection-failed", message: messageFor(error), request }),
+    onSuccess: (inspection, request) => dispatch({ inspection, kind: "set-inspected-source", request }),
+  });
+  const isInspecting = inspectionMutation.isPending && isCurrentInspection(state, inspectionMutation.variables);
   const profilesQuery = useQuery({ enabled: state.step === "options" || state.step === "submitting", queryKey: ["workstation", "processing-profiles"], queryFn: getProcessingProfiles });
   const createMutation = useMutation({
     mutationFn: createWorkstationTask,
@@ -172,13 +190,13 @@ export function NewTaskDrawer({ onOpenChange, open }: NewTaskDrawerProps): React
   }
 
   function inspectSource(): void {
-    if (state.step !== "source") return;
+    if (state.step !== "source" || state.sourceKind !== "bilibili") return;
     const url = state.bilibiliUrl.trim();
     if (!isBilibiliUrl(url)) {
       dispatch({ kind: "set-source-error", message: "请输入有效的 Bilibili 链接。" });
       return;
     }
-    inspectionMutation.mutate(url);
+    inspectionMutation.mutate({ generation: state.generation, source: { kind: state.sourceKind, url: state.bilibiliUrl } });
   }
 
   function chooseLocalSource(selection: LocalFileSelection): void {
@@ -204,7 +222,7 @@ export function NewTaskDrawer({ onOpenChange, open }: NewTaskDrawerProps): React
         <Dialog.Content className="ny-overlay ny-drawer ny-task-create" aria-describedby="task-create-description">
           <header className="ny-task-create__header"><div><p className="ny-workstation__eyebrow">队列输入</p><Dialog.Title className="ny-overlay__title">新建任务</Dialog.Title></div><button aria-label="关闭新建任务" className="ny-button ny-button--quiet" onClick={requestClose} type="button"><X aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" /></button></header>
           <Dialog.Description className="ny-overlay__description" id="task-create-description">先核验来源，再用标准处理配置把任务放入单 GPU 队列。</Dialog.Description>
-          {state.step === "source" ? <section className="ny-task-create__step"><div className="ny-task-create__source-switch"><button aria-pressed={state.sourceKind === "bilibili"} className="ny-button" onClick={() => dispatch({ kind: "select-source", sourceKind: "bilibili" })} type="button"><ExternalLink aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />Bilibili 录播</button><button aria-pressed={state.sourceKind === "local"} className="ny-button" onClick={() => dispatch({ kind: "select-source", sourceKind: "local" })} type="button"><FileVideo2 aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />本地文件</button></div>{state.sourceKind === "bilibili" ? <BilibiliSourceStep error={state.errors.source} isInspecting={inspectionMutation.isPending} onInspect={inspectSource} onUrlChange={(url) => dispatch({ kind: "set-bilibili-url", url })} url={state.bilibiliUrl} /> : null}{state.sourceKind === "local" ? <LocalSourceStep onSelect={chooseLocalSource} /> : null}</section> : null}
+          {state.step === "source" ? <section className="ny-task-create__step"><div className="ny-task-create__source-switch"><button aria-pressed={state.sourceKind === "bilibili"} className="ny-button" onClick={() => dispatch({ kind: "select-source", sourceKind: "bilibili" })} type="button"><ExternalLink aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />Bilibili 录播</button><button aria-pressed={state.sourceKind === "local"} className="ny-button" onClick={() => dispatch({ kind: "select-source", sourceKind: "local" })} type="button"><FileVideo2 aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />本地文件</button></div>{state.sourceKind === "bilibili" ? <BilibiliSourceStep error={state.errors.source} isInspecting={isInspecting} onInspect={inspectSource} onUrlChange={(url) => dispatch({ kind: "set-bilibili-url", url })} url={state.bilibiliUrl} /> : null}{state.sourceKind === "local" ? <LocalSourceStep onSelect={chooseLocalSource} /> : null}</section> : null}
           {state.step === "inspect" ? <section className="ny-task-create__step"><Preview inspection={state.inspection} source={state.source} />{state.source.kind === "local" ? <div className="ny-task-create__radio-actions"><button className={`ny-button${localImportMode === "reference" ? " ny-button--primary" : ""}`} onClick={() => dispatch({ importMode: "reference", kind: "set-import-mode" })} role="radio" aria-checked={localImportMode === "reference"} type="button"><CheckCircle2 aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />引用原始文件</button><button className={`ny-button${localImportMode === "copy" ? " ny-button--primary" : ""}`} onClick={() => dispatch({ importMode: "copy", kind: "set-import-mode" })} role="radio" aria-checked={localImportMode === "copy"} type="button"><Copy aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />复制到任务存储</button></div> : null}<div className="ny-overlay__actions"><button className="ny-button ny-button--quiet" onClick={() => dispatch({ kind: "back-to-source" })} type="button">重新选择</button><button className="ny-button ny-button--primary" onClick={() => dispatch({ kind: "open-options" })} type="button">继续设置</button></div></section> : null}
           {state.step === "options" || state.step === "submitting" ? <section className="ny-task-create__step"><TaskOptionsStep errors={state.step === "options" ? state.errors : {}} highlightFilteringEnabled={state.highlightFilteringEnabled} onHighlightFilteringChange={(highlightFilteringEnabled) => dispatch({ highlightFilteringEnabled, kind: "set-options" })} onPriorityChange={(priority) => dispatch({ kind: "set-options", priority })} onProfileChange={(profileId) => dispatch({ kind: "set-options", profileId })} priority={state.priority} profileId={state.profileId} profiles={profilesQuery.data ?? []} />{profilesQuery.isError ? <p className="ny-field__message ny-field__message--error">处理配置暂时不可读取；仍会验证默认 Standard 配置。</p> : null}<div className="ny-overlay__actions"><button className="ny-button ny-button--quiet" disabled={state.step === "submitting"} onClick={() => dispatch({ kind: "back-to-source" })} type="button">重新选择来源</button><button className="ny-button ny-button--primary" disabled={state.step === "submitting"} onClick={submit} type="button"><Plus aria-hidden="true" size="var(--ny-icon-default)" strokeWidth="var(--ny-icon-stroke)" />{state.step === "submitting" ? "正在创建任务" : "创建任务"}</button></div>{state.step === "options" && state.footerError !== null ? <footer className="ny-task-create__footer-error" role="status">{state.footerError}</footer> : null}</section> : null}
         </Dialog.Content>

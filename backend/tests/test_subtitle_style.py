@@ -1,8 +1,106 @@
 import pytest
+import json
+from pathlib import Path
 from pydantic import ValidationError
 
 from app.arctime.subtitle_style import SubtitleStyle, TextStyle, layout_cues, render_ass, wrap_text
 from app.services.subtitles import SubtitleSegment
+
+
+@pytest.mark.parametrize('width, values', [(960, {'align': 1, 'margin_left': 2000}), (270, {'scale_x': 400}), (90, {})])
+def test_automatic_horizontal_overflow_rejected_in_both_renderers(width, values):
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_render import render_document_ass
+    style = SubtitleStyle(original=TextStyle(size=200, **values))
+    doc = SubtitleDocument(source_fingerprint='0' * 64, revision=0, width=width, height=540,
+        duration=1, fps=25, style=style, cues=[Cue(id='cue-000001', start_seconds=0, end_seconds=1, text='W')])
+    with pytest.raises(ValueError, match='fit'):
+        render_ass([SubtitleSegment('1', 0, 1, 'W')], None, style, width, 540)
+    with pytest.raises(ValueError, match='fit'):
+        render_document_ass(doc, False)
+    free = style.model_copy(update={'original': style.original.model_copy(update={'x': 40})})
+    assert 'Dialogue:' in render_ass([SubtitleSegment('1', 0, 1, 'W')], None, free, width, 540)
+
+
+@pytest.mark.parametrize('advanced', [{}, {'bold': True}, {'italic': True}, {'spacing': 1}, {'align': 5}, {'scale_y': 150}])
+@pytest.mark.parametrize('position', ['top', 'bottom'])
+def test_automatic_overflow_has_same_contract_for_style_and_document(advanced, position):
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_render import render_document_ass
+    text = '\n'.join(f'LINE {i:02d}' for i in range(1, 9))
+    style = SubtitleStyle(original=TextStyle(size=120, margin=96, position=position, **advanced))
+    document = SubtitleDocument(source_fingerprint='0' * 64, revision=0, width=960, height=540,
+        duration=1, fps=25, style=style, cues=[Cue(id='cue-000001', start_seconds=0, end_seconds=1, text=text)])
+    with pytest.raises(ValueError, match='fit'):
+        render_ass([SubtitleSegment('1', 0, 1, text)], None, style, 960, 540)
+    with pytest.raises(ValueError, match='fit'):
+        render_document_ass(document, False)
+
+
+def test_hidden_and_explicit_coordinates_do_not_acquire_automatic_overflow_rejection():
+    text = 'LINE\n' * 15
+    for advanced in [{'hidden': True}, {'x': 200}, {'y': 200}]:
+        style = SubtitleStyle(original=TextStyle(size=120, **advanced))
+        assert '[Events]' in render_ass([SubtitleSegment('1', 0, 1, text)], None, style, 960, 540)
+
+
+def test_tight_line_spacing_still_reserves_glyph_height():
+    style = SubtitleStyle(original=TextStyle(size=200, line_height=.5, margin=850))
+    with pytest.raises(ValueError, match='fit'):
+        render_ass([SubtitleSegment('1', 0, 1, 'A')], None, style, 960, 540)
+
+
+def test_automatic_rotation_rejects_clipped_text_but_keeps_short_centered_text():
+    style = SubtitleStyle(original=TextStyle(size=120, rotation=90, align=5))
+    with pytest.raises(ValueError, match='fit'):
+        render_ass([SubtitleSegment('1', 0, 1, 'ABCDEFGHIJKLM')], None, style, 960, 540)
+    assert 'Dialogue:' in render_ass([SubtitleSegment('1', 0, 1, 'AB')], None, style, 960, 540)
+
+
+@pytest.mark.parametrize('align, position', [(2, 'bottom'), (8, 'top'), (5, 'bottom')])
+def test_document_override_bilingual_overflow_and_hidden_reservation(align, position):
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_render import render_document_ass
+    override = TextStyle(size=120, margin=96, align=align, position=position)
+    cue = Cue(id='cue-000001', start_seconds=0, end_seconds=1, text='A\n' * 3 + 'A',
+              translation='B\n' * 3 + 'B', original_style=override, translation_style=override)
+    doc = SubtitleDocument(source_fingerprint='0' * 64, revision=0, width=960, height=540,
+                           duration=1, fps=25, style=SubtitleStyle(), cues=[cue])
+    assert 'Dialogue:' in render_document_ass(doc, False)
+    with pytest.raises(ValueError, match='fit'):
+        render_document_ass(doc, True)
+    hidden = cue.model_copy(update={'translation_style': override.model_copy(update={'hidden': True})})
+    assert render_document_ass(doc.model_copy(update={'cues': [hidden]}), True) == render_document_ass(doc, False)
+
+
+@pytest.mark.parametrize('sample', json.loads((Path(__file__).parent / 'fixtures/grapheme-wrap.json').read_text()))
+def test_grapheme_wrap_shared_samples(sample, tmp_path):
+    from app.arctime.subtitle_render import _lines, render_document_ass
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    expected = sample['lines']
+    assert wrap_text(sample['text'], 20, 64).split('\n') == expected
+    assert _lines(sample['text'], [], TextStyle(size=20), 64) == expected
+    assert _lines(sample['text'], [], TextStyle(size=20), 41) == expected
+    document = SubtitleDocument(source_fingerprint='a' * 64, revision=0, width=64, height=1080,
+        duration=2, fps=25, style=SubtitleStyle(original=TextStyle(size=20, margin=0), translation=TextStyle(size=20, margin=0)),
+        cues=[Cue(id='cue-000001', start_seconds=0, end_seconds=1, text='X', translation=sample['text'])])
+    if sample['text'] == 'A👩‍💻B':
+        with pytest.raises(ValueError, match='fit'):
+            render_document_ass(document, True)
+        document = document.model_copy(update={'width': 88})
+    ass = render_document_ass(document, True)
+    (tmp_path / 'grapheme.ass').write_text(ass)
+    assert f'\\pos({document.width / 2:g},{1080 - (len(expected) * 24 + 8):g})' in ass
+
+
+def test_grapheme_emphasis_keeps_codepoint_offsets_after_crlf():
+    from app.arctime.subtitle_render import _lines
+    from app.arctime.subtitle_document import Emphasis
+    text = 'A\r\n👩‍💻B'
+    spans = [Emphasis(start=4, end=5, color='#FF0000', bold=True)]
+    lines = _lines(text, spans, TextStyle(size=20), 64)
+    assert len(lines) == 3
+    assert lines[1] == '{\\1c&HFFFFFF&\\b0}👩{\\1c&H0000FF&\\b1}‍{\\1c&HFFFFFF&\\b0}💻'
 
 
 @pytest.mark.parametrize('values', [dict(size=float('nan')), dict(size=True), dict(size=0), dict(outline=-1), dict(background_opacity=2), dict(color='red'), dict(font='Arial,evil'), dict(font='A\nB'), dict(font='{x}'), dict(margin=1081)])

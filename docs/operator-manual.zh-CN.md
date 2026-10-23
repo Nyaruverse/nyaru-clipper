@@ -276,7 +276,7 @@ worker 会一次领取一个待处理的持久化任务。
 
 任务运行期间，任务概览可以从 `execution_progress` 和阶段摘要显示安全的子步骤信息。`ASR 2/5` 和 `Translation 4/5` 表示已完成的工作分片数与任务总数。`Translation merge` 表示正在汇总每个分片的翻译，`Translation proofread` 表示必需的最终文本校对正在运行。这些字符串不会泄露 API Key、供应商请求头、提示词、原始响应、Cookie、主机路径或媒体载荷。
 
-DeepSeek Key 仅供后端使用。请在 API/worker 的进程环境或密钥存储中设置 `APP_DEEPSEEK_API_KEY`，绝不能放入浏览器、任务元数据、前端文件、产物或日志。校对时离开工作站的任务派生数据只有字幕文本、稳定行 ID 和时间戳；源视频与音频不会外发。固定的服务端提示词和原始供应商响应始终只保留在后端。
+DeepSeek Key 仅供后端使用。请在启动 API/worker 前写入被 Git 忽略的 `config/deepseek.env`；也可用 `APP_DEEPSEEK_CONFIG_FILE` 指向外部密钥文件，单独的 `APP_DEEPSEEK_*` 进程环境变量会覆盖文件中的值。绝不能放入浏览器、任务元数据、前端文件、产物或日志。校对时离开工作站的任务派生数据只有字幕文本、稳定行 ID 和时间戳；源视频与音频不会外发。固定的服务端提示词和原始供应商响应始终只保留在后端。
 
 ### 恢复与失败处理
 
@@ -302,6 +302,8 @@ DeepSeek Key 仅供后端使用。请在 API/worker 的进程环境或密钥存�
 - 启动日志和 worker 日志，其中会出现 `runtime_capabilities_startup` 与 `worker_preflight_runtime=<json>`
 
 warning 不会阻止启动，但会持续暴露在 API、UI 和日志中，方便在执行关键任务前修复降级环境。
+
+`/api/health` 通过独立只读连接查询配置的持久 SQLite 任务表。数据库可读时返回 HTTP 200 和 `status=ok,database=ok`；不可访问、被锁定、缺失或不受支持时返回 HTTP 503 和 `status=error,database=error`。SQLite 等锁上限为 1 秒。这只检查读取就绪，不承诺写入能力或剩余磁盘空间。开发启动、发布 smoke 和 Compose API healthcheck 均使用该接口；启动与 smoke 还要求两个字段同时为 `ok`。应先恢复数据库访问，再重试启动。GPU 能力 warning 仍不阻塞启动。
 
 ### 精简摘要里应该看到什么
 

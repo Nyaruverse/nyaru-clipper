@@ -1,48 +1,72 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models import Artifact, ClipCandidate
-from app.repositories.tasks import get_task_record
-from app.services.pipeline_support import set_stage_status
-from app.services.storage import ensure_task_dirs, persist_artifact_metadata
+from app.models import Artifact, ClipCandidate, PipelineRun
+from app.repositories.tasks import TaskRecord, get_task_record
+from app.services.storage import ensure_task_dirs, persist_artifact_metadata, refresh_task_storage, reconcile_storage_after_cleanup
 
 
-@dataclass(slots=True)
-class TaskReportResult:
-    task_id: str
+@dataclass(frozen=True, slots=True)
+class PreparedTaskReport:
+    record: TaskRecord
     output_path: Path
-    artifact_id: int
 
 
-def generate_task_report(session: Session, task_id: str) -> TaskReportResult:
+def generate_task_report(session: Session, task_id: str) -> PreparedTaskReport:
+    """Prepare the canonical report without exposing a nonterminal artifact."""
     record = get_task_record(session, task_id)
     if record is None:
         raise ValueError(f"Unknown task_id: {task_id}")
-
-    task_dirs = ensure_task_dirs(task_id)
-    output_path = task_dirs["reports"] / "task-report.md"
-    exported_clips = _collect_exported_clips(record.artifacts)
-    report_text = _render_report(session, record, exported_clips)
-    output_path.write_text(report_text, encoding="utf-8")
-
-    artifact = _persist_report_artifact(session, task_id=task_id, output_path=output_path)
-    set_stage_status(
-        session,
-        task_id=task_id,
-        stage_name="report",
-        status="success",
-        summary=f"Generated task report {output_path.name}",
-    )
-    return TaskReportResult(task_id=task_id, output_path=output_path, artifact_id=int(artifact.id))
+    return PreparedTaskReport(record, ensure_task_dirs(task_id)["reports"] / "task-report.md")
 
 
-def _render_report(session: Session, record, exported_clips: list[dict[str, Any]]) -> str:
+@contextmanager
+def publish_task_report(session: Session, prepared: PreparedTaskReport) -> Iterator[Artifact]:
+    """Publish terminal rows, restoring prior bytes if registration or commit fails."""
+    record = prepared.record
+    task_id = record.task.id
+    if record.task.status not in {"success", "failed", "cancelled"}:
+        raise ValueError("Final reports require a terminal task state")
+    report_text = _render_report(session, record, _collect_exported_clips(record.artifacts))
+    output_path = prepared.output_path
+    backup = output_path.with_suffix(".md.previous")
+    temporary = output_path.with_suffix(".md.tmp")
+    backed_up = False
+    replaced = False
+    committed = False
+    try:
+        temporary.write_text(report_text, encoding="utf-8")
+        if output_path.exists():
+            output_path.replace(backup)
+            backed_up = True
+        temporary.replace(output_path)
+        replaced = True
+        artifact = _persist_report_artifact(session, task_id=record.task.id, output_path=output_path)
+        yield artifact
+        committed = True
+    finally:
+        if not committed:
+            if backed_up:
+                backup.replace(output_path)
+            elif replaced:
+                output_path.unlink(missing_ok=True)
+        if committed and backed_up:
+            backup.unlink()
+            reconcile_storage_after_cleanup(session, task_id=task_id)
+        temporary.unlink(missing_ok=True)
+
+
+def _render_report(session: Session, record: TaskRecord, exported_clips: list[dict[str, Any]]) -> str:
+    run_id = session.info.get("pipeline_run_id")
+    run = session.get(PipelineRun, run_id) if run_id is not None else None
     source_metadata = _collect_source_metadata(record.artifacts)
     model_metadata = _collect_model_metadata(record.artifacts)
     retries = [stage for stage in record.stages if stage.attempts > 1]
@@ -59,6 +83,9 @@ def _render_report(session: Session, record, exported_clips: list[dict[str, Any]
         f"- Normalized Source URL: {record.task.normalized_source_url}",
         f"- Source Video ID: {record.task.source_video_id or 'n/a'}",
         f"- Task Status: {record.task.status}",
+        f"- Canonical Run ID: `{run.id if run is not None else 'standalone'}`",
+        f"- Canonical Run Status: {run.status if run is not None else record.task.status}",
+        "- Scope: Canonical pipeline terminal snapshot; later manual exports are separate operations.",
         "",
         "## Source Metadata",
         "",
@@ -204,6 +231,7 @@ def _persist_report_artifact(session: Session, *, task_id: str, output_path: Pat
         session.add(existing)
         session.flush()
         session.refresh(existing)
+        refresh_task_storage(session, task_id=task_id)
         return existing
     return persist_artifact_metadata(
         session,

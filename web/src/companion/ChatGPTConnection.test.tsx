@@ -63,6 +63,7 @@ it("shows missing plan sharing and disables account model saving", async () => {
   expect(await screen.findByText(/尚未授权共享订阅额度/)).toBeVisible();
   expect(screen.getByRole("button",{name:"保存供应商与模型"})).toBeDisabled();
   expect(screen.queryByRole("option",{name:"Account Model"})).toBeNull();
+  fireEvent.click(screen.getByRole("button",{name:"返回工作区"}));
   fireEvent.click(screen.getByRole("button", {name:"切片方式"}));
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
   fireEvent.click(screen.getByRole("button", {name:"新建任务"}));
@@ -102,6 +103,7 @@ it("shows expired session recovery and keeps logout disabled during a busy task"
 it("uses ChatGPT readiness for Saozi even when no DeepSeek key exists", async () => {
   setup({status:connected});
   await screen.findByRole("option",{name:"Account Model"});
+  fireEvent.click(screen.getByRole("button",{name:"返回工作区"}));
   fireEvent.click(screen.getByRole("button", {name:"切片方式"}));
   fireEvent.click(screen.getByRole("radio",{name:"臊子"}));
   expect(screen.getByText(/ChatGPT 根据字幕段落选择切点/)).toBeVisible();
@@ -148,6 +150,7 @@ it.each([
   {name:"saved Saozi ChatGPT model ready despite unset default Flash key",provider:"deepseek",status:connected,key:false,saoziModel:"chatgpt:saved-model",ready:true},
 ])("$name", async ({ready,name: _name,...options}) => {
   const {posts} = setup(options);
+  fireEvent.click(screen.getByRole("button",{name:"返回工作区"}));
   const button = await screen.findByRole("button",{name:"继续生成中日双语字幕"});
   if (ready) {
     expect(button).toBeEnabled();

@@ -1,4 +1,5 @@
 import type { SubtitleStyle, TextStyle } from './subtitleStyle';
+import { automaticLayout, effectiveAlignment, wrapStyledText } from './subtitleStyle';
 
 export type Language = 'original' | 'translation';
 export interface Emphasis { readonly start: number; readonly end: number; readonly color: string; readonly bold: boolean }
@@ -101,14 +102,10 @@ export function mergeCues(doc: SubtitleDocument, ids: readonly string[]): Subtit
     sourceOffset += Array.from(cue.text).length + 1;
     targetOffset += Array.from(cue.translation).length + 1;
   }
-  const merged = { ...first, end_seconds: Math.max(...chosen.map(cue => cue.end_seconds)),
+  const merged = { ...first, start_seconds: Math.min(...chosen.map(cue => cue.start_seconds)), end_seconds: Math.max(...chosen.map(cue => cue.end_seconds)),
     text: chosen.map(cue => cue.text).join('\n'), translation: chosen.map(cue => cue.translation).join('\n'),
     original_emphasis: sourceSpans, translation_emphasis: targetSpans };
   return { ...doc, cues: doc.cues.flatMap(cue => cue.id === first.id ? [merged] : ids.includes(cue.id) ? [] : [cue]) };
-}
-
-function effectiveAlignment(style: TextStyle): number {
-  return style.position === 'top' && (style.align ?? 2) === 2 && style.x == null && style.y == null ? 8 : style.align ?? (style.position === 'top' ? 8 : 2);
 }
 
 export function anchorPosition(style: TextStyle, width: number, height: number): { x: number; y: number } {
@@ -125,35 +122,12 @@ export function nudgeStyle(style: TextStyle, dx: number, dy: number, width: numb
   return { ...style, align: effectiveAlignment(style), x: Math.round((point.x + dx) * 100) / 100, y: Math.round((point.y + dy) * 100) / 100 };
 }
 
-function wrappedLineCount(text: string, style: TextStyle, width: number): number {
-  const available = Math.max(1, width * (style.max_width ?? 100) / 100 - (style.margin_left ?? 20) - (style.margin_right ?? 20) - 2 * (style.padding ?? 0));
-  let lines = 1, used = 0;
-  for (const char of text.replace(/\r\n?/g, '\n')) {
-    if (char === '\n') { lines++; used = 0; continue; }
-    const advance = /\p{M}/u.test(char) ? 0 : Math.max(0, style.size * 1.2 + (style.spacing ?? 0)) * (style.scale_x ?? 100) / 100;
-    if (used && used + advance > available) { lines++; used = 0; }
-    used += advance;
-  }
-  return lines;
-}
-
 export function effectiveAnchor(doc: SubtitleDocument, cue: EditableCue, language: Language, bilingual: boolean): { x: number; y: number } {
-  const original = resolveStyle(doc, cue, 'original'), translation = resolveStyle(doc, cue, 'translation');
-  const style = language === 'original' ? original : translation;
-  let margin = style.margin;
-  let center = doc.height / 2;
-  if (bilingual && cue.text && cue.translation && !original.hidden && !translation.hidden && style.x == null && style.y == null) {
-    const width = doc.width / (doc.height / 1080);
-    const originalHeight = wrappedLineCount(cue.text, original, width) * original.size * (original.line_height ?? 1.2) * (original.scale_y ?? 100) / 100 + 8;
-    const translationHeight = wrappedLineCount(cue.translation, translation, width) * translation.size * (translation.line_height ?? 1.2) * (translation.scale_y ?? 100) / 100 + 8;
-    if (original.position === translation.position) {
-      if (language === 'original' && style.position === 'bottom') margin = Math.max(margin, translation.margin + translationHeight);
-      if (language === 'translation' && style.position === 'top') margin = Math.max(margin, original.margin + originalHeight);
-    }
-    if (Math.floor((effectiveAlignment(original) - 1) / 3) === 1 && Math.floor((effectiveAlignment(translation) - 1) / 3) === 1) center += (language === 'original' ? -translationHeight : originalHeight) * doc.height / 1080 / 2;
-  }
-  const point = anchorPosition({ ...style, margin }, doc.width, doc.height);
-  return style.y == null && Math.floor((effectiveAlignment(style) - 1) / 3) === 1 ? { ...point, y: center } : point;
+  const styles = { original: resolveStyle(doc, cue, 'original'), translation: resolveStyle(doc, cue, 'translation') };
+  const visible = (['original', 'translation'] as const).filter(key => (key === 'original' || bilingual) && (key === 'original' ? cue.text : cue.translation) && !styles[key].hidden);
+  const layout = automaticLayout(visible.map(key => ({style:styles[key], count:wrapStyledText(key === 'original' ? cue.text : cue.translation, styles[key], doc.width * 1080 / doc.height).split('\n').length})));
+  const style = styles[language], point = anchorPosition(style, doc.width, doc.height), index = visible.indexOf(language);
+  return index >= 0 && style.y == null ? {...point, y:layout.anchors[index] * doc.height / 1080} : point;
 }
 
 export function nudgeCueStyle(doc: SubtitleDocument, cue: EditableCue, language: Language, dx: number, dy: number, bilingual: boolean): TextStyle {

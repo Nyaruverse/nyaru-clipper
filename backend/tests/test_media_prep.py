@@ -62,6 +62,16 @@ def _install_media_commands(monkeypatch: pytest.MonkeyPatch, commands: list[list
     monkeypatch.setattr("subprocess.run", fake_run)
 
 
+def test_chunk_audio_accepts_small_resampling_boundary_drift(tmp_path: Path) -> None:
+    from app.services.media_chunks import MediaChunk
+    from app.services.media_prep import _has_valid_chunk_audio
+
+    audio_path = tmp_path / "chunk.wav"
+    _write_wav(audio_path, duration_seconds=300 + 9 / 16000)
+
+    assert _has_valid_chunk_audio(MediaChunk(0, 0.0, 300.0, audio_path))
+
+
 def test_prepare_media_for_asr_creates_exact_wav_chunks_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     data_dir = tmp_path / "data"
     task_id = _create_task("https://www.bilibili.com/video/BV1mn411c7mP", data_dir=data_dir, monkeypatch=monkeypatch)
@@ -126,6 +136,43 @@ def test_prepare_media_for_asr_reuses_valid_matching_chunks(tmp_path: Path, monk
 
     assert [command[0] for command in commands] == ["ffprobe"]
     assert second_result.chunk_manifest == first_result.chunk_manifest
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("duration", ["601.25", "1201.25"])
+def test_media_publication_counts_whole_tree_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cached: bool, duration: str) -> None:
+    task_id = _create_task("https://www.bilibili.com/video/BV1mn411c7mP", data_dir=tmp_path / "data", monkeypatch=monkeypatch)
+    from app.db import session_scope
+    from app.models import Artifact, Task, WorkstationEvent
+    from app.services.media_prep import prepare_media_for_asr
+    from app.services.storage import get_task_root
+
+    root = get_task_root(task_id)
+    source = root / "raw" / "source.mp4"
+    source.write_bytes(b"source")
+    _install_media_commands(monkeypatch, [], duration=duration)
+    if cached:
+        with session_scope() as session:
+            prepare_media_for_asr(session, task_id, source)
+    (root / "interrupted-work.bin").write_bytes(b"leftovers")
+    scans = []
+    original = Path.rglob
+
+    def counted(path, pattern):
+        if path == root and pattern == "*":
+            scans.append(path)
+        return original(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", counted)
+    with session_scope() as session:
+        result = prepare_media_for_asr(session, task_id, source)
+        total = session.get(Task, task_id).storage_bytes
+        artifacts = session.exec(select(Artifact).where(Artifact.task_id == task_id)).all()
+        events = session.exec(select(WorkstationEvent).where(WorkstationEvent.entity_id == task_id).where(WorkstationEvent.event_type == "artifact.ready")).all()
+        assert len(scans) == 1
+        assert total == sum(p.stat().st_size for p in original(root, "*") if p.is_file())
+        assert len(artifacts) == len(events) == len(result.chunk_manifest.chunks) + 2
+        assert {a.id for a in artifacts} == {json.loads(e.payload_json)["artifact_id"] for e in events}
 
 
 def test_prepare_media_for_asr_reuses_artifact_rows_and_ready_events_for_matching_chunks(
@@ -306,3 +353,75 @@ def test_prepare_media_for_asr_redacts_ffprobe_failure(tmp_path: Path, monkeypat
 
     assert str(video_path) not in str(exc_info.value)
     assert "https://safe.example/video" in str(exc_info.value)
+
+@pytest.mark.parametrize("change", ["source", "legacy", "audio", "conversion"])
+def test_media_cache_identity_invalidates_content_and_parameters(tmp_path, monkeypatch, change):
+    data_dir = tmp_path / "data"
+    task_id = _create_task("https://www.bilibili.com/video/BV1identity", data_dir=data_dir, monkeypatch=monkeypatch)
+    video = data_dir / "tasks" / task_id / "raw" / "source.mp4"
+    video.write_bytes(b"video-one")
+    commands = []
+    _install_media_commands(monkeypatch, commands, duration="1")
+    from app.db import session_scope
+    from app.services.media_prep import prepare_media_for_asr
+    with session_scope() as session:
+        result = prepare_media_for_asr(session, task_id, video)
+    manifest_path = video.parent.parent / "work" / "media-chunks.json"
+    if change == "source":
+        video.write_bytes(b"video-two")
+    elif change == "legacy":
+        payload = json.loads(manifest_path.read_text())
+        payload.pop("cache_identity", None)
+        manifest_path.write_text(json.dumps(payload))
+    elif change == "audio":
+        audio = result.chunk_manifest.chunks[0].audio_path
+        data = bytearray(audio.read_bytes())
+        data[-1] ^= 1
+        audio.write_bytes(data)
+    else:
+        monkeypatch.setenv("APP_FFMPEG_BINARY", "ffmpeg-changed")
+        from app.services import media_prep
+        original = media_prep.run_logged_command
+        def renamed(args, **kwargs):
+            return original(["ffmpeg", *args[1:]] if args[0] == "ffmpeg-changed" else args, **kwargs)
+        monkeypatch.setattr(media_prep, "run_logged_command", renamed)
+    commands.clear()
+    with session_scope() as session:
+        prepare_media_for_asr(session, task_id, video)
+    assert [command[0] for command in commands] == ["ffprobe", "ffmpeg"]
+
+
+def test_media_source_mutation_during_conversion_never_publishes_identity(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    task_id = _create_task("https://www.bilibili.com/video/BV1mutate", data_dir=data_dir, monkeypatch=monkeypatch)
+    video = data_dir / "tasks" / task_id / "raw" / "source.mp4"
+    video.write_bytes(b"video-one")
+    _install_media_commands(monkeypatch, [], duration="1")
+    from app.db import session_scope
+    from app.services import media_prep
+    original = media_prep._create_chunk_audio
+    def mutate(*args, **kwargs):
+        original(*args, **kwargs)
+        video.write_bytes(b"video-two")
+    monkeypatch.setattr(media_prep, "_create_chunk_audio", mutate)
+    with session_scope() as session, pytest.raises(media_prep.MediaPrepFailure, match="changed"):
+        media_prep.prepare_media_for_asr(session, task_id, video)
+    assert not (video.parent.parent / "work" / "media-chunks.json").exists()
+
+
+def test_prepare_media_rebuilds_truncated_cached_wav(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    task_id = _create_task("https://www.bilibili.com/video/BV1truncated", data_dir=data_dir, monkeypatch=monkeypatch)
+    video = data_dir / "tasks" / task_id / "raw" / "source.mp4"
+    video.write_bytes(b"video")
+    commands = []
+    _install_media_commands(monkeypatch, commands, duration="1")
+    from app.db import session_scope
+    from app.services.media_prep import prepare_media_for_asr
+    with session_scope() as session:
+        first = prepare_media_for_asr(session, task_id, video)
+    first.chunk_manifest.chunks[0].audio_path.write_bytes(b"wav")
+    commands.clear()
+    with session_scope() as session:
+        prepare_media_for_asr(session, task_id, video)
+    assert [command[0] for command in commands] == ["ffprobe", "ffmpeg"]

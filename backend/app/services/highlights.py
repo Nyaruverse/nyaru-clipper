@@ -9,7 +9,8 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.models import ClipCandidate
-from app.repositories.tasks import get_task_record
+from app.repositories.tasks import TaskRecord, get_task_record
+from app.services import media_prep
 from app.services.highlight_scoring import (
     AudioEnergyWindow,
     MIN_CANDIDATE_SCORE,
@@ -19,9 +20,10 @@ from app.services.highlight_scoring import (
 )
 from app.services.pipeline_support import append_stage_log, set_stage_status
 from app.services.scene_detection import SceneDetectionProvider, build_scene_detection_provider
-from app.services.source_catalog import resolve_local_reference_artifact
+from app.services.source_catalog import SourceCatalogError, resolve_local_reference_artifact
 from app.services.storage import ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
 from app.services.subtitles import SubtitleSegment, SubtitleWord
+from app.settings import get_settings
 
 NO_CANDIDATES_EXPLANATION = (
     "No highlight candidates cleared the minimum score threshold from the available scene and subtitle signals."
@@ -86,11 +88,13 @@ def analyze_task_highlights(
         scene_path = scene_resolution.scene_path
         append_stage_log(log_path, f"scene_input={scene_path or 'injected_scene_windows'}")
         effective_audio_windows = audio_energy_windows or _load_audio_energy_windows(task_id, record)
+        media_end_s = _resolve_media_end_s(task_id, record)
+        append_stage_log(log_path, f"highlight_media_end_s={media_end_s if media_end_s is not None else 'unknown'}")
         candidates = score_candidate_windows(
             effective_scene_windows,
             subtitle_segments,
             audio_energy_windows=effective_audio_windows,
-            media_end_s=max((segment.end_seconds for segment in subtitle_segments), default=None),
+            media_end_s=media_end_s,
             min_score=MIN_CANDIDATE_SCORE,
         )
         elapsed_seconds = round(time.perf_counter() - started_at, 3)
@@ -144,6 +148,7 @@ def analyze_task_highlights(
             "scene_count": len(effective_scene_windows),
             "scene_artifact_kind": scene_resolution.artifact_kind,
             "scene_metadata": scene_resolution.metadata,
+            "media_end_s": media_end_s,
         },
     )
 
@@ -356,6 +361,26 @@ def _resolve_source_video_path(task_id: str, record) -> Path:
     raise FileNotFoundError("Source video artifact is missing for scene detection.")
 
 
+def _resolve_media_end_s(task_id: str, record: TaskRecord) -> float | None:
+    # Re-probe the resolved source: saved probe metadata may belong to replaced media.
+    try:
+        source_path = _resolve_source_video_path(task_id, record)
+        result = media_prep.run_logged_command(
+            [get_settings().ffprobe_binary, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(source_path)],
+            log_path=log_file_for_stage(task_id, "highlight"),
+            redactions={str(source_path): _source_video_reference(record, source_path)},
+        )
+        if result.returncode != 0:
+            return None
+        metadata = json.loads(result.stdout)
+        if not isinstance(metadata, dict):
+            return None
+        duration = media_prep._source_duration_seconds(metadata)
+        return duration if duration > 0 else None
+    except (OSError, ValueError, SourceCatalogError):
+        return None
+
+
 def _source_video_reference(record, source_video_path: Path) -> str:
     """Use an opaque local locator in artifacts and logs while retaining a runtime path for processing."""
     for artifact in reversed(record.artifacts):
@@ -454,8 +479,8 @@ def _parse_audio_energy_windows(path: Path) -> list[AudioEnergyWindow]:
 def _load_segments_from_transcript(transcript_path: Path) -> list[SubtitleSegment]:
     payload = json.loads(transcript_path.read_text(encoding="utf-8"))
     raw_segments = payload.get("segments")
-    if not isinstance(raw_segments, list) or not raw_segments:
-        raise HighlightFailure(code="missing_input", message="Subtitle transcript JSON does not contain any segments to score.")
+    if not isinstance(raw_segments, list):
+        raise HighlightFailure(code="missing_input", message="Subtitle transcript JSON does not contain a segments list to score.")
 
     segments: list[SubtitleSegment] = []
     for raw_segment in raw_segments:

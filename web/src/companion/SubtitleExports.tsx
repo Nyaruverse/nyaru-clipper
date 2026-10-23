@@ -1,15 +1,30 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
+import { running, type Job } from './companionApi';
 import { subtitleApi, type SubtitleStyle } from './subtitleStyle';
 import type { SubtitleDocument } from './subtitleDocument';
 export interface ExportStatus {active:null | {state:string;message:string;error:string|null};outputs:{id:string;kind:string;video:string;bilingual:boolean;filename:string;style?:SubtitleStyle|null}[]}
-export function useSubtitleExports(id: string | null) {return useQuery({queryKey:['companion','subtitle-exports',id],queryFn:()=>subtitleApi<ExportStatus>(`/jobs/${id}/subtitle-exports`),enabled:!!id,refetchInterval:1000});}
-interface Props {id:string;video:string;bilingual:boolean;style:SubtitleStyle;project:string|null;busy:boolean;burnAvailable:boolean;nativeAvailable:boolean;status?:ExportStatus;error:Error|null;document?:SubtitleDocument|null}
-export function SubtitleExports({id,video,bilingual,style,project,busy,burnAvailable,nativeAvailable,status,error,document}:Props) {
+export function useSubtitleExports(id: string | null, parent?: Job, listedParent?: Job) {
+ const active = running(parent) || running(listedParent);
+ const wake = JSON.stringify([parent, listedParent].map(job => [job?.state, job?.subtitle_export_busy,
+   job?.translation?.state, job?.clips?.length, job?.subtitle_style_error]));
+ const previous = useRef({id,wake});
+ const query = useQuery({queryKey:['companion','subtitle-exports',id],queryFn:()=>subtitleApi<ExportStatus>(`/jobs/${id}/subtitle-exports`),enabled:!!id,
+   refetchInterval:current => active || current.state.data?.active?.state === 'exporting' ? 1000 : false});
+ const {refetch} = query;
+ useEffect(() => {
+   if (id && previous.current.id === id && previous.current.wake !== wake) void refetch();
+   previous.current = {id,wake};
+ },[id,wake,refetch]);
+ return query;
+}
+interface Props {preferredFormat?:'ass'|'mp4'|'arctime';id:string;video:string;bilingual:boolean;style:SubtitleStyle;project:string|null;busy:boolean;burnAvailable:boolean;nativeAvailable:boolean;status?:ExportStatus;error:Error|null;document?:SubtitleDocument|null}
+export function SubtitleExports({id,video,bilingual,style,project,busy,burnAvailable,nativeAvailable,status,error,document,preferredFormat='ass'}:Props) {
  const client=useQueryClient();
- const mutation=useMutation({mutationFn:(kind:string)=>subtitleApi(`/jobs/${id}/subtitle-export`,{kind,video,bilingual,style,arctime_template_id:project,...(document ? {document} : {})}),onSuccess:()=>client.invalidateQueries({queryKey:['companion']})});
+ const mutation=useMutation({mutationFn:(kind:'ass'|'burn'|'arctime')=>subtitleApi(`/jobs/${id}/subtitle-export`,{kind,video,bilingual,style,...(kind==='arctime' ? {arctime_template_id:project} : {}),...(document ? {document} : {})}),onSuccess:()=>client.invalidateQueries({queryKey:['companion']})});
  const handoff=useMutation({mutationFn:(path:string)=>subtitleApi(path,{})});
  return <div className="subtitle-exports"><h3>样式字幕导出</h3><p className="companion-muted">当前范围：{video === 'source.mp4' ? '完整视频' : video} · {bilingual ? '中日双语' : '原文'}。导出使用当前预览样式。</p>
- <div className="companion-downloads">{(['ass','burn','arctime'] as const).map(kind=><button key={kind} className="ny-button" disabled={busy || mutation.isPending || !!error || (kind==='burn' && (video==='source.mp4'||!burnAvailable))} onClick={()=>mutation.mutate(kind)}>{kind==='ass'?'导出 ASS':kind==='burn'?'烧录切片 MP4':'导出 ArcTime ZIP'}</button>)}</div>
+ <div className="companion-downloads">{(['ass','burn','arctime'] as const).map(kind=><button key={kind} className={`ny-button ${(kind==='burn'?'mp4':kind)===preferredFormat?'ny-button--primary':''}`} disabled={busy || mutation.isPending || !!error || (kind==='burn' && (video==='source.mp4'||!burnAvailable))} onClick={()=>mutation.mutate(kind)}>{kind==='ass'?'导出 ASS':kind==='burn'?'烧录切片 MP4':'导出 ArcTime ZIP'}</button>)}</div>
  {document && <p className="companion-footnote">包含逐条字幕编辑稿第 {document.revision} 版。原始 SRT 下载仍保留识别结果；编辑后的 SRT 在 ArcTime ZIP 中。</p>}
  {!burnAvailable && <p className="companion-muted">当前 FFmpeg 不支持字幕烧录。</p>}{video==='source.mp4' && <p className="companion-muted">烧录仅支持切片，请在预览中选择切片。</p>}
  {(error || mutation.error || handoff.error || status?.active?.error) && <p role="alert" className="companion-error">{error?.message ?? mutation.error?.message ?? handoff.error?.message ?? status?.active?.error}</p>}

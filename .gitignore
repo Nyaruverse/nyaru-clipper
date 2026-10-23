@@ -3,6 +3,7 @@
 /.superpower/
 /.superpowers/
 /.omo/
+/.playwright-mcp/
 /.bin/
 /.docker/
 /.tools/
@@ -31,6 +32,7 @@ test-results/
 .env.*
 !.env.example
 *.local
+config/deepseek.env
 
 # AI/model/cache artifacts
 .cache/

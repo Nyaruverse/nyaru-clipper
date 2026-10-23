@@ -83,6 +83,7 @@ describe("WorkstationApp", () => {
   });
 
   it("invalidates the task projections affected by task and queue events", () => {
+    vi.useFakeTimers();
     vi.stubGlobal("EventSource", EventSourceHarness);
     const queryClient = renderWorkstation(<WorkstationApp />);
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
@@ -92,6 +93,7 @@ describe("WorkstationApp", () => {
     act(() => {
       source?.emit("task.updated", { task_id: "task-42", status: "running" }, "7");
       source?.emit("queue.updated", { revision: 2 }, "8");
+      vi.advanceTimersByTime(50);
     });
 
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workstation", "tasks", "summary"] });

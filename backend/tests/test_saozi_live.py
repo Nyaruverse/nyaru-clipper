@@ -107,7 +107,7 @@ def test_style_snapshot_and_hook_survive_live_restart(recording):
     capture = Capture(paths[:8], directory)
     template = StyleTemplate(id='test', name='Imported', style=SubtitleStyle(original=TextStyle(size=61)))
     observations = []
-    def publish(path, job):
+    def publish(path, job, changed):
         observations.append((job['subtitle_template'], len(job['completed_clips']), capture.closed))
     run_live(directory, Selector(), Adapter(), threading.Event(), None, capture=capture,
              style_template=template, styled=publish)
@@ -171,6 +171,28 @@ def test_changed_prompt_cannot_resume(recording, monkeypatch):
         run_live(directory, Selector(), Adapter(), threading.Event(), None)
 
 
+def test_decode_damage_warns_without_interrupting_capture(recording, monkeypatch):
+    from app.arctime import video_integrity
+    directory, paths = recording
+    checked = []
+
+    def validate(path, duration):
+        checked.append(path)
+        if len(checked) == 1:
+            raise video_integrity.VideoDecodeError()
+
+    monkeypatch.setattr(video_integrity, 'validate_video_decode', validate)
+    capture = Capture(paths[:2], directory)
+    capture.error = '直播断流；缺失区间无法恢复'
+    job = run_live(directory, Selector(), Adapter(), threading.Event(), None, capture=capture)
+
+    assert job['state'] == 'completed' and len(checked) == 2
+    assert job['chunks'][0]['video_decode_error']
+    assert not job['chunks'][1].get('video_decode_error')
+    assert '解码' in job['capture_warning'] and len(job['chunks']) == 2
+    assert job['capture_warning'].count(capture.error) == 1
+
+
 def test_no_speech_preserves_media(recording):
     directory, paths = recording
     class Silence(Adapter):
@@ -221,3 +243,80 @@ def test_global_subtitle_publication_gap_recovers(recording, monkeypatch):
     job = run_live(directory, Selector(), Adapter(), threading.Event(), None)
     assert job['state'] == 'completed'
     assert media.fingerprint(directory / 'subtitles.srt') == job['artifacts']['subtitles.srt']
+
+
+def test_confirmed_live_end_finishes_tail_and_records_reason(recording):
+    directory, paths = recording
+    capture = Capture(paths[:1], directory)
+    capture.end_reason = 'live_ended'
+    messages = []
+    job = run_live(directory, Selector(), Adapter(), threading.Event(), messages.append, capture=capture)
+    assert job['state'] == 'completed' and job['capture_end_reason'] == 'live_ended'
+    assert job['selection'][-1]['end'] == job['duration']
+    assert any('直播已结束' in message for message in messages)
+    assert not job.get('capture_warning')
+
+
+def test_confirmed_live_end_does_not_hide_processing_failure(recording):
+    directory, paths = recording
+    capture = Capture(paths[:1], directory)
+    capture.end_reason = 'live_ended'
+    capture.error = '直播断流；缺失区间无法恢复'
+    class Broken(Adapter):
+        def transcribe(self, *args):
+            raise ValueError('Local ASR timestamps exceed chunk duration')
+    with pytest.raises(ValueError, match='timestamps exceed chunk duration'):
+        run_live(directory, Selector(), Broken(), threading.Event(), None, capture=capture)
+    job = json.loads((directory / 'job.json').read_text())
+    assert job['state'] == 'live_failed' and job['capture_end_reason'] == 'live_ended'
+    assert job['capture_warning'] == capture.error
+
+
+def test_real_styled_append_tail_discontinuity_and_resume(recording, monkeypatch):
+    from app.arctime import subtitle_exports, video_integrity
+    from app.arctime.companion_manager import JobManager
+    from app.arctime.subtitle_exports import SubtitleExports, read_exports
+    from app.arctime.subtitle_style import SubtitleStyle
+    from app.arctime.subtitle_templates import StyleTemplate
+    directory, paths = recording
+    second = directory / 'capture-0001'
+    second.mkdir()
+    other = second / 'chunk-00000.ts'
+    shutil.copyfile(paths[0], other)
+    manager = JobManager(directory.parent, directory / 'unused', 1)
+    exports = SubtitleExports(manager)
+    encoded = []
+    burn = subtitle_exports.burn_clip
+    def record_burn(source, *args):
+        encoded.append(source.name)
+        return burn(source, *args)
+    monkeypatch.setattr(subtitle_exports, 'burn_clip', record_burn)
+    template = StyleTemplate(id='real', name='Real', style=SubtitleStyle())
+    capture = Capture([*paths[:8], other], directory)
+    try:
+        job = run_live(directory, Selector(), Adapter(), threading.Event(), None,
+                       capture=capture, style_template=template, styled=exports.export_live)
+        before = {output.filename: media.fingerprint(directory / output.filename)
+                  for output in read_exports(directory).outputs}
+        assert not job.get('subtitle_style_error')
+        assert max(capture.early[:-1]) >= 1 and len(job['discontinuities']) == 1
+        assert len(encoded) == len(job['completed_clips'])
+        assert job['selection'][-1]['end'] == job['duration']
+        decoded = []
+        for output in read_exports(directory).outputs:
+            if output.kind == 'burn':
+                product = directory / output.filename
+                video_integrity.validate_video_decode(product, media.probe_video(product))
+                decoded.append(output.filename)
+        assert len(decoded) == len(job['completed_clips'])
+        resumed = run_live(directory, Selector(), Adapter(), threading.Event(), None,
+                           styled=SubtitleExports(manager).export_live)
+        assert len(encoded) == len(job['completed_clips']) and resumed['state'] == 'completed'
+        assert all(media.fingerprint(directory / name) == digest for name, digest in before.items())
+        (directory / 'real-styled-observations.json').write_text(json.dumps({
+            'encoded': encoded, 'decoded': decoded, 'exports_during_capture': capture.early,
+            'discontinuities': job['discontinuities'], 'duration': job['duration'],
+            'selection': job['selection'], 'unchanged_after_resume': before}, indent=2))
+    finally:
+        manager.executor.shutdown(wait=True)
+        manager.chatgpt.close()

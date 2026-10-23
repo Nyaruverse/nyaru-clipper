@@ -24,7 +24,7 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
     if not job and not live and not last and not saved:
         raise HTTPException(404, "任务不存在")
     record = live or last or saved
-    if os.name == "nt":
+    if os.name == 'nt':
         state = ("completed" if job.get("state") == "completed" and
                  (not live or live.get("live") or live.get("state") == "translating")
                  else record.get("state", "interrupted"))
@@ -72,18 +72,22 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
     default_message = "处理完成" if state == "completed" else "处理已中断，可恢复已下载任务"
     if state == "completed" and record.get("state") != "completed":
         record = {**record, "message": default_message, "error": None}
-    return {"id": job_id, "state": state, "phase": job.get("state", state), "message": record.get("message", default_message),
+    message = record.get("message", default_message)
+    if job.get('capture_end_reason') == 'live_ended' and '直播已结束' not in message:
+        message = '直播已结束；' + message
+    return {"id": job_id, "state": state, "phase": job.get("state", state), "message": message,
             "error": record.get("error"), "started_at": record.get("started_at", directory.stat().st_mtime if directory.exists() else time.time()),
             "duration": job.get("duration"), "mode": "saozi" if job.get("saozi") or record.get("saozi") else "highlights" if job.get("highlight_count") else "ranges",
             "live": bool(job.get("live") or record.get("live")), "can_stop": bool(live and live.get("live") and not manager.stop_event.is_set()),
             "saozi_model": job.get("saozi_model"),
             'llm_provider': job.get('llm_provider', 'chatgpt' if str(job.get('saozi_model', '')).startswith('chatgpt:') else 'deepseek'),
             "capture_warning": job.get("capture_warning"), "discontinuities": job.get("discontinuities", []),
+            "capture_end_reason": job.get("capture_end_reason"),
             "subtitle_template": job.get('subtitle_template'), "subtitle_style_error": job.get('subtitle_style_error'),
             "clips": clips, "segments": segments, "has_source": bool(job.get("video")),
             "language": job.get("asr", {}).get("language", "auto"), "bilingual_segments": bilingual_segments,
             "bilingual_files": bilingual_files,
-            "subtitle_export_busy": bool(live and live.get("state") == "subtitle_export"),
+            "subtitle_export_busy": bool(live and (live.get("state") == "subtitle_export" or live.get('auto_subtitle_export'))),
             "translation": {"state": translation_state, "error": translation_error, "done": translated.get("done", 0),
                             "total": translated.get("total", len(segments)),
                             "model": translated.get("identity", {}).get("model") or (live or {}).get("model") or job.get('saozi_model') or job.get('llm_model') or translation.MODEL,

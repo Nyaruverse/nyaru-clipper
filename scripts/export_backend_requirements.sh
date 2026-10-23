@@ -8,7 +8,12 @@ LINUX_CUDA_OUTPUT_PATH="${BACKEND_DIR}/requirements-linux-cuda.txt"
 WSL_ROCM_OUTPUT_PATH="${BACKEND_DIR}/requirements-wsl-rocm.txt"
 OUTPUT_PATH="${DEFAULT_OUTPUT_PATH}"
 CHECK_ONLY=0
-ALL_ARTIFACTS=1
+PROFILE="all"
+PROFILE_EXPLICIT=0
+CUSTOM_OUTPUT=0
+UPGRADE=0
+CUDA_SELECTED=0
+ROCM_SELECTED=0
 PYTHON_VERSION="3.11"
 PYTHON_BIN="${BACKEND_PYTHON:-}"
 
@@ -21,7 +26,7 @@ if [[ -z "${PYTHON_BIN}" ]]; then
 fi
 
 usage() {
-  printf 'Usage: %s [--check] [--output PATH]\n' "$(basename "$0")" >&2
+  printf 'Usage: %s [--check | --upgrade] [--profile base|linux-cuda|wsl-rocm|all] [--output PATH]\n' "$(basename "$0")" >&2
 }
 
 require_commands() {
@@ -46,8 +51,18 @@ while (($# > 0)); do
         exit 1
       fi
       OUTPUT_PATH="$2"
-      ALL_ARTIFACTS=0
+      CUSTOM_OUTPUT=1
       shift 2
+      ;;
+    --profile)
+      if (($# < 2)); then usage; exit 1; fi
+      PROFILE="$2"
+      PROFILE_EXPLICIT=1
+      shift 2
+      ;;
+    --upgrade)
+      UPGRADE=1
+      shift
       ;;
     -h|--help)
       usage
@@ -61,12 +76,35 @@ while (($# > 0)); do
   esac
 done
 
+if ((CHECK_ONLY && UPGRADE)); then
+  printf '%s\n' '--check and --upgrade cannot be combined' >&2
+  exit 1
+fi
+if ((CUSTOM_OUTPUT)); then
+  if ((PROFILE_EXPLICIT)) && [[ "${PROFILE}" != base ]]; then
+    printf '%s\n' '--output supports only --profile base' >&2
+    exit 1
+  fi
+  PROFILE=base
+fi
+case "${PROFILE}" in
+  base) ;;
+  linux-cuda) CUDA_SELECTED=1 ;;
+  wsl-rocm) ROCM_SELECTED=1 ;;
+  all) CUDA_SELECTED=1; ROCM_SELECTED=1 ;;
+  *) usage; exit 1 ;;
+esac
+
 require_commands uv "${PYTHON_BIN}" cmp mktemp
 
 GENERIC_INPUT_PATH="$(mktemp)"
 GENERIC_RAW_PATH="$(mktemp)"
 GENERIC_NORMALIZED_PATH="$(mktemp)"
 GENERIC_CONSTRAINTS_PATH="$(mktemp)"
+EXPECTED_PINS_PATH="$(mktemp)"
+CANDIDATE_PINS_PATH="$(mktemp)"
+LINUX_CUDA_CONSTRAINTS_PATH="$(mktemp)"
+WSL_ROCM_CONSTRAINTS_PATH="$(mktemp)"
 LINUX_CUDA_INPUT_PATH="$(mktemp)"
 LINUX_CUDA_RAW_PATH="$(mktemp)"
 LINUX_CUDA_NORMALIZED_PATH="$(mktemp)"
@@ -77,6 +115,8 @@ WSL_ROCM_NORMALIZED_PATH="$(mktemp)"
 cleanup() {
   rm -f \
     "${GENERIC_INPUT_PATH}" "${GENERIC_RAW_PATH}" "${GENERIC_NORMALIZED_PATH}" "${GENERIC_CONSTRAINTS_PATH}" \
+    "${EXPECTED_PINS_PATH}" "${CANDIDATE_PINS_PATH}" \
+    "${LINUX_CUDA_CONSTRAINTS_PATH}" "${WSL_ROCM_CONSTRAINTS_PATH}" \
     "${LINUX_CUDA_INPUT_PATH}" "${LINUX_CUDA_RAW_PATH}" "${LINUX_CUDA_NORMALIZED_PATH}" \
     "${WSL_ROCM_INPUT_PATH}" "${WSL_ROCM_RAW_PATH}" "${WSL_ROCM_NORMALIZED_PATH}"
 }
@@ -163,23 +203,30 @@ write_constraints_file() {
   local source_path="$1"
   local destination_path="$2"
 
-  SOURCE_REQUIREMENTS_PATH="${source_path}" DESTINATION_PATH="${destination_path}" "${PYTHON_BIN}" - <<'PY'
+  shift 2
+  "${PYTHON_BIN}" - "${destination_path}" "${source_path}" "$@" <<'PY'
 from __future__ import annotations
 
-import os
+import re
+import sys
 from pathlib import Path
 
-source_path = Path(os.environ["SOURCE_REQUIREMENTS_PATH"])
-destination_path = Path(os.environ["DESTINATION_PATH"])
+pins: dict[str, str] = {}
+for source in sys.argv[2:]:
+    source_path = Path(source)
+    if not source_path.is_file():
+        raise SystemExit(f"missing pinned requirements artifact: {source}; use --upgrade to bootstrap")
+    for line in source_path.read_text(encoding="utf-8").splitlines():
+        normalized = line.strip()
+        if not normalized or normalized.startswith(("#", "--")) or normalized == "./backend":
+            continue
+        name = re.split(r"[= @;\[]", normalized, maxsplit=1)[0]
+        name = re.sub(r"[-_.]+", "-", name).lower()
+        if name in pins and pins[name] != normalized:
+            raise SystemExit(f"conflicting pin for {name}: {pins[name]} vs {normalized}")
+        pins[name] = normalized
 
-constraint_lines: list[str] = []
-for line in source_path.read_text(encoding="utf-8").splitlines():
-    normalized = line.strip()
-    if not normalized or normalized.startswith("#") or normalized == "./backend":
-        continue
-    constraint_lines.append(normalized)
-
-destination_path.write_text("\n".join(constraint_lines) + "\n", encoding="utf-8")
+Path(sys.argv[1]).write_text("\n".join(sorted(pins.values())) + "\n", encoding="utf-8")
 PY
 }
 
@@ -190,12 +237,17 @@ compile_generic_requirements() {
     uv pip compile "${GENERIC_INPUT_PATH}" \
       --project "${BACKEND_DIR}" \
       --python-version "${PYTHON_VERSION}" \
+      --python-platform x86_64-unknown-linux-gnu \
+      "${BASE_RESOLUTION_ARGS[@]}" \
       --no-header \
       --no-annotate \
       >"${GENERIC_RAW_PATH}"
   )
   normalize_requirements_file "${GENERIC_RAW_PATH}" "${GENERIC_NORMALIZED_PATH}"
-  write_constraints_file "${GENERIC_NORMALIZED_PATH}" "${GENERIC_CONSTRAINTS_PATH}"
+  if ((UPGRADE)); then
+    write_constraints_file "${GENERIC_NORMALIZED_PATH}" "${LINUX_CUDA_CONSTRAINTS_PATH}"
+    cp "${LINUX_CUDA_CONSTRAINTS_PATH}" "${WSL_ROCM_CONSTRAINTS_PATH}"
+  fi
 }
 
 compile_linux_cuda_requirements() {
@@ -205,7 +257,8 @@ compile_linux_cuda_requirements() {
     uv pip compile "${LINUX_CUDA_INPUT_PATH}" \
       --project "${BACKEND_DIR}" \
       --python-version "${PYTHON_VERSION}" \
-      --constraints "${GENERIC_CONSTRAINTS_PATH}" \
+      --python-platform x86_64-unknown-linux-gnu \
+      --constraints "${LINUX_CUDA_CONSTRAINTS_PATH}" \
       --no-header \
       --no-annotate \
       >"${LINUX_CUDA_RAW_PATH}"
@@ -222,7 +275,8 @@ compile_wsl_rocm_requirements() {
     uv pip compile "${WSL_ROCM_INPUT_PATH}" \
       --project "${BACKEND_DIR}" \
       --python-version "${PYTHON_VERSION}" \
-      --constraints "${GENERIC_CONSTRAINTS_PATH}" \
+      --python-platform x86_64-unknown-linux-gnu \
+      --constraints "${WSL_ROCM_CONSTRAINTS_PATH}" \
       --extra-index-url "${extra_index_url}" \
       --index-strategy unsafe-best-match \
       --emit-index-url \
@@ -231,6 +285,18 @@ compile_wsl_rocm_requirements() {
       >"${WSL_ROCM_RAW_PATH}"
   )
   normalize_requirements_file "${WSL_ROCM_RAW_PATH}" "${WSL_ROCM_NORMALIZED_PATH}"
+}
+
+check_pinned_versions() {
+  local generated_path="$1"
+  local authoritative_path="$2"
+
+  write_constraints_file "${generated_path}" "${CANDIDATE_PINS_PATH}"
+  write_constraints_file "${authoritative_path}" "${EXPECTED_PINS_PATH}"
+  if ! cmp -s "${CANDIDATE_PINS_PATH}" "${EXPECTED_PINS_PATH}"; then
+    printf 'dependency pins changed for %s; use --upgrade --profile all to select new versions\n' "${authoritative_path}" >&2
+    return 1
+  fi
 }
 
 write_generated_file() {
@@ -259,27 +325,40 @@ check_generated_file() {
   printf 'requirements file is up to date: %s\n' "${target_path}" >&2
 }
 
-compile_generic_requirements
+# Existing installation artifacts constrain resolution before any solver runs.
+BASE_RESOLUTION_ARGS=(--upgrade)
+if ((!UPGRADE)); then
+  write_constraints_file "${DEFAULT_OUTPUT_PATH}" "${GENERIC_CONSTRAINTS_PATH}"
+  BASE_RESOLUTION_ARGS=(--constraints "${GENERIC_CONSTRAINTS_PATH}")
+  if ((CUDA_SELECTED)); then
+    write_constraints_file "${DEFAULT_OUTPUT_PATH}" "${LINUX_CUDA_CONSTRAINTS_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"
+  fi
+  if ((ROCM_SELECTED)); then
+    write_constraints_file "${DEFAULT_OUTPUT_PATH}" "${WSL_ROCM_CONSTRAINTS_PATH}" "${WSL_ROCM_OUTPUT_PATH}"
+  fi
+fi
 
-if ((ALL_ARTIFACTS)); then
-  compile_linux_cuda_requirements
-  compile_wsl_rocm_requirements
+compile_generic_requirements
+if ((UPGRADE)) && [[ "${PROFILE}" != all ]] && ! cmp -s "${GENERIC_NORMALIZED_PATH}" "${DEFAULT_OUTPUT_PATH}"; then
+  printf '%s\n' 'base pins changed; use --upgrade --profile all to regenerate consistent installation artifacts' >&2
+  exit 1
+fi
+if ((CUDA_SELECTED)); then compile_linux_cuda_requirements; fi
+if ((ROCM_SELECTED)); then compile_wsl_rocm_requirements; fi
+
+if ((!UPGRADE)); then
+  check_pinned_versions "${GENERIC_NORMALIZED_PATH}" "${DEFAULT_OUTPUT_PATH}"
+  if ((CUDA_SELECTED)); then check_pinned_versions "${LINUX_CUDA_NORMALIZED_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"; fi
+  if ((ROCM_SELECTED)); then check_pinned_versions "${WSL_ROCM_NORMALIZED_PATH}" "${WSL_ROCM_OUTPUT_PATH}"; fi
 fi
 
 if ((CHECK_ONLY)); then
   check_generated_file "${GENERIC_NORMALIZED_PATH}" "${OUTPUT_PATH}"
-
-  if ((ALL_ARTIFACTS)); then
-    check_generated_file "${LINUX_CUDA_NORMALIZED_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"
-    check_generated_file "${WSL_ROCM_NORMALIZED_PATH}" "${WSL_ROCM_OUTPUT_PATH}"
-  fi
-
+  if ((CUDA_SELECTED)); then check_generated_file "${LINUX_CUDA_NORMALIZED_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"; fi
+  if ((ROCM_SELECTED)); then check_generated_file "${WSL_ROCM_NORMALIZED_PATH}" "${WSL_ROCM_OUTPUT_PATH}"; fi
   exit 0
 fi
 
 write_generated_file "${GENERIC_NORMALIZED_PATH}" "${OUTPUT_PATH}"
-
-if ((ALL_ARTIFACTS)); then
-  write_generated_file "${LINUX_CUDA_NORMALIZED_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"
-  write_generated_file "${WSL_ROCM_NORMALIZED_PATH}" "${WSL_ROCM_OUTPUT_PATH}"
-fi
+if ((CUDA_SELECTED)); then write_generated_file "${LINUX_CUDA_NORMALIZED_PATH}" "${LINUX_CUDA_OUTPUT_PATH}"; fi
+if ((ROCM_SELECTED)); then write_generated_file "${WSL_ROCM_NORMALIZED_PATH}" "${WSL_ROCM_OUTPUT_PATH}"; fi

@@ -144,8 +144,8 @@ def _detect_profile(*, is_wsl: bool, accelerator: Mapping[str, object]) -> str:
     cuda_version = accelerator.get("cuda_version")
     torch_available = bool(accelerator.get("torch_available"))
 
-    if is_wsl and hip_version and available:
-        return "wsl-rocm"
+    if hip_version and available:
+        return "wsl-rocm" if is_wsl else 'linux-rocm'
     if not is_wsl and cuda_version and available:
         return "linux-cuda"
     if torch_available and not available:

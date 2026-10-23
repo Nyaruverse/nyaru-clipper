@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+import pytest
 
 
 class _FakeCudaRuntime:
@@ -172,15 +173,16 @@ def test_detect_runtime_profile_classifies_linux_cuda_from_runtime_facts(monkeyp
     }
 
 
-def test_detect_runtime_profile_classifies_wsl_rocm_from_runtime_facts(monkeypatch) -> None:
+@pytest.mark.parametrize('wsl', [True, False])
+def test_detect_runtime_profile_classifies_rocm_from_runtime_facts(monkeypatch, wsl: bool) -> None:
     from app.services.runtime_profile import detect_runtime_profile
 
     _patch_platform(
         monkeypatch,
-        release="6.6.87.2-microsoft-standard-WSL2",
+        release="6.6.87.2-microsoft-standard-WSL2" if wsl else '5.14.0-linux',
         version="#1 SMP PREEMPT_DYNAMIC Wed Feb 14 00:00:00 UTC 2026",
-        proc_version="Linux version 6.6.87.2-microsoft-standard-WSL2",
-        wsl_distro_name="Ubuntu-24.04",
+        proc_version="Linux version 6.6.87.2-microsoft-standard-WSL2" if wsl else 'Linux version 5.14.0',
+        wsl_distro_name="Ubuntu-24.04" if wsl else None,
     )
     monkeypatch.setattr(
         "app.services.runtime_profile._load_torch_module",
@@ -195,8 +197,8 @@ def test_detect_runtime_profile_classifies_wsl_rocm_from_runtime_facts(monkeypat
 
     payload = detect_runtime_profile()
 
-    assert payload["detected_profile"] == "wsl-rocm"
-    assert payload["platform"]["is_wsl"] is True
+    assert payload["detected_profile"] == ('wsl-rocm' if wsl else 'linux-rocm')
+    assert payload["platform"]["is_wsl"] is wsl
     assert payload["accelerator"] == {
         "available": True,
         "backend": "rocm",

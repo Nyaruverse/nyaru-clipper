@@ -545,3 +545,201 @@ while True:
     assert control is not None
     assert control["active_process_group_id"] is None
     assert "malformed_progress_event" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("runner_name,fault", [
+    ("run_tracked_structured_process_group_command", fault)
+    for fault in ("registration", "callback", "log", "persistence")
+])
+def test_post_launch_fault_reaps_process_group(backend_env, monkeypatch, tmp_path, runner_name, fault):
+    import os
+    import signal
+    import subprocess
+    from app.db import session_scope
+    from app.services import pipeline_support as support
+
+    task_id = _create_task(source_url="https://www.bilibili.com/video/BV1xx411c7mD")
+    pids_path = tmp_path / "pids"
+    script = (
+        "import os, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "open(sys.argv[1], 'w').write(str(os.getpid()) + ' ' + str(child.pid))\n"
+        "print('{\"event\":\"ready\"}', flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    processes = []
+    real_popen = subprocess.Popen
+
+    def capture_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        processes.append(process)
+        deadline = time.monotonic() + 5
+        while not pids_path.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert pids_path.exists()
+        return process
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("injected post-launch fault")
+
+    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    kwargs = {}
+    if fault == "registration":
+        monkeypatch.setattr(support, "_set_active_process_group", fail)
+    elif fault == "callback":
+        kwargs["on_event"] = fail
+    elif fault == "persistence":
+        original_touch = support._touch_active_process_group
+        def failing_persistence(session, **kwargs):
+            original_commit = session.commit
+            def failing_commit():
+                monkeypatch.setattr(session, "commit", original_commit)
+                fail()
+            monkeypatch.setattr(session, "commit", failing_commit)
+            original_touch(session, **kwargs)
+        monkeypatch.setattr(support, "_touch_active_process_group", failing_persistence)
+    else:
+        original_log = support.append_stage_log
+        def failing_log(path, message):
+            if processes:
+                fail()
+            original_log(path, message)
+        monkeypatch.setattr(support, "append_stage_log", failing_log)
+
+    try:
+        with session_scope() as session:
+            _bind_execution(session, task_id=task_id, execution_token="fault-test")
+            with pytest.raises(RuntimeError, match="injected post-launch fault"):
+                getattr(support, runner_name)(session, task_id=task_id,
+                    args=[sys.executable, "-c", script, str(pids_path)],
+                    log_path=tmp_path / "fault.log", poll_interval_seconds=.02, **kwargs)
+        parent_pid, child_pid = map(int, pids_path.read_text().split())
+        assert processes[0].poll() is not None, f"parent {parent_pid} still alive"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(.02)
+        else:
+            pytest.fail(f"descendant {child_pid} still alive")
+        print(f"{runner_name}/{fault}: parent={parent_pid} reaped, descendant={child_pid} absent")
+    finally:
+        for process in processes:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
+
+
+@pytest.mark.parametrize("runner_name", ["run_tracked_structured_process_group_command"])
+@pytest.mark.parametrize("hold_pipes", [False, True])
+def test_cancel_reaps_descendant_before_finalizing(backend_env, monkeypatch, tmp_path, runner_name, hold_pipes):
+    import os
+    import signal
+    import subprocess
+    from app.db import session_scope
+    from app.services import pipeline_support as support
+    from app.services.task_control import StaleExecutionTokenError
+
+    task_id = _create_task(source_url="https://www.bilibili.com/video/BV1xx411c7mD")
+    pids_path = tmp_path / "cancel-pids"
+    child_script = "import os,signal,sys,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); open(sys.argv[1],'w').write(str(os.getppid())+' '+str(os.getpid())); time.sleep(60)"
+    script = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]]" + ("" if hold_pipes else ",stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL") + "); time.sleep(60)"
+    timed_out = []
+
+    def rescue():
+        timed_out.append(True)
+        if pids_path.exists():
+            parent_pid = int(pids_path.read_text().split()[0])
+            try:
+                os.killpg(parent_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    original_finalize = support._finalize_cancelled_process_group
+    def finalize_after_reap(session, **kwargs):
+        child_pid = int(pids_path.read_text().split()[1])
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+        original_finalize(session, **kwargs)
+
+    monkeypatch.setattr(support, "_load_control_requests", lambda *a, **k: (pids_path.exists(), False))
+    monkeypatch.setattr(support, "_finalize_cancelled_process_group", finalize_after_reap)
+    timer = threading.Timer(3, rescue)
+    timer.start()
+    try:
+        with session_scope() as session:
+            _bind_execution(session, task_id=task_id, execution_token="cancel-descendant")
+            kwargs = {"cancel_grace_period_seconds": .05}
+            with pytest.raises(StaleExecutionTokenError):
+                getattr(support, runner_name)(session, task_id=task_id,
+                    args=[sys.executable, "-c", script, str(pids_path), child_script],
+                    log_path=tmp_path / "cancel.log", poll_interval_seconds=.02, **kwargs)
+        assert not timed_out, "cancel hung until external rescue killed process group"
+        print(f"{runner_name}/hold_pipes={hold_pipes}: descendant absent before finalizer")
+    finally:
+        timer.cancel()
+        if pids_path.exists():
+            parent_pid = int(pids_path.read_text().split()[0])
+            try:
+                os.killpg(parent_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.parametrize("phase", ["signal", "probe"])
+@pytest.mark.parametrize("persistent", [False, True])
+def test_group_cleanup_retries_transient_permission_error(monkeypatch, phase, persistent):
+    import signal
+    from app.services import pipeline_support as support
+
+    calls = []
+    waited = []
+    permission_faults = []
+    def killpg(group, sig):
+        calls.append(sig)
+        if (phase == "signal" and sig == signal.SIGKILL) or (phase == "probe" and sig == 0):
+            if persistent or not permission_faults:
+                permission_faults.append(True)
+                raise PermissionError("injected group teardown EPERM")
+        raise ProcessLookupError("group absent")
+
+    monkeypatch.setattr(support.os, "killpg", killpg)
+    process = types.SimpleNamespace(pid=123, args=["synthetic-child"], wait=lambda **kwargs: waited.append(True))
+    if persistent:
+        with pytest.raises(PermissionError, match="injected group teardown EPERM"):
+            support._terminate_process_group_and_wait(process, process_group_id=123, signal_number=signal.SIGKILL, timeout_seconds=.03)
+    else:
+        support._terminate_process_group_and_wait(process, process_group_id=123, signal_number=signal.SIGKILL, timeout_seconds=.03)
+        assert waited
+        assert len(permission_faults) == 1
+        assert calls[-1] == 0
+
+
+def test_failed_reap_marks_execution_for_outer_finalizer(monkeypatch):
+    from app.services import pipeline_support as support
+    session = types.SimpleNamespace(info={})
+    process = types.SimpleNamespace(pid=123)
+    def fail_reap(*args, **kwargs):
+        raise PermissionError("persistent group permission failure")
+    monkeypatch.setattr(support, "_terminate_process_group_and_wait", fail_reap)
+    with pytest.raises(RuntimeError, match="Unable to reap process group") as failure:
+        with support._reap_process_group_on_error(process, session):
+            raise ValueError("original callback failure")
+    assert isinstance(failure.value, support.ProcessGroupCleanupError)
+    assert isinstance(failure.value.__cause__, PermissionError)
+    assert session.info["process_group_cleanup_failed"] is True
+
+
+def test_successful_reap_clears_execution_cleanup_marker(monkeypatch):
+    from app.services import pipeline_support as support
+    session = types.SimpleNamespace(info={"process_group_cleanup_failed": True})
+    process = types.SimpleNamespace(pid=123)
+    monkeypatch.setattr(support, "_terminate_process_group_and_wait", lambda *a, **k: None)
+    with pytest.raises(ValueError, match="original callback failure"):
+        with support._reap_process_group_on_error(process, session):
+            raise ValueError("original callback failure")
+    assert "process_group_cleanup_failed" not in session.info

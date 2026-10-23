@@ -3,17 +3,32 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Final
 
 from app.arctime import media
 from app.services.subtitles import SubtitleSegment
+from app.services.task_execution import current_execution
 
 DEFAULT_MODEL = Path.home() / ".cache" / "nyaru-clipper" / "models" / "ggml-small.bin"
 CHUNK_SECONDS = 300
 ASR_TAIL_WINDOW_SECONDS = 30.0
+VAD_MODEL_NAME: Final = 'ggml-silero-v6.2.0.bin'
+VAD_MODEL_SHA256: Final = '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987'
+DEFAULT_VAD_MODEL: Final = DEFAULT_MODEL.with_name(VAD_MODEL_NAME)
+
+
+def _vad_model() -> Path:
+    resources = getattr(sys, '_MEIPASS', None)
+    path = Path(resources) / 'models' / VAD_MODEL_NAME if resources else DEFAULT_VAD_MODEL
+    if path.is_symlink() or not path.is_file() or media.fingerprint(path) != VAD_MODEL_SHA256:
+        raise RuntimeError('Verified VAD model is missing or changed; preserve the source and check the installation')
+    return path
 
 
 def _segments_hash(rows: list[dict]) -> str:
@@ -102,20 +117,37 @@ class LocalASR:
                  "-t", str(self.threads), "-osrt", "-of", str(prefix), "-ml", "80", "-sow", "-np"],
             ]
             with log_path.open("w", encoding="utf-8") as log:
-                for command in commands:
-                    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
-                                            stderr=subprocess.STDOUT, timeout=7200, check=False)
-                    if result.returncode:
-                        raise RuntimeError(f"Local audio extraction or ASR failed; see asr/{log_path.name}")
-            subtitle = prefix.with_suffix(".srt")
-            if not subtitle.is_file():
-                raise RuntimeError(f"Local ASR failed to produce subtitles; see asr/{log_path.name}")
-            if not subtitle.read_text(encoding="utf-8-sig").strip():
-                return []
-            segments = media.read_subtitles(subtitle, merge_contiguous_zero_duration=True)
-            tail_window = min(ASR_TAIL_WINDOW_SECONDS, length / 2)
-            if any(c.end_seconds > length and (c.start_seconds < length - tail_window
-                                               or c.end_seconds > length + tail_window) for c in segments):
-                raise ValueError("Local ASR timestamps exceed chunk duration")
-            return [asdict(SubtitleSegment(c.id, c.start_seconds, min(c.end_seconds, length), c.text))
-                    for c in segments if c.start_seconds < length]
+                tools = Path(identity['binary']).parent
+                environment = dict(os.environ, DYLD_LIBRARY_PATH=str(tools)) if (
+                    sys.platform == 'darwin' and (tools / 'libomp.dylib').is_file()) else None
+                for attempt in range(2):
+                    pending = commands if attempt == 0 else [commands[-1] + ['--vad', '-vm', str(_vad_model())]]
+                    if attempt:
+                        log.write('\nRetrying invalid ASR timestamps with voice activity detection\n')
+                        log.flush()
+                        prefix.with_suffix('.srt').unlink()
+                    for command in pending:
+                        execution = current_execution.get()
+                        result = execution.run_command(command, log=log, timeout=7200,
+                            env=environment if command[0] == identity['binary'] else None) if execution else subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
+                                                stderr=subprocess.STDOUT, timeout=7200, check=False,
+                                                env=environment if command[0] == identity['binary'] else None)
+                        if result.returncode:
+                            raise RuntimeError(f"Local audio extraction or ASR failed; see asr/{log_path.name}")
+                    subtitle = prefix.with_suffix(".srt")
+                    if not subtitle.is_file():
+                        raise RuntimeError(f"Local ASR failed to produce subtitles; see asr/{log_path.name}")
+                    if not subtitle.read_text(encoding="utf-8-sig").strip():
+                        return []
+                    segments = media.read_subtitles(subtitle, merge_contiguous_zero_duration=True)
+                    tail_window = min(ASR_TAIL_WINDOW_SECONDS, length / 2)
+                    end_tolerance = min(1.0, length / 2)
+                    invalid = any(c.end_seconds > length + end_tolerance and (
+                        c.start_seconds < length - tail_window or c.end_seconds > length + tail_window)
+                        for c in segments)
+                    if not invalid:
+                        return [asdict(SubtitleSegment(c.id, c.start_seconds, min(c.end_seconds, length), c.text))
+                                for c in segments if c.start_seconds < length]
+                    if attempt:
+                        raise ValueError("Local ASR timestamps exceed chunk duration")
+        raise AssertionError('ASR retry did not terminate')

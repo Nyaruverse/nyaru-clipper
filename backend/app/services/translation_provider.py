@@ -22,7 +22,7 @@ from app.services.proofread_deepseek import (
     ProofreadResult,
     ProofreadSegment,
 )
-from app.services.storage import ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
+from app.services.storage import artifact_batch, refresh_task_storage, ensure_task_dirs, log_file_for_stage, persist_artifact_metadata
 from app.services.subtitles import (
     SubtitleSegment,
     write_bilingual_subtitle_outputs,
@@ -238,7 +238,7 @@ def _persist_final_translation_publication(
     segment_count: int,
 ) -> None:
     """Persist the canonical publication as one savepoint-scoped database change."""
-    with session.begin_nested():
+    with session.begin_nested(), artifact_batch(session, task_id=task_id):
         persist_artifact_metadata(
             session,
             task_id=task_id,
@@ -283,6 +283,7 @@ def _discard_failed_final_publication(session: Session, *, task_id: str, work_di
             session.delete(artifact)
     for filename in FINAL_PUBLICATION_FILENAMES:
         (work_dir / filename).unlink(missing_ok=True)
+    refresh_task_storage(session, task_id=task_id)
 
 
 def _persist_preproofread_artifacts(
@@ -303,22 +304,23 @@ def _persist_preproofread_artifacts(
         "segment_count": segment_count,
         "source_transcript_path": str(source_transcript_path),
     }
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="translation",
-        kind="bilingual_preproofread_transcript_json",
-        path=transcript_path,
-        metadata=metadata,
-    )
-    persist_artifact_metadata(
-        session,
-        task_id=task_id,
-        stage_name="translation",
-        kind="bilingual_preproofread_subtitle_srt",
-        path=subtitle_path,
-        metadata=metadata,
-    )
+    with artifact_batch(session, task_id=task_id):
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="translation",
+            kind="bilingual_preproofread_transcript_json",
+            path=transcript_path,
+            metadata=metadata,
+        )
+        persist_artifact_metadata(
+            session,
+            task_id=task_id,
+            stage_name="translation",
+            kind="bilingual_preproofread_subtitle_srt",
+            path=subtitle_path,
+            metadata=metadata,
+        )
 
 
 def _to_proofread_segments(

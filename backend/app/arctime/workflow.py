@@ -1,25 +1,26 @@
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
 import re
 import shutil
+import stat
 import tempfile
 import uuid
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 from app.arctime import media
 from app.arctime.local_asr import LocalASR
+from app.services.asr_adapter import AsrAdapter
 from app.services.subtitles import render_srt
 
-if os.name == "nt":
-    import errno
+if os.name == 'nt':
     import msvcrt
-    import stat
 else:
     import fcntl
 
@@ -27,6 +28,48 @@ if TYPE_CHECKING:
     from app.arctime.saozi import SaoziSelector
 
 fingerprint = media.fingerprint
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedUpload:
+    """Identity captured from the server's open upload, never from a filename."""
+
+    path: Path
+    root: Path
+    device: int
+    inode: int
+
+    @classmethod
+    def from_descriptor(cls, path: Path, root: Path, descriptor: int) -> OwnedUpload:
+        info = os.fstat(descriptor)
+        upload = cls(path, root.resolve(), info.st_dev, info.st_ino)
+        upload.validate(root)
+        return upload
+
+    def validate(self, root: Path) -> None:
+        info = self.path.lstat()
+        if (self.root != root.resolve() or self.path.parent.resolve() != self.root
+                or not stat.S_ISREG(info.st_mode)
+                or (info.st_dev, info.st_ino) != (self.device, self.inode)):
+            raise OSError(errno.EINVAL, "Upload ownership changed; original file was preserved")
+
+    def move_to(self, target: Path, root: Path) -> None:
+        self.validate(root)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(errno.EEXIST, "Upload destination already exists")
+        try:
+            self.path.rename(target)
+        except OSError as exc:
+            if exc.errno == errno.EXDEV:
+                raise OSError(errno.EXDEV, "Upload and task must share a filesystem; no copy attempted") from exc
+            raise
+
+    def cleanup(self) -> None:
+        try:
+            self.validate(self.root)
+        except FileNotFoundError:
+            return
+        self.path.unlink()
 
 
 @contextmanager
@@ -51,7 +94,7 @@ def _windows_exclusive_lock(path: Path):
 
 @contextmanager
 def exclusive_lock(path: Path):
-    if os.name == "nt":
+    if os.name == 'nt':
         with _windows_exclusive_lock(path):
             yield
         return
@@ -71,16 +114,22 @@ def write_manifest(directory: Path, job: dict) -> None:
 
 
 def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highlight_count: int | None,
-               transcriber: LocalASR | None = None, *, run_id: str | None = None,
+               transcriber: AsrAdapter | None = None, *, run_id: str | None = None,
                progress: Callable[[str], None] | None = None, saozi: bool = False,
-               local_source: Path | None = None) -> Path:
+               local_source: Path | None = None, llm_model: str | None = None,
+               owned_upload: OwnedUpload | None = None) -> Path:
     if sum((bool(ranges), highlight_count is not None, saozi)) != 1 or (highlight_count is not None and highlight_count <= 0):
         raise ValueError("Choose at least one explicit range or a positive highlight count")
     if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e for s, e in ranges):
         raise ValueError("Clip bounds must be finite and satisfy 0 <= start < end")
+    if local_source is not None and owned_upload is not None:
+        raise OSError(errno.EINVAL, "Choose one local input")
     identity = (transcriber or LocalASR()).identity()
     run_id = run_id or uuid.uuid4().hex[:12]
-    if not re.fullmatch(r"[0-9a-f]{12}", run_id):
+    from app.services.task_execution import current_execution
+    execution = current_execution.get()
+    owned_unified_id = bool(execution and execution.task_id == run_id and re.fullmatch(r"[0-9a-f]{32}", run_id))
+    if not re.fullmatch(r"[0-9a-f]{12}", run_id) and not owned_unified_id:
         raise ValueError("Invalid run identifier")
     root.mkdir(parents=True, exist_ok=True)
     directory = root.resolve() / run_id
@@ -89,12 +138,17 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
            "asr": identity, "completed_clips": []}
     if saozi:
         job["saozi"] = True
+    if llm_model is not None:
+        job.update(llm_model=llm_model, llm_provider='chatgpt' if llm_model.startswith('chatgpt:') else 'deepseek')
     write_manifest(directory, job)
     try:
         video = directory / "source.mp4"
         if progress:
-            progress("正在导入本地录像" if local_source else "正在下载视频，完成后开始识别")
-        if local_source:
+            progress("正在导入本地录像" if local_source or owned_upload else "正在下载视频，完成后开始识别")
+        if owned_upload is not None:
+            owned_upload.move_to(video, root)
+            source = video
+        elif local_source:
             if local_source.is_symlink() or not local_source.is_file():
                 raise ValueError("请选择有效的本地录像文件")
             shutil.copyfile(local_source, video)
@@ -152,7 +206,7 @@ def _publish_text(path: Path, content: str) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def resume_run(directory: Path, transcriber: LocalASR | None = None,
+def resume_run(directory: Path, transcriber: AsrAdapter | None = None,
                *, progress: Callable[[str], None] | None = None,
                selector: SaoziSelector | None = None) -> dict:
     directory = directory.resolve()
@@ -163,9 +217,14 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
         if job.get("saozi"):
             if selector is None:
                 raise ValueError("臊子需要已授权的模型配置")
-            if job.get("saozi_model", selector.model) != selector.model:
+            pinned_model = job.get('saozi_model') or job.get('llm_model')
+            if pinned_model and pinned_model != selector.model:
                 raise ValueError("臊子恢复必须沿用原供应商和模型")
             job["saozi_model"] = selector.model
+            if not pinned_model:
+                job.update(llm_model=selector.model,
+                           llm_provider='chatgpt' if selector.model.startswith('chatgpt:') else 'deepseek')
+                write_manifest(directory, job)
         if job["state"] not in {"downloaded", "transcribing", "subtitles_ready", "analyzing", "exporting", "completed"}:
             raise ValueError("Unknown or incomplete job state")
         if job["state"] in {"downloaded", "transcribing"}:

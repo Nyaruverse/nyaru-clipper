@@ -3,47 +3,52 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unicodedata
+import regex
 from pathlib import Path
 
 from app.arctime.subtitle_document import Emphasis, SubtitleDocument
-from app.arctime.subtitle_style import TextStyle, _color, _text, _timestamp, centiseconds
+from app.arctime.subtitle_style import TextStyle, _color, _text, _timestamp, alignment_for, automatic_layout, centiseconds
 
 
-def _lines(text: str, spans: list[Emphasis], style: TextStyle, width: float, matte: bool = False, background: bool = False) -> list[str]:
+def _lines(text: str, spans: list[Emphasis], style: TextStyle, width: float, matte: bool = False, background: bool = False, widths: list[float] | None = None) -> list[str]:
     lines = ['']
     used = 0.0
     formatting = None
     span_index = 0
     available = max(1, width * style.max_width / 100 - style.margin_left - style.margin_right - 2 * style.padding)
-    for index, char in enumerate(text):
-        if char == '\r':
-            if index + 1 < len(text) and text[index + 1] == '\n':
-                continue
-            char = '\n'
-        if char == '\n':
+    for cluster in regex.finditer(r'\X', text):
+        if cluster.group() in ('\r', '\n', '\r\n'):
+            if widths is not None:
+                widths.append(used)
             lines.append('')
             used = 0
             formatting = None
             continue
-        advance = 0 if unicodedata.category(char).startswith('M') else max(0, style.size * 1.2 + style.spacing) * style.scale_x / 100
+        advance = sum(max(0, style.size * 1.2 + style.spacing) * style.scale_x / 100
+                      for char in cluster.group() if not unicodedata.category(char).startswith('M'))
         if used and used + advance > available:
+            if widths is not None:
+                widths.append(used)
             lines.append('')
             used = 0
             formatting = None
-        while span_index < len(spans) and spans[span_index].end <= index:
-            span_index += 1
-        span = spans[span_index] if span_index < len(spans) and spans[span_index].start <= index else None
-        color, bold = (span.color, span.bold) if span else (style.color, style.bold)
-        if matte:
-            color = '#FFFFFF'
-        tag = ''
-        if spans and formatting != (color, bold):
-            tag = f'{{\\1c&H{color[5:7]}{color[3:5]}{color[1:3]}&\\b{int(bold)}}}'
-            if background:
-                tag = f'{{\\b{int(bold)}}}'
-            formatting = color, bold
-        lines[-1] += tag + _text(char)
+        for index, char in enumerate(cluster.group(), start=cluster.start()):
+            while span_index < len(spans) and spans[span_index].end <= index:
+                span_index += 1
+            span = spans[span_index] if span_index < len(spans) and spans[span_index].start <= index else None
+            color, bold = (span.color, span.bold) if span else (style.color, style.bold)
+            if matte:
+                color = '#FFFFFF'
+            tag = ''
+            if spans and formatting != (color, bold):
+                tag = f'{{\\1c&H{color[5:7]}{color[3:5]}{color[1:3]}&\\b{int(bold)}}}'
+                if background:
+                    tag = f'{{\\b{int(bold)}}}'
+                formatting = color, bold
+            lines[-1] += tag + _text(char)
         used += advance
+    if widths is not None:
+        widths.append(used)
     return lines
 
 
@@ -62,35 +67,23 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
         languages = [('Original', cue.text, cue.original_emphasis, original)]
         if bilingual:
             languages.append(('Translation', cue.translation, cue.translation_emphasis, translated))
-        layouts = [(name, _lines(text, emphasis, style, width / scale, matte), style)
-                   for name, text, emphasis, style in languages if text and not style.hidden]
+        layouts = []
+        metrics = []
+        for name, text, emphasis, style in languages:
+            if text and not style.hidden:
+                widths: list[float] = []
+                lines = _lines(text, emphasis, style, width / scale, matte, widths=widths)
+                layouts.append((name, lines, style))
+                metrics.append((len(lines), style, max(widths)))
         backgrounds = {name: _lines(text, emphasis, style, width / scale, matte, background=True)
                        for name, text, emphasis, style in languages if style.background_opacity}
-        margins = {name: style.margin for name, _, style in layouts}
-        def alignment_for(style: TextStyle) -> int:
-            return 8 if style.position == 'top' and style.align == 2 and style.x is None and style.y is None else style.align
-        rows = {name: (alignment_for(style) - 1) // 3 for name, _, style in layouts}
-        centers = {}
-        if len(layouts) == 2:
-            first, second = layouts
-            original_auto = original.x is None and original.y is None
-            translation_auto = translated.x is None and translated.y is None
-            if original.position == translated.position:
-                if original.position == 'bottom' and original_auto:
-                    margins['Original'] = max(original.margin, translated.margin + len(second[1]) * translated.size * translated.line_height * translated.scale_y / 100 + 8)
-                elif original.position == 'top' and translation_auto:
-                    margins['Translation'] = max(translated.margin, original.margin + len(first[1]) * original.size * original.line_height * original.scale_y / 100 + 8)
-            if rows['Original'] == rows['Translation'] == 1:
-                if original_auto:
-                    centers['Original'] = height / 2 - (len(second[1]) * translated.size * translated.line_height * translated.scale_y / 100 + 8) * scale / 2
-                if translation_auto:
-                    centers['Translation'] = height / 2 + (len(first[1]) * original.size * original.line_height * original.scale_y / 100 + 8) * scale / 2
-        for language, lines, style in layouts:
+        anchors = automatic_layout(metrics, width / scale)
+        for (language, lines, style), anchor in zip(layouts, anchors, strict=True):
             name = f'{language}{index}'
             alignment = alignment_for(style)
             column, row = (alignment - 1) % 3, (alignment - 1) // 3
             x = style.x if style.x is not None else (style.margin_left * scale if column == 0 else (width + (style.margin_left - style.margin_right) * scale) / 2 if column == 1 else width - style.margin_right * scale)
-            y = style.y if style.y is not None else (margins[language] * scale if row == 2 else centers.get(language, height / 2) if row == 1 else height - margins[language] * scale)
+            y = style.y if style.y is not None else anchor * scale
             size, step = style.size * scale, style.size * style.line_height * style.scale_y / 100 * scale
             color = paint(style.color, style.opacity)
             attributes = f'{-int(style.bold)},{-int(style.italic)},{-int(style.underline)},0,{style.scale_x:g},{style.scale_y:g},{style.spacing * scale:g},{style.rotation:g}'

@@ -54,6 +54,24 @@ def test_append_retry_and_final(tmp_path):
     assert '译文3' in (tmp_path / 'subtitles.ja-zh.srt').read_text()
 
 
+def test_incremental_translation_keeps_clip_at_fractional_chunk_boundary(tmp_path):
+    cues = source(tmp_path, 1)
+    job = json.loads((tmp_path / 'job.json').read_text())
+    job['selection'][0]['end'] = 20.920333
+    media.write_json(tmp_path / 'job.json', job)
+    saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    before = (tmp_path / 'clip-001.ja-zh.srt').read_bytes()
+    cues.append(SubtitleSegment('2', 20.920333, 30, 'next chunk'))
+    (tmp_path / 'subtitles.srt').write_text(render_srt(cues))
+    job['artifacts']['subtitles.srt'] = media.fingerprint(tmp_path / 'subtitles.srt')
+    media.write_json(tmp_path / 'job.json', job)
+
+    result = saozi_translation.translate(tmp_path, KEY, client=api([]))
+
+    assert result['state'] == 'completed' and result['done'] == 2
+    assert (tmp_path / 'clip-001.ja-zh.srt').read_bytes() == before
+
+
 def test_exact_v1_reuse(tmp_path):
     old, new = tmp_path / 'old', tmp_path / 'new'
     source(old)
@@ -65,6 +83,50 @@ def test_exact_v1_reuse(tmp_path):
     assert state['state'] == 'completed' and state['done'] == 2 and calls == []
     assert (old / 'translation.json').read_bytes() == before
     assert (old / 'subtitles.ja-zh.srt').read_bytes() == (new / 'subtitles.ja-zh.srt').read_bytes()
+
+
+def test_live_repair_uses_raw_boundaries_and_backs_up_generated_sliver(tmp_path):
+    source(tmp_path)
+    raw = [SubtitleSegment('1', 650.787315, 654.047315, 'last sentence'),
+           SubtitleSegment('2', 654.047315, 654.887315, 'next sentence')]
+    (tmp_path / 'subtitles.srt').write_text(render_srt(raw))
+    job = json.loads((tmp_path / 'job.json').read_text())
+    job.update(live=True, chunks=[{'cues': [{'start_seconds': c.start_seconds,
+                                           'end_seconds': c.end_seconds, 'text': c.text} for c in raw]}],
+               selection=[{'start': 564.593653, 'end': 654.047315}])
+    job['artifacts']['subtitles.srt'] = media.fingerprint(tmp_path / 'subtitles.srt')
+    media.write_json(tmp_path / 'job.json', job)
+    state = saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    legacy = ('1\n00:01:26,193 --> 00:01:29,453\nlast sentence\n译文1\n\n'
+              '2\n00:01:29,453 --> 00:01:29,454\nnext sentence\n译文2\n')
+    clip = tmp_path / 'clip-001.ja-zh.srt'
+    clip.write_text(legacy)
+    state['artifacts'][clip.name] = media.fingerprint(clip)
+    media.write_json(tmp_path / 'translation.json', state)
+    calls = []
+
+    saozi_translation.translate(tmp_path, KEY, client=api(calls))
+
+    assert calls == []
+    repaired = media.read_subtitles(clip)
+    assert len(repaired) == 1 and repaired[0].text == 'last sentence\n译文1'
+    assert any(path.read_text() == legacy for path in tmp_path.glob('*.pre-timing-repair-*.srt'))
+
+
+def test_self_consistent_user_edit_is_not_replaced_by_timing_repair(tmp_path):
+    source(tmp_path)
+    state = saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    path = tmp_path / 'clip-001.ja-zh.srt'
+    edited = path.read_text().replace('译文1', 'user edited translation')
+    path.write_text(edited)
+    state['artifacts'][path.name] = media.fingerprint(path)
+    media.write_json(tmp_path / 'translation.json', state)
+
+    with pytest.raises(ValueError, match='内容不同'):
+        saozi_translation.translate(tmp_path, KEY, client=api([]))
+
+    assert path.read_text() == edited
+    assert not list(tmp_path.glob('*.pre-timing-repair-*.srt'))
 
 
 @pytest.mark.parametrize('damage', ['cue', 'rows', 'artifact', 'symlink'])
@@ -219,3 +281,117 @@ def test_publication_checkpoint_gap_preserves_files_with_readable_error(tmp_path
         saozi_translation.translate(tmp_path, KEY, client=api(calls))
     assert calls == [] and (tmp_path / 'subtitles.ja-zh.srt').read_bytes() == published
     assert (tmp_path / 'translation.json').read_bytes() == previous
+
+
+@pytest.mark.parametrize('final', [False, True])
+@pytest.mark.parametrize('stop_after', ['subtitles.ja-zh.srt', 'clip-002.ja-zh.srt'])
+def test_interrupted_publication_recovers_durable_batches(tmp_path, monkeypatch, final, stop_after):
+    from app.arctime import workflow
+    source(tmp_path)
+    saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    old_clip = (tmp_path / 'clip-001.ja-zh.srt').read_bytes()
+    source(tmp_path, 3)
+    job = json.loads((tmp_path / 'job.json').read_text())
+    job['selection'].append({'start': 4, 'end': 6})
+    job['completed_clips'].append({'video': 'clip-002.mp4'})
+    media.write_json(tmp_path / 'job.json', job)
+    publish = workflow._publish_text
+
+    def interrupted(path, content):
+        publish(path, content)
+        if path.name == stop_after:
+            raise SystemExit('simulated process interruption after atomic replace')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workflow, '_publish_text', interrupted)
+        with pytest.raises(SystemExit):
+            saozi_translation.translate(tmp_path, KEY, final=final, client=api([]))
+    saved = json.loads((tmp_path / 'translation.json').read_text())
+    assert saved['done'] == 3 and len(saved['batches']) == 2
+    assert media.fingerprint(tmp_path / 'subtitles.ja-zh.srt') != saved['artifacts']['subtitles.ja-zh.srt']
+    calls = []
+
+    result = saozi_translation.translate(tmp_path, KEY, final=final, client=api(calls))
+
+    assert calls == [] and result['state'] == ('completed' if final else 'partial')
+    assert result['batches'] == saved['batches']
+    assert (tmp_path / 'clip-001.ja-zh.srt').read_bytes() == old_clip
+    assert media.read_subtitles(tmp_path / 'clip-002.ja-zh.srt')[0].text.endswith('译文3')
+    assert all(media.fingerprint(tmp_path / name) == digest for name, digest in result['artifacts'].items())
+
+
+@pytest.mark.parametrize('damage', ['user_suffix', 'source', 'digest', 'rows'])
+def test_interrupted_publication_rejects_nonexact_output_or_invalid_batches(tmp_path, monkeypatch, damage):
+    from app.arctime import workflow
+    source(tmp_path)
+    saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    source(tmp_path, 3)
+    publish = workflow._publish_text
+
+    def interrupted(path, content):
+        publish(path, content)
+        raise SystemExit('interrupted')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workflow, '_publish_text', interrupted)
+        with pytest.raises(SystemExit):
+            saozi_translation.translate(tmp_path, KEY, client=api([]))
+    checkpoint = tmp_path / 'translation.json'
+    state = json.loads(checkpoint.read_text())
+    output = tmp_path / 'subtitles.ja-zh.srt'
+    if damage == 'user_suffix':
+        output.write_text(output.read_text() + '\nuser note\n')
+    elif damage == 'source':
+        state['batches'][-1]['source'][0]['text'] = 'changed source'
+    elif damage == 'digest':
+        state['batches'][-1]['sha256'] = 'invalid'
+    else:
+        state['batches'][-1]['rows'][0]['id'] = 99
+    media.write_json(checkpoint, state)
+    before = {p.name: p.read_bytes() for p in tmp_path.glob('*') if p.is_file() and p.name != '.lock'}
+    calls = []
+    with pytest.raises(ValueError):
+        saozi_translation.translate(tmp_path, KEY, client=api(calls))
+    assert calls == []
+    assert all((tmp_path / name).read_bytes() == content for name, content in before.items())
+
+
+def test_interrupted_live_timing_repair_recovers_exact_raw_output(tmp_path, monkeypatch):
+    from app.arctime import workflow
+    source(tmp_path)
+    raw = [SubtitleSegment('1', 650.787315, 654.047315, 'last sentence'),
+           SubtitleSegment('2', 654.047315, 654.887315, 'next sentence')]
+    (tmp_path / 'subtitles.srt').write_text(render_srt(raw))
+    job = json.loads((tmp_path / 'job.json').read_text())
+    job.update(live=True, chunks=[{'cues': [{'start_seconds': c.start_seconds,
+                                           'end_seconds': c.end_seconds, 'text': c.text} for c in raw]}],
+               selection=[{'start': 564.593653, 'end': 654.047315}])
+    job['artifacts']['subtitles.srt'] = media.fingerprint(tmp_path / 'subtitles.srt')
+    media.write_json(tmp_path / 'job.json', job)
+    state = saozi_translation.translate(tmp_path, KEY, final=False, client=api([]))
+    clip = tmp_path / 'clip-001.ja-zh.srt'
+    expected = clip.read_bytes()
+    legacy = ('1\n00:01:26,193 --> 00:01:29,453\nlast sentence\n译文1\n\n'
+              '2\n00:01:29,453 --> 00:01:29,454\nnext sentence\n译文2\n')
+    clip.write_text(legacy)
+    state['artifacts'][clip.name] = media.fingerprint(clip)
+    media.write_json(tmp_path / 'translation.json', state)
+    publish = workflow._publish_text
+
+    def interrupted(path, content):
+        publish(path, content)
+        if path == clip:
+            raise SystemExit('interrupted timing repair')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workflow, '_publish_text', interrupted)
+        with pytest.raises(SystemExit):
+            saozi_translation.translate(tmp_path, KEY, client=api([]))
+    saved = json.loads((tmp_path / 'translation.json').read_text())
+    assert saved['artifacts'][clip.name] != media.fingerprint(clip)
+    calls = []
+    result = saozi_translation.translate(tmp_path, KEY, client=api(calls))
+    assert calls == [] and result['state'] == 'completed'
+    assert clip.read_bytes() == expected
+    backups = list(tmp_path.glob('*.pre-timing-repair-*.srt'))
+    assert len(backups) == 1 and backups[0].read_text() == legacy

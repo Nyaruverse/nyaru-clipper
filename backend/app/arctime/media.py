@@ -15,11 +15,9 @@ from urllib.parse import urlsplit
 from app.services.highlight_scoring import derive_scene_like_windows, score_candidate_windows
 from app.services.subtitles import SubtitleSegment, render_srt
 
-if os.name == "nt":
+if os.name == 'nt':
     import threading
     import time
-
-    # Windows cannot replace a JSON file while a reader holds it open.
     json_io_lock = threading.RLock()
 
 
@@ -38,15 +36,13 @@ def write_json(path: Path, payload: dict) -> None:
             json.dump(payload, handle, ensure_ascii=False, indent=2, allow_nan=False)
             handle.flush()
             os.fsync(handle.fileno())
-        if os.name == "nt":
+        if os.name == 'nt':
             with json_io_lock:
                 for attempt in range(6):
                     try:
                         os.replace(name, path)
                         break
                     except PermissionError:
-                        # Windows readers and file scanners can briefly deny rename.
-                        # Keep the old JSON intact and stop after a bounded retry.
                         if attempt == 5:
                             raise
                         time.sleep(.01 * 2 ** attempt)
@@ -115,7 +111,9 @@ def read_subtitles(path: Path, *, merge_contiguous_zero_duration: bool = False) 
 
 def clip_subtitles(segments: list[SubtitleSegment], start: float, end: float) -> list[SubtitleSegment]:
     return [SubtitleSegment(str(i + 1), max(c.start_seconds, start) - start, min(c.end_seconds, end) - start, c.text)
-            for i, c in enumerate(s for s in segments if s.end_seconds > start and s.start_seconds < end)]
+            for i, c in enumerate(s for s in segments
+                if round((min(s.end_seconds, end) - start) * 1000)
+                > round((max(s.start_seconds, start) - start) * 1000))]
 
 
 def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[tuple[float, float]], highlight_count: int | None) -> list[dict]:
@@ -142,6 +140,20 @@ def select_clips(segments: list[SubtitleSegment], duration: float, ranges: list[
 
 
 def tool_path(name: str) -> str:
+    from app.settings import execution_settings
+    settings = execution_settings.get()
+    if settings is not None:
+        configured = {'ffmpeg': settings.ffmpeg_binary, 'ffprobe': settings.ffprobe_binary, 'yt-dlp': settings.ytdlp_binary}.get(name)
+        if configured is not None and configured != name:
+            found = shutil.which(configured)
+            if found is None:
+                raise FileNotFoundError(f'Configured tool is missing: {name}')
+            return found
+    if getattr(sys, "frozen", False):
+        path = Path(sys.executable) if name == "yt-dlp" else Path(sys._MEIPASS) / name
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        raise FileNotFoundError(f"Bundled tool is missing: {name}")
     found = shutil.which(name)
     bundled = Path(__file__).resolve().parents[3] / ".bin" / name
     if found:
@@ -151,9 +163,9 @@ def tool_path(name: str) -> str:
         return str(environment_tool)
     if bundled.is_file() and os.access(bundled, os.X_OK):
         return str(bundled)
-    if os.name == "nt":
+    if os.name == 'nt':
         for directory in (Path(sys.executable).parent, bundled.parent):
-            candidate = directory / (name + ".exe")
+            candidate = directory / (name + '.exe')
             if candidate.is_file() and os.access(candidate, os.X_OK):
                 return str(candidate)
     raise FileNotFoundError(f"Required tool is missing: {name}")
@@ -178,11 +190,16 @@ def download_video(url: str, directory: Path) -> Path:
     if (directory / "source.mp4").exists():
         raise FileExistsError("Download destination already exists")
     downloader = [tool_path("yt-dlp")]
-    result = subprocess.run([*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
+    if getattr(sys, "frozen", False):
+        downloader.append("--yt-dlp")
+    command = [*downloader, "--no-playlist", "--no-progress", "--no-overwrites",
                              "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
                              "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
-                             "-o", str(directory / "source.%(ext)s"), "--", url],
-                            capture_output=True, text=True, timeout=7200, check=False)
+                             "-o", str(directory / "source.%(ext)s"), "--", url]
+    from app.services.task_execution import current_execution
+    execution = current_execution.get()
+    result = execution.run_command(command, timeout=7200) if execution else subprocess.run(
+        command, capture_output=True, text=True, timeout=7200, check=False)
     if result.returncode:
         raise RuntimeError("yt-dlp download failed; check URL access and downloader configuration")
     path = directory / "source.mp4"
@@ -191,7 +208,7 @@ def download_video(url: str, directory: Path) -> Path:
 
 
 def export_clip(source: Path, target: Path, start: float, end: float, segments: list[SubtitleSegment]) -> None:
-    from app.services.export_encoding import ExportInvocation, execute_video_export
+    from app.services.export_encoding import ExportEncodingConfig, ExportInvocation, execute_video_export
     from app.settings import get_settings
 
     final_subtitle = target.with_suffix(".srt")
@@ -199,17 +216,24 @@ def export_clip(source: Path, target: Path, start: float, end: float, segments: 
     if target.exists() or target.is_symlink() or final_subtitle.is_symlink() or log_path.is_symlink():
         raise FileExistsError("Final clip already exists or an output is a symlink")
     duration = probe_video(source)
+    # Remuxing can shorten the container timestamp by a frame; retain the selected subtitle tail.
+    if start < duration < end <= duration + .05:
+        duration = end
     select_clips([], duration, [(start, end)], None)
     expected_subtitle = render_srt(clip_subtitles(segments, start, end))
     retained_subtitle = final_subtitle.exists()
     if retained_subtitle and final_subtitle.read_text(encoding="utf-8") != expected_subtitle:
         raise FileExistsError("Existing subtitles differ from the requested clip; preserving them")
     settings = get_settings()
-    settings.ffmpeg_binary = tool_path("ffmpeg")
+    encoding_config = ExportEncodingConfig(
+        ffmpeg_binary=tool_path("ffmpeg"),
+        export_video_backend=settings.export_video_backend,
+        windows_ffmpeg_binary=settings.windows_ffmpeg_binary,
+    )
     with tempfile.TemporaryDirectory(prefix=".encoding-", dir=target.parent) as temporary:
         video = Path(temporary) / "clip.mp4"
         subtitle = video.with_suffix(".srt")
-        execution = execute_video_export(ExportInvocation(source, video, start, end, "managed-video"), settings, log_path)
+        execution = execute_video_export(ExportInvocation(source, video, start, end, "managed-video"), encoding_config, log_path)
         if execution.completed_process.returncode or not video.is_file():
             raise RuntimeError(f"ffmpeg clip encoding failed; see {log_path.name}; previous clips are preserved")
         actual_duration = probe_video(video)

@@ -12,6 +12,70 @@ from app.arctime.chatgpt_auth import ChatGPTAuth
 from app.arctime.companion_manager import JobManager
 
 
+def test_windows_legacy_execution_slot_excludes_and_releases(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.services import runtime_guard
+
+    monkeypatch.setattr(runtime_guard, 'os', SimpleNamespace(name='nt'))
+    with runtime_guard.execution_slot(tmp_path):
+        with pytest.raises(runtime_guard.SlotBusy):
+            with runtime_guard.execution_slot(tmp_path):
+                pytest.fail('A second executor acquired the same slot')
+    with runtime_guard.execution_slot(tmp_path):
+        pass
+
+
+def test_windows_legacy_execution_slot_preserves_body_errors(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.services import runtime_guard
+
+    monkeypatch.setattr(runtime_guard, 'os', SimpleNamespace(name='nt'))
+    with pytest.raises(RuntimeError, match='operation failed'):
+        with runtime_guard.execution_slot(tmp_path):
+            raise RuntimeError('operation failed')
+
+
+@pytest.mark.parametrize('cleanup_fails', [False, True])
+def test_windows_terminal_status_follows_owned_upload_cleanup(tmp_path, monkeypatch, cleanup_fails):
+    from types import SimpleNamespace
+    import threading
+    from app.arctime import companion_manager
+
+    monkeypatch.setattr(companion_manager, 'os', SimpleNamespace(name='nt'))
+    monkeypatch.setattr(media, 'json_io_lock', threading.RLock(), raising=False)
+    job_id = 'abcdef123456'
+    (tmp_path / job_id).mkdir()
+    upload_path = tmp_path / '.saozi-upload-test'
+    upload_path.write_bytes(b'fixture')
+    with upload_path.open('rb') as stream:
+        upload = workflow.OwnedUpload.from_descriptor(upload_path, tmp_path, stream.fileno())
+    manager = JobManager(tmp_path, tmp_path / 'unused-model.bin', 4)
+    manager.active = {'id': job_id, 'state': 'preparing', 'message': 'test'}
+    monkeypatch.setattr(workflow, 'resume_run', lambda *args, **kwargs: {'completed_clips': [{}]})
+    original_write = media.write_json
+    terminal_writes = []
+
+    def observe(path, record):
+        if record.get('state') in {'completed', 'failed'}:
+            terminal_writes.append((record['state'], upload_path.exists()))
+        original_write(path, record)
+
+    def denied_cleanup(self):
+        raise PermissionError('upload remains busy')
+
+    monkeypatch.setattr(media, 'write_json', observe)
+    if cleanup_fails:
+        monkeypatch.setattr(workflow.OwnedUpload, 'cleanup', denied_cleanup)
+    try:
+        manager.run(job_id, None, owned_upload=upload)
+        expected = [('failed', True)] if cleanup_fails else [('completed', False)]
+        assert terminal_writes == expected
+        assert manager.active is None
+    finally:
+        manager.executor.shutdown()
+        manager.chatgpt.close()
+
+
 def test_job_lock_excludes_another_process_and_releases(tmp_path):
     lock = tmp_path / 'companion.lock'
     code = (

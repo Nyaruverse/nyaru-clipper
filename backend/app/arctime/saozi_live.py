@@ -17,9 +17,9 @@ from app.arctime.subtitle_templates import StyleTemplate
 def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: Event,
              progress: Callable[[str], None] | None, url: str | None = None,
              *, capture: LiveCapture | None = None,
-             bilingual: Callable[[Path, bool], None] | None = None,
+             bilingual: Callable[[Path, bool], set[str] | None] | None = None,
              style_template: StyleTemplate | None = None,
-             styled: Callable[[Path, dict], None] | None = None) -> dict:
+             styled: Callable[[Path, dict, list[dict] | None], None] | None = None) -> dict:
     directory = directory.resolve()
     notify = progress or (lambda message: None)
     with exclusive_lock(directory / '.lock'):
@@ -35,7 +35,7 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                 if bilingual:
                     bilingual(directory, True)
                 if styled:
-                    styled(directory, job)
+                    styled(directory, job, None)
                 return job
         else:
             job = {'version': 2, 'saozi': True, 'live': True, 'state': 'recording',
@@ -51,11 +51,17 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
             live_state.save(directory, job)
         recorder = capture or (LiveCapture(url, directory, stop) if url else None)
 
-        def publish(final: bool) -> None:
-            if bilingual:
-                bilingual(directory, final)
+        clips_by_video = {clip['video']: clip for clip in job['completed_clips']}
+
+        def publish(final: bool, added: list[dict] | None) -> None:
+            clips_by_video.update((clip['video'], clip) for clip in added or [])
+            translated = bilingual(directory, final) if bilingual else None
             if styled:
-                styled(directory, job)
+                changed = None if added is None else list({
+                    **{clip['video']: clip for clip in added},
+                    **{name: clips_by_video[name] for name in translated or set() if name in clips_by_video},
+                }.values())
+                styled(directory, job, changed)
 
         def choose(final):
             start = job['selection'][-1]['end'] if job['selection'] else 0.
@@ -72,15 +78,17 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                 job['selection'].append(clip)
                 live_state.save(directory, job)
                 start = clip['end']
+                previous = len(job['completed_clips'])
                 live_state.export_pending(directory, job, notify)
-                publish(False)
+                publish(False, job['completed_clips'][previous:])
 
         try:
             if job['chunks']:
                 live_state.publish_transcript(directory, job)
             live_state.export_pending(directory, job, notify)
             if job['completed_clips']:
-                publish(False)
+                clips_by_video.update((clip['video'], clip) for clip in job['completed_clips'])
+                publish(False, None)
             paths = recorder.chunks() if recorder else LiveCapture.recorded(directory)
             seen = {c['path'] for c in job['chunks']}
             for path in paths:
@@ -92,18 +100,21 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
                     job['discontinuities'].append(job['duration'])
                     notify('直播发生断流；已单独保留断流前尾段，缺失区间无法恢复')
                 live_state.recognize(directory, job, path, adapter)
+                if job['chunks'][-1].get('video_decode_error'):
+                    notify(job['capture_warning'])
                 seen.add(relative)
                 backlog = max(0, len(LiveCapture.recorded(directory)) - len(seen))
                 notify(f'录制中；已识别 {job["duration"]:.1f} 秒，积压 {backlog} 个已关闭录制块')
                 choose(False)
             if recorder:
                 recorder.close()
+                if getattr(recorder, 'end_reason', None) == 'live_ended':
+                    notify('直播已结束，正在完成尾段翻译及导出')
                 if recorder.error:
-                    job['capture_warning'] = recorder.error
                     notify(recorder.error)
             choose(True)
             live_state.finalize(directory, job)
-            publish(True)
+            publish(True, [])
             return job
         except BaseException:
             job['state'] = 'live_failed'
@@ -112,3 +123,10 @@ def run_live(directory: Path, selector: SaoziSelector, adapter: LocalASR, stop: 
         finally:
             if recorder:
                 recorder.close()
+                if getattr(recorder, 'end_reason', None):
+                    job['capture_end_reason'] = recorder.end_reason
+                if recorder.error:
+                    job['capture_warning'] = '; '.join(dict.fromkeys(
+                        warning for warning in [job.get('capture_warning'), recorder.error] if warning))
+                if getattr(recorder, 'end_reason', None) or recorder.error:
+                    live_state.save(directory, job)

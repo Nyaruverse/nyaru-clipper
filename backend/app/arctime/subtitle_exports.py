@@ -9,19 +9,21 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, assert_never
+from uuid import uuid4
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.arctime import media, workflow
 from app.arctime.subtitle_encoding import burn_available, burn_clip, video_dimensions
 from app.arctime.subtitle_inputs import ExportError, ExportInputs, ExportRequest, load_inputs
 from app.arctime.subtitle_style import render_ass
-from app.arctime.subtitle_document import SubtitleDocument
+from app.arctime.subtitle_document import SubtitleDocument, preserve_legacy_source
 from app.arctime.subtitle_render import render_document_ass
 from app.arctime.subtitle_style import SubtitleStyle
 from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
 from app.services.subtitles import render_bilingual_srt, render_srt
+from app.services.runtime_guard import engine_slot
 
 if TYPE_CHECKING:
     from app.arctime.gui import JobManager
@@ -37,6 +39,7 @@ class ExportOutput(BaseModel):
     sha256: str
     style: SubtitleStyle | None = None
     document: SubtitleDocument | None = None
+    document_ref: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class ExportActivity(BaseModel):
@@ -56,7 +59,51 @@ def _registry(directory: Path) -> Path:
 
 def read_exports(directory: Path) -> ExportSnapshot:
     path = _registry(directory)
-    return ExportSnapshot.model_validate_json(path.read_bytes()) if path.is_file() else ExportSnapshot()
+    snapshot = ExportSnapshot.model_validate_json(path.read_bytes()) if path.is_file() else ExportSnapshot()
+    activity = workflow._path(directory, 'subtitle-export-activity.json')
+    if activity.is_file():
+        snapshot.active = ExportActivity.model_validate_json(activity.read_bytes())
+    return snapshot
+
+
+def _write_activity(directory: Path, activity: ExportActivity) -> None:
+    media.write_json(workflow._path(directory, 'subtitle-export-activity.json'), activity.model_dump())
+
+
+def _document_bytes(document: SubtitleDocument) -> bytes:
+    return json.dumps(document.model_dump(), sort_keys=True, separators=(',', ':'),
+                      ensure_ascii=False, allow_nan=False).encode('utf-8')
+
+
+def resolve_export_document(directory: Path, output: ExportOutput) -> SubtitleDocument | None:
+    if output.document_ref is None:
+        return output.document
+    path = workflow._path(directory, f'subtitle-export-document-{output.document_ref}.json')
+    content = path.read_bytes()
+    document = SubtitleDocument.model_validate_json(content)
+    if hashlib.sha256(content).hexdigest() != output.document_ref or _document_bytes(document) != content:
+        raise ExportError('字幕导出快照校验失败；已保留文件，请检查')
+    if output.document is not None and _document_bytes(output.document) != content:
+        raise ExportError('字幕导出快照与记录不一致；已保留文件，请检查')
+    return document
+
+
+def _publish_document(directory: Path, document: SubtitleDocument | None) -> str | None:
+    if document is None:
+        return None
+    content = _document_bytes(document)
+    digest = hashlib.sha256(content).hexdigest()
+    path = workflow._path(directory, f'subtitle-export-document-{digest}.json')
+    if path.exists():
+        if path.read_bytes() != content:
+            raise ExportError('字幕导出快照校验失败；已保留文件，请检查')
+    else:
+        with tempfile.NamedTemporaryFile(dir=directory, prefix='.subtitle-export-document-', suffix='.tmp') as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.link(handle.name, path)
+    return digest
 
 
 def export_artifact(directory: Path, name: str) -> Path:
@@ -115,31 +162,50 @@ def _package(working: Path, inputs: ExportInputs, request: ExportRequest, projec
 class SubtitleExports:
     def __init__(self, manager: JobManager):
         self.manager = manager
-        self.templates = TemplateStore(manager.root)
+        self.templates = manager.host.templates if manager.host is not None else TemplateStore(manager.settings_root)
         self.failures: dict[str, ExportActivity] = {}
+        self._live_templates: dict[Path, StyleTemplate] = {}
+        self._live_pending: dict[Path, dict[str, dict]] = {}
 
-    def export_live(self, directory: Path, job: dict) -> None:
+    def export_live(self, directory: Path, job: dict, changed: list[dict] | None = None) -> None:
         if not job.get('subtitle_template'):
             return
+        preserve_legacy_source(directory)
         snapshot = None
+        pending = self._live_pending.setdefault(directory, {})
+        pending.update((clip['video'], clip) for clip in (job['completed_clips'] if changed is None else changed))
         with self.manager.lock:
             if self.manager.active:
                 self.manager.active['auto_subtitle_export'] = True
         try:
             template = StyleTemplate.model_validate(job['subtitle_template'])
+            if directory in self._live_templates and self._live_templates[directory] != template:
+                pending.update((clip['video'], clip) for clip in job['completed_clips'])
+            self._live_templates[directory] = template
             translated = self.manager.read_json(directory / 'translation.json').get('artifacts', {})
             snapshot = read_exports(directory)
-            for clip in job['completed_clips']:
+            failed = []
+            for clip in list(pending.values()):
                 bilingual = Path(clip['subtitles']).stem + '.ja-zh.srt' in translated
-                for kind in ('ass', 'burn'):
-                    request = ExportRequest(kind=kind, video=clip['video'], bilingual=bilingual, style=template.style)
-                    self._run_locked(directory, request, None, snapshot, allow_live=True)
-            job.pop('subtitle_style_error', None)
+                try:
+                    for kind in ('ass', 'burn'):
+                        request = ExportRequest(kind=kind, video=clip['video'], bilingual=bilingual, style=template.style)
+                        self._run_locked(directory, request, None, snapshot, allow_live=True)
+                    pending.pop(clip['video'])
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, HTTPException):
+                    failed.append(clip['video'])
+            if failed:
+                job['subtitle_style_error'] = '自动样式导出未完成：' + '、'.join(failed) + '；原始切片已保留'
+                snapshot.active = ExportActivity(state='failed', message='部分字幕导出未完成',
+                                                 error=job['subtitle_style_error'])
+                _write_activity(directory, snapshot.active)
+            else:
+                job.pop('subtitle_style_error', None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, HTTPException):
             job['subtitle_style_error'] = '自动样式导出未完成；录制及原始切片已保留，可恢复处理重试'
             if snapshot is not None:
                 snapshot.active = ExportActivity(state='failed', message='自动样式导出未完成', error=job['subtitle_style_error'])
-                media.write_json(_registry(directory), snapshot.model_dump())
+                _write_activity(directory, snapshot.active)
         finally:
             with self.manager.lock:
                 if self.manager.active:
@@ -147,6 +213,10 @@ class SubtitleExports:
         workflow.write_manifest(directory, job)
 
     def snapshot(self, job_id: str) -> ExportSnapshot:
+        if self.manager.host is not None:
+            from app.arctime.native_exports import export_snapshot
+            self.manager.directory(job_id)
+            return export_snapshot(self.manager.host, job_id)
         directory = self.manager.directory(job_id)
         self.manager.detail(job_id, include_segments=False)
         with self.manager.lock:
@@ -158,12 +228,20 @@ class SubtitleExports:
                 snapshot.active = ExportActivity(state="exporting", message=live["message"])
             elif snapshot.active and snapshot.active.state == "exporting":
                 snapshot.active = ExportActivity(state="interrupted", message="字幕导出已中断，请重新导出；原结果已保留")
-            return snapshot
+                _write_activity(directory, snapshot.active)
+            return snapshot.model_copy(update={'outputs': [output.model_copy(update={'document': None})
+                                                           for output in snapshot.outputs]})
 
     def submit(self, job_id: str, request: ExportRequest) -> str:
+        if self.manager.host is not None:
+            return self.manager.host.enqueue_export(job_id, request)
+        if self.manager.documents is not None and self.manager.documents.is_activated(job_id):
+            raise HTTPException(409, '请通过统一操作队列导出此任务')
+        request = request.for_format()
         directory = self.manager.directory(job_id)
         try:
-            load_inputs(directory, request)
+            context = self.manager.artifacts(directory)
+            load_inputs(directory, request, artifacts=context) if context is not None else load_inputs(directory, request)
             project = self.templates.download_project(request.arctime_template_id) if request.arctime_template_id else None
             if request.kind == "burn" and not burn_available():
                 raise ExportError("当前 FFmpeg 不支持 libass 字幕烧录")
@@ -185,13 +263,13 @@ class SubtitleExports:
         directory = self.manager.directory(job_id)
         errors = (OSError, ValueError, RuntimeError, subprocess.SubprocessError, HTTPException)
         try:
-            with workflow.exclusive_lock(directory / ".lock"):
+            with engine_slot(), workflow.exclusive_lock(directory / ".lock"):
                 snapshot = read_exports(directory)
                 try:
                     self._run_locked(directory, request, project, snapshot)
                 except errors:
                     snapshot.active = ExportActivity(state="failed", message="字幕导出失败")
-                    media.write_json(_registry(directory), snapshot.model_dump())
+                    _write_activity(directory, snapshot.active)
                     raise
         except errors as error:
             message = str(error) if isinstance(error, ExportError) else "字幕导出失败；原文件已保留，请检查文件、模板和编码日志后重试"
@@ -206,29 +284,44 @@ class SubtitleExports:
                     *, allow_live: bool = False) -> None:
         def progress(message: str) -> None:
             snapshot.active = ExportActivity(state="exporting", message=message)
-            media.write_json(_registry(directory), snapshot.model_dump())
+            _write_activity(directory, snapshot.active)
             with self.manager.lock:
                 if self.manager.active:
                     self.manager.active["message"] = message
         progress("正在校验字幕和媒体")
-        inputs = load_inputs(directory, request, allow_live=True) if allow_live else load_inputs(directory, request)
-        identity = hashlib.sha256(json.dumps({"renderer_revision": 2, "package_revision": 1, "request": request.model_dump(), "inputs": inputs.digests,
+        request = request.for_format()
+        project = project if request.arctime_template_id else None
+        context = self.manager.artifacts(directory)
+        inputs = (load_inputs(directory, request, artifacts=context) if context is not None else
+                  load_inputs(directory, request, allow_live=True) if allow_live else load_inputs(directory, request))
+        identity = hashlib.sha256(json.dumps({"renderer_revision": 4, "package_revision": 1, "request": request.model_dump(), "inputs": inputs.digests,
             "project": hashlib.sha256(project).hexdigest() if project else None}, sort_keys=True).encode()).hexdigest()[:20]
         extension = {"ass": "ass", "burn": "mp4", "arctime": "zip"}[request.kind]
         filename = f"styled-{identity}.{extension}"
         destination = workflow._path(directory, filename)
         receipt = workflow._path(directory, f"styled-{identity}.receipt.json")
-        pending = ExportOutput.model_validate_json(receipt.read_bytes()) if receipt.is_file() else None
+        try:
+            pending = ExportOutput.model_validate_json(receipt.read_bytes()) if receipt.is_file() else None
+        except ValidationError:
+            if destination.exists():
+                raise ExportError("已有导出文件无法验证；已保留文件，请检查") from None
+            os.link(receipt, receipt.with_name(f"{receipt.name}.corrupt-{uuid4().hex}"))
+            receipt.unlink()
+            pending = None
+        pending_document = resolve_export_document(directory, pending) if pending else None
         if pending and (pending.id != identity or pending.filename != filename or pending.kind != request.kind
-                        or pending.video != request.video or pending.bilingual != request.bilingual or pending.style != request.style or pending.document != request.document):
+                        or pending.video != request.video or pending.bilingual != request.bilingual or pending.style != request.style or pending_document != request.document):
             raise ExportError("导出恢复记录与请求不一致；已保留文件，请检查")
         existing = next((item for item in snapshot.outputs if item.id == identity), None)
         if existing:
+            if resolve_export_document(directory, existing) != request.document:
+                raise ExportError('导出记录与请求不一致；已保留文件，请检查')
             export_artifact(directory, existing.filename)
         elif destination.exists():
             if pending is None or not destination.is_file() or media.fingerprint(destination) != pending.sha256:
                 raise ExportError("已有导出文件无法验证；已保留文件，请检查")
             snapshot.outputs.append(pending)
+            media.write_json(_registry(directory), snapshot.model_dump(exclude={'active'}))
         else:
             dimensions = video_dimensions(inputs.source)
             content = (render_document_ass(inputs.document, request.bilingual) if inputs.document is not None else
@@ -248,19 +341,23 @@ class SubtitleExports:
                         case unreachable:
                             assert_never(unreachable)
                     output = ExportOutput(id=identity, kind=request.kind, video=request.video, bilingual=request.bilingual,
-                        filename=filename, sha256=media.fingerprint(product), style=request.style, document=request.document)
-                    if pending is not None and pending != output:
+                        filename=filename, sha256=media.fingerprint(product), style=request.style,
+                        document_ref=_publish_document(directory, request.document))
+                    if pending is not None and pending.model_dump(exclude={'document', 'document_ref'}) != output.model_dump(exclude={'document', 'document_ref'}):
                         raise ExportError("导出内容与恢复记录不一致；已保留文件，请检查")
                     if pending is None:
-                        with receipt.open("x", encoding="utf-8") as handle:
+                        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=directory,
+                                                         prefix=f".{receipt.name}.", suffix=".tmp") as handle:
                             handle.write(output.model_dump_json())
                             handle.flush()
                             os.fsync(handle.fileno())
+                            os.link(handle.name, receipt)
                     os.link(product, destination)
                     snapshot.outputs.append(output)
+                    media.write_json(_registry(directory), snapshot.model_dump(exclude={'active'}))
                 finally:
                     log = working / "encoder.log"
                     if log.is_file():
                         shutil.copyfile(log, workflow._path(directory, f"styled-{identity}.log"))
         snapshot.active = ExportActivity(state="completed", message="字幕导出完成")
-        media.write_json(_registry(directory), snapshot.model_dump())
+        _write_activity(directory, snapshot.active)

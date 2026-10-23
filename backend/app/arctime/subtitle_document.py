@@ -5,13 +5,18 @@ import json
 import os
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from app.arctime import media, workflow
 from app.arctime.subtitle_style import SubtitleStyle, TextStyle, _text
+
+if TYPE_CHECKING:
+    from app.services.task_artifacts import ResolvedArtifacts
+    from app.services.task_documents import Documents
 
 
 class Emphasis(BaseModel):
@@ -59,6 +64,9 @@ class SubtitleDocument(BaseModel):
     height: int = Field(gt=0, le=16384)
     duration: float = Field(gt=0)
     fps: float = Field(gt=0, le=1000)
+    _legacy_fingerprint: str | None = PrivateAttr(default=None)
+    _proven_fingerprint: str | None = PrivateAttr(default=None)
+    _signature: tuple = PrivateAttr(default=())
 
     @model_validator(mode='after')
     def valid_document(self) -> SubtitleDocument:
@@ -72,10 +80,19 @@ class SubtitleDocument(BaseModel):
         return self
 
 
-def base_document(directory: Path, style: SubtitleStyle) -> SubtitleDocument:
+class SourceProof(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True, frozen=True)
+    legacy: str = Field(pattern=r'^[0-9a-f]{64}$')
+    content: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+def base_document(directory: Path, style: SubtitleStyle, *, artifacts: ResolvedArtifacts | None = None) -> SubtitleDocument:
+    if artifacts is not None:
+        return artifacts.document(style)
     # Import here to keep the request models independent of filesystem operations.
-    from app.arctime.subtitle_inputs import ExportRequest, load_inputs
+    from app.arctime.subtitle_inputs import ExportError, ExportRequest, load_inputs
     from app.arctime.subtitle_encoding import video_metadata
+    signature = _source_signature(directory)
     job = workflow._path(directory, 'job.json')
     translation = workflow._path(directory, 'translation.json')
     bilingual = False
@@ -86,18 +103,54 @@ def base_document(directory: Path, style: SubtitleStyle) -> SubtitleDocument:
     source = {'job': media.fingerprint(job), 'artifacts': inputs.digests,
               'translation': media.fingerprint(translation) if translation.is_file() else None,
               'width': width, 'height': height, 'fps': fps}
-    fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()
+    legacy_fingerprint = hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()
+    manifest = json.loads(job.read_bytes())
+    subtitle_names = [manifest['video'], manifest['subtitles']]
+    if bilingual:
+        subtitle_names.append(Path(manifest['subtitles']).stem + '.ja-zh.srt')
+    content = {'version': 1, 'artifacts': {name: inputs.digests[name] for name in subtitle_names},
+               'duration': manifest['duration'], 'width': width, 'height': height, 'fps': fps,
+               'ranges': manifest.get('ranges'),
+               'selection': [(clip['start'], clip['end']) for clip in manifest.get('selection', [])],
+               'clips': [{key: clip[key] for key in ('video', 'subtitles', 'video_sha256', 'subtitles_sha256')}
+                         for clip in manifest['completed_clips']]}
+    fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
     cues = [Cue(id=f'cue-{index + 1:06d}', start_seconds=cue.start_seconds, end_seconds=cue.end_seconds,
                 text=cue.text, translation=inputs.translated[index].text if inputs.translated else '')
             for index, cue in enumerate(inputs.original)]
-    return SubtitleDocument(source_fingerprint=fingerprint, revision=0, style=style, cues=cues,
-                            width=width, height=height, fps=fps, duration=json.loads(job.read_bytes())['duration'])
+    document = SubtitleDocument(source_fingerprint=fingerprint, revision=0, style=style, cues=cues,
+                                width=width, height=height, fps=fps, duration=manifest['duration'])
+    document._legacy_fingerprint = legacy_fingerprint
+    document._signature = signature
+    proof_path = workflow._path(directory, 'subtitle-source-proof.json')
+    if proof_path.is_file():
+        proof = SourceProof.model_validate_json(proof_path.read_bytes())
+        if proof.content == fingerprint:
+            document._proven_fingerprint = proof.legacy
+    if _source_signature(directory) != signature:
+        raise ExportError('字幕来源在校验期间改变，请重试')
+    return document
 
 
 def validate_source(document: SubtitleDocument, base: SubtitleDocument) -> None:
-    if (document.source_fingerprint, document.width, document.height, document.duration, document.fps) != (
-            base.source_fingerprint, base.width, base.height, base.duration, base.fps):
+    if (document.source_fingerprint not in (base.source_fingerprint, base._legacy_fingerprint, base._proven_fingerprint)
+            or (document.width, document.height, document.duration, document.fps) != (
+                base.width, base.height, base.duration, base.fps)):
         raise ValueError('字幕来源已改变；请保留当前编辑并重新载入原任务')
+
+
+def preserve_legacy_source(directory: Path) -> None:
+    """Capture verified provenance before the caller mutates export diagnostics under the run lock."""
+    path = workflow._path(directory, 'subtitle-document.json')
+    if not path.is_file():
+        return
+    document = SubtitleDocument.model_validate_json(path.read_bytes())
+    base = base_document(directory, document.style)
+    if document.source_fingerprint != base._legacy_fingerprint:
+        return
+    validate_source(document, base)
+    proof = SourceProof(legacy=document.source_fingerprint, content=base.source_fingerprint)
+    media.write_json(workflow._path(directory, 'subtitle-source-proof.json'), proof.model_dump())
 
 
 def load_document(directory: Path, style: SubtitleStyle, *, source: bool = False, base: SubtitleDocument | None = None) -> SubtitleDocument:
@@ -109,13 +162,17 @@ def load_document(directory: Path, style: SubtitleStyle, *, source: bool = False
     if source:
         return base.model_copy(update={'revision': document.revision})
     validate_source(document, base)
-    return document
+    return document.model_copy(update={'source_fingerprint': base.source_fingerprint})
 
 
-def save_document(directory: Path, document: SubtitleDocument, *, base: SubtitleDocument | None = None) -> SubtitleDocument:
+def save_document(directory: Path, document: SubtitleDocument, *, base: SubtitleDocument | None = None,
+                  artifacts: ResolvedArtifacts | None = None) -> SubtitleDocument:
     with workflow.exclusive_lock(workflow._path(directory, '.lock')):
-        base = base or base_document(directory, document.style)
+        base = base or base_document(directory, document.style, artifacts=artifacts)
+        if base._signature != _source_signature(directory, artifacts=artifacts):
+            base = base_document(directory, document.style, artifacts=artifacts)
         validate_source(document, base)
+        document = document.model_copy(update={'source_fingerprint': base.source_fingerprint})
         path = workflow._path(directory, 'subtitle-document.json')
         current = SubtitleDocument.model_validate_json(path.read_bytes()) if path.is_file() else base
         if document.revision != current.revision:
@@ -139,10 +196,12 @@ def clip_document(document: SubtitleDocument, start: float, end: float) -> Subti
     return document.model_copy(update={'cues': cues, 'duration': end - start})
 
 
-def _source_signature(directory: Path) -> tuple:
+def _source_signature(directory: Path, *, artifacts: ResolvedArtifacts | None = None) -> tuple:
+    if artifacts is not None:
+        return artifacts.signature()
     job_path = workflow._path(directory, 'job.json')
     job = json.loads(job_path.read_bytes())
-    names = {'job.json', 'translation.json', job['video'], job['subtitles'], *job['artifacts']}
+    names = {'job.json', 'translation.json', 'subtitle-source-proof.json', job['video'], job['subtitles'], *job['artifacts']}
     translation_path = workflow._path(directory, 'translation.json')
     if translation_path.is_file():
         translation = json.loads(translation_path.read_bytes())
@@ -160,19 +219,23 @@ def _source_signature(directory: Path) -> tuple:
 
 
 class DocumentStore:
-    def __init__(self) -> None:
+    def __init__(self, *, artifacts: Callable[[Path], ResolvedArtifacts | None] | None = None,
+                 persistent: Documents | None = None) -> None:
+        self.artifacts = artifacts
+        self.persistent = persistent
         self.lock = threading.Lock()
         self.bases: OrderedDict[Path, tuple[tuple, SubtitleDocument]] = OrderedDict()
 
     def base(self, directory: Path, style: SubtitleStyle) -> SubtitleDocument:
-        signature = _source_signature(directory)
+        artifacts = self.artifacts(directory) if self.artifacts else None
+        signature = _source_signature(directory, artifacts=artifacts)
         with self.lock:
             cached = self.bases.get(directory)
             if cached and cached[0] == signature:
                 self.bases.move_to_end(directory)
                 return cached[1].model_copy(update={'style': style})
-        document = base_document(directory, style)
-        if _source_signature(directory) != signature:
+        document = base_document(directory, style, artifacts=artifacts)
+        if _source_signature(directory, artifacts=artifacts) != signature:
             raise ValueError('字幕来源在校验期间改变，请重试')
         with self.lock:
             self.bases[directory] = signature, document
@@ -182,10 +245,18 @@ class DocumentStore:
         return document
 
     def load(self, directory: Path, style: SubtitleStyle, *, source: bool = False) -> SubtitleDocument:
-        job = json.loads(workflow._path(directory, 'job.json').read_bytes())
-        if job.get('live') and job.get('subtitle_template'):
-            style = SubtitleStyle.model_validate(job['subtitle_template']['style'])
-        return load_document(directory, style, source=source, base=self.base(directory, style))
+        if self.artifacts is None or self.artifacts(directory) is None:
+            job = json.loads(workflow._path(directory, 'job.json').read_bytes())
+            if job.get('subtitle_template'):
+                style = SubtitleStyle.model_validate(job['subtitle_template']['style'])
+        base = self.base(directory, style)
+        if self.persistent is not None and self.persistent.is_activated(directory.name):
+            return self.persistent.load(directory.name, base, source=source)
+        return load_document(directory, style, source=source, base=base)
 
     def save(self, directory: Path, document: SubtitleDocument) -> SubtitleDocument:
-        return save_document(directory, document, base=self.base(directory, document.style))
+        artifacts = self.artifacts(directory) if self.artifacts else None
+        if self.persistent is not None and self.persistent.is_activated(directory.name):
+            base = self.base(directory, document.style)
+            return self.persistent.save(directory.name, document, base=base)
+        return save_document(directory, document, base=self.base(directory, document.style), artifacts=artifacts)
