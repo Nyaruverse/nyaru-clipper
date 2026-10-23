@@ -1,5 +1,7 @@
 # 文档目录说明
 
+最新本机候选：[App02 两项历史任务修复、重打包与实包复验](candidate-fixes-2026-10-23.zh-CN.md)，含新包摘要、25/25 历史副本场景、真实原片／原生保存重开和独立恢复证据；未替换正式 App、未切换正式数据。
+
 本目录存放项目的操作手册、用户手册、线框图和流程说明。
 
 如果你要先完成部署或本地启动，请优先阅读：
@@ -8,6 +10,8 @@
 - `deployment-guide.md`：English deployment guide，包含专用 WSL + ROCm 安装、自检、共用运行时入口与 smoke 路径
 
 当前中文文档对应关系如下：
+
+- [统一架构设计：方案 B](superpowers/specs/2026-10-22-unified-architecture-design.zh-CN.md)与[分阶段实施计划](superpowers/plans/2026-10-22-unified-architecture.zh-CN.md)：保留桌面与 GPU 工作站，定义迁移边界、A1—A12验收和R0—R2回退；仅规划，尚未实施。对应[英文设计](superpowers/specs/2026-10-22-unified-architecture-design.md)与[英文计划](superpowers/plans/2026-10-22-unified-architecture.md)。
 
 - [八阶段累计修改与提交交接](/Users/drm/project/nyaru-clipper/docs/code-improvement-rollup-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/code-improvement-rollup-2026-10-21.md)：44／44限定验收、累计修改、可携带证据摘要与明确提交排除项
 
@@ -25,11 +29,18 @@
 - [第七阶段与累计结果](/Users/drm/project/nyaru-clipper/docs/phase7-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase7-improvement-results-2026-10-21.md)：该阶段结束时38项已验收／6项待处理，保留当轮累计与原生验收证据
 - [第八阶段与44项累计结果](/Users/drm/project/nyaru-clipper/docs/phase8-improvement-results-2026-10-21.zh-CN.md)与[对应英文](/Users/drm/project/nyaru-clipper/docs/phase8-improvement-results-2026-10-21.md)：最新总账44项在记录范围内已验收／0项待处理，六项收尾、当前累计检查、最新原生App双任务保存／退出／重开、最终gate与限制
 
+- [task-sources-acceptance-2026-10-16.zh-CN.md](task-sources-acceptance-2026-10-16.zh-CN.md)：直播间号／BV 号／本地视频、build17 安装与数据保留验收
+
+- [subtitle-editor.zh-CN.md](subtitle-editor.zh-CN.md)：逐条字幕、像素定位、样式／时间与导出
+- [subtitle-editor-acceptance-2026-10-16.zh-CN.md](subtitle-editor-acceptance-2026-10-16.zh-CN.md)：Web／macOS 测试、一致性与 build16 安装验收
+
 - `macos-app.zh-CN.md`：本地工具的 macOS App、数据目录与构建说明
 - `macos-app.md`：对应英文说明
 
 - `local-companion.zh-CN.md`：本地链接下载、字幕识别、时间轴、指定片段／高光切片及恢复
 - `local-companion.md`：对应英文说明
+- [openai-subscription.zh-CN.md](openai-subscription.zh-CN.md)：ChatGPT订阅授权与供应商选择
+- [openai-subscription-acceptance-2026-10-15.zh-CN.md](openai-subscription-acceptance-2026-10-15.zh-CN.md)：真实订阅与双语验收
 
 - `user-manual.zh-CN.md`：用户手册（中文）
 - `operator-manual.zh-CN.md`：运维/操作手册（中文）
