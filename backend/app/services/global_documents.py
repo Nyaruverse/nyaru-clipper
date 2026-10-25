@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import Engine
@@ -15,6 +16,9 @@ from app.services.unified_database import begin_unified_mutation
 from app.services.unified_files import checked_path, immutable_bytes
 from app.services.workstation_events import publish_event
 
+if TYPE_CHECKING:
+    from app.services.task_execution import Execution
+
 
 class GlobalDocuments:
     def __init__(self, engine: Engine, root: Path, *, fault: Callable[[str], None] = lambda point: None) -> None:
@@ -22,7 +26,7 @@ class GlobalDocuments:
         self._active: ContextVar[Session | None] = ContextVar('global_document_session', default=None)
 
     @contextmanager
-    def mutation(self) -> Iterator[None]:
+    def mutation(self, *, execution: Execution | None = None) -> Iterator[None]:
         if self._active.get() is not None:
             yield
             return
@@ -30,6 +34,12 @@ class GlobalDocuments:
             begin_unified_mutation(session)
             token = self._active.set(session)
             try:
+                if execution is not None:
+                    from app.services.task_operations import require_token
+                    from app.services.task_execution import ExecutionCancelled
+                    operation = require_token(session, execution.operation_id, execution.token, cancelling=True)
+                    if operation.cancel_requested:
+                        raise ExecutionCancelled('profile publication cancelled')
                 yield
                 self.fault('before_commit')
                 session.commit()

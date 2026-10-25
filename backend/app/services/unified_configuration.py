@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from pydantic import JsonValue
 
-from app.api.schemas.operations import ExportOperation, LiveOperation, OperationInput, RecordingOperation, TranslateOperation
+from app.api.schemas.operations import AnalyzeTopicsOperation, ExportTopicsOperation, ExportOperation, LiveOperation, OperationInput, RecordingOperation, TranslateOperation
 from app.arctime import companion_llm
 from app.services.task_operations import OperationConflict, digest
 from app.services.task_requests import RequestDocument, freeze_request
@@ -23,6 +23,10 @@ def configuration_for(host: NativeHost, payload: OperationInput) -> dict[str, Js
     settings = effective_settings(content)
     configuration = configuration_snapshot(payload, model=public.cpp_model if public else host.model,
         threads=public.cpp_threads if public else host.threads, settings=settings)
+    if isinstance(payload, (AnalyzeTopicsOperation, ExportTopicsOperation)):
+        from app.services.topic_admission import topic_configuration
+        configuration.update(topic_configuration(host, payload))
+        return configuration
     template_id = None
     project_id = None
     match payload:

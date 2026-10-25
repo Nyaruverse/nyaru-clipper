@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.arctime.companion_models import JobInput
 from app.arctime.subtitle_inputs import ExportRequest
+from app.arctime.topic_models import TopicAnalyzeOptions, TopicClipOptions
 from app.services.task_operations import OperationKind
 
 
@@ -64,7 +65,19 @@ class ExportOperation(OperationSchema):
     request: ExportRequest
 
 
-OperationInput = Annotated[RecordingOperation | LiveOperation | TranslateOperation | ExportOperation, Field(discriminator="kind")]
+class AnalyzeTopicsOperation(OperationSchema):
+    kind: Literal["analyze_topics"]
+    task_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    request: TopicAnalyzeOptions = Field(default_factory=TopicAnalyzeOptions)
+
+
+class ExportTopicsOperation(OperationSchema):
+    kind: Literal["export_topics"]
+    task_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    request: TopicClipOptions
+
+
+OperationInput = Annotated[RecordingOperation | LiveOperation | TranslateOperation | ExportOperation | AnalyzeTopicsOperation | ExportTopicsOperation, Field(discriminator="kind")]
 
 
 class OperationView(OperationSchema):
