@@ -611,6 +611,17 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AnalyzeTopicsOperation */
+        AnalyzeTopicsOperation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "analyze_topics";
+            request?: components["schemas"]["TopicAnalyzeOptions"];
+            /** Task Id */
+            task_id: string;
+        };
         /**
          * ArtifactReadinessOverview
          * @description The availability state for the stage's expected public artifact.
@@ -916,6 +927,17 @@ export interface components {
             /** Video */
             video: string;
         };
+        /** ExportTopicsOperation */
+        ExportTopicsOperation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "export_topics";
+            request: components["schemas"]["TopicClipOptions"];
+            /** Task Id */
+            task_id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1085,7 +1107,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "process_recording" | "process_live" | "translate" | "export";
+            kind: "process_recording" | "process_live" | "translate" | "export" | "analyze_topics" | "export_topics";
             /** Position */
             position: number;
             /** Priority */
@@ -1108,6 +1130,13 @@ export interface components {
             recovering: boolean;
             /** Revision */
             revision: number;
+        };
+        /** OutlineLayer */
+        OutlineLayer: {
+            /** Color */
+            color: string;
+            /** Width */
+            width: number;
         };
         /**
          * ProcessingProfileResponse
@@ -1590,6 +1619,8 @@ export interface components {
              * @default #000000
              */
             outline_color: string;
+            /** Outline Layers */
+            outline_layers?: components["schemas"]["OutlineLayer"][];
             /**
              * Padding
              * @default 0
@@ -1645,6 +1676,35 @@ export interface components {
             x?: number | null;
             /** Y */
             y?: number | null;
+        };
+        /** TopicAnalyzeOptions */
+        TopicAnalyzeOptions: {
+            /** End Seconds */
+            end_seconds?: number | null;
+            /**
+             * Max Segments
+             * @default 100
+             */
+            max_segments: number;
+            /** Start Seconds */
+            start_seconds?: number | null;
+        };
+        /** TopicClipOptions */
+        TopicClipOptions: {
+            /** Indices */
+            indices: number[];
+            /**
+             * Mode
+             * @default separate
+             * @enum {string}
+             */
+            mode: "separate" | "combined";
+            /**
+             * Variant
+             * @default bilingual
+             * @enum {string}
+             */
+            variant: "original" | "zh" | "bilingual";
         };
         /** TranslateOperation */
         TranslateOperation: {
@@ -2282,7 +2342,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RecordingOperation"] | components["schemas"]["LiveOperation"] | components["schemas"]["TranslateOperation"] | components["schemas"]["ExportOperation"];
+                "application/json": components["schemas"]["RecordingOperation"] | components["schemas"]["LiveOperation"] | components["schemas"]["TranslateOperation"] | components["schemas"]["ExportOperation"] | components["schemas"]["AnalyzeTopicsOperation"] | components["schemas"]["ExportTopicsOperation"];
             };
         };
         responses: {
