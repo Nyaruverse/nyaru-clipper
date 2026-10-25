@@ -79,7 +79,7 @@ export function TopicSegmentsPanel({jobId, documentRevision, prepare, onSeek}: {
       <button className="ny-button ny-button--primary" disabled={pending} type="submit">分析高光话题</button>
     </form>
     <details><summary>弹幕与评分输入 · {danmaku.data?.count ?? 0} 条</summary>
-      <p className="companion-footnote">导入 XML／ASS 弹幕后可评估互动热度。缺弹幕时不显示完整互动评分；音频兴奋度是近似指标。</p>
+      <p className="companion-footnote">导入 XML／ASS 弹幕可评估互动热度。缺弹幕时不显示完整互动评分，音频兴奋度仅供参考。</p>
       <label className="ny-field">主播／系列名称（选填）<input className="ny-input" maxLength={128} value={streamer} onChange={event => setStreamer(event.target.value)} placeholder="同一名称共用热词画像" /></label>
       <label className="ny-field">导入弹幕<input type="file" accept=".xml,.ass" disabled={pending} onChange={event => {const file = event.target.files?.[0]; if (file) upload.mutate(file); event.target.value = '';}} /></label>
     </details>
@@ -87,7 +87,7 @@ export function TopicSegmentsPanel({jobId, documentRevision, prepare, onSeek}: {
     {error && <p className="companion-error" role="alert">{error.message}</p>}
     {store && <p role="status">分析：{states[store.state] ?? store.state} · 文档版本 {store.document_revision ?? '—'}</p>}
     {store?.state === 'completed' && <p className="companion-footnote">音频因子：{store.audio_state === 'available' ? '可用' : store.audio_state === 'truncated' ? '超长音频仅分析前 12 小时' : '不可用，评分未使用音频因子'}{store.streamer ? ` · 主播画像：${store.streamer}` : ''}</p>}
-    {stale && <p className="companion-error">字幕已修改，请重新分析后再生成视频。</p>}
+    {stale && <p className="companion-error">字幕已修改，请重新分析。</p>}
     {store?.error && <p role="alert" className="companion-error">{store.error}</p>}
     {!!store?.vocabulary?.length && <p>本场热词：{store.vocabulary.join(' · ')}</p>}
     {store?.quotes?.map((quote, index) => <button type="button" className="ny-button ny-button--quiet" key={index}
@@ -107,7 +107,7 @@ export function TopicSegmentsPanel({jobId, documentRevision, prepare, onSeek}: {
       </article>)}</div>
       <div className="cue-style-fields">
         <label className="ny-field">生成方式<select className="ny-input" value={mode} onChange={event => setMode(event.target.value === 'combined' ? 'combined' : 'separate')}><option value="separate">分别生成</option><option value="combined">组合视频</option></select></label>
-        <label className="ny-field">烧录字幕<select className="ny-input" value={variant} onChange={event => {switch (event.target.value) {case 'zh': setVariant('zh'); break; case 'bilingual': setVariant('bilingual'); break; default: setVariant('original');}}}><option value="original">原文</option><option value="zh">译文</option><option value="bilingual">双语</option></select></label>
+        <label className="ny-field">烧录字幕<select className="ny-input" value={variant} onChange={event => {switch (event.target.value) {case 'zh': setVariant('zh'); break; case 'bilingual': setVariant('bilingual'); break; default: setVariant('original');}}}><option value="original">原文</option><option value="zh">中文</option><option value="bilingual">双语</option></select></label>
       </div>
       <button className="ny-button ny-button--primary" disabled={pending || stale || store?.state !== 'completed' || !selected.length} onClick={() => generate.mutate()}>生成选中视频</button>
     </>}

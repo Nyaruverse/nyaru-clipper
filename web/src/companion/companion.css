@@ -208,7 +208,7 @@ body { margin: 0; }
 /* Studio tokens are scoped to the companion surface. */
 .ny-companion { color-scheme:light; --companion-command-height:72px; --ny-canvas:#f3f5f7;--ny-surface:#fff;--ny-surface-muted:#f8fafb;--ny-ink:#20292e;--ny-ink-muted:#58666e;--ny-border:#dde3e7;--ny-accent:#146f66;--ny-focus:#146f66;--ny-success:#146f66;--ny-warning:#855518;--ny-danger:#a33737;--ny-radius-2:var(--ny-space-3);--studio-wash:#e7f3ef;--studio-video:#172927;--studio-font-micro:10px;--studio-font-page:24px;--studio-control-radius:7px;--studio-panel-radius:var(--ny-space-3);--studio-space-2:var(--ny-space-2);--studio-space-4:var(--ny-space-4);--studio-space-5:var(--ny-space-5);--studio-font-small:var(--ny-space-3); font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB',sans-serif;font-size:var(--ny-font-body); }
 .ny-companion .ny-button,.ny-companion .ny-input {border-radius:var(--studio-control-radius);min-height:var(--ny-target-min);}
-.ny-companion .ny-button--primary {background:var(--ny-accent);color:var(--ny-surface);border-color:transparent;}
+.ny-companion .ny-button--primary:not(:disabled) {background:var(--ny-accent);color:var(--ny-surface);border-color:transparent;}
 .ny-companion .studio-toolbar {height:72px;padding:0 var(--ny-space-6);display:flex;align-items:center;justify-content:space-between;gap:var(--studio-space-4);background:var(--ny-surface-muted);}
 .ny-companion .companion-brand {font-size:var(--ny-font-body-lg);letter-spacing:.15em;}
 .ny-companion .companion-brand>svg {width:34px;height:34px;padding:var(--ny-space-2);background:var(--ny-ink);border-radius:var(--studio-control-radius);}
