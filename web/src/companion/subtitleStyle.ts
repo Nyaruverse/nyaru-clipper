@@ -3,6 +3,7 @@ export interface TextStyle { font: string; size: number; color: string; outline_
   align?: number; x?: number | null; y?: number | null; rotation?: number; scale_x?: number; scale_y?: number;
   shadow?: number; shadow_color?: string; padding?: number; max_width?: number; hidden?: boolean;
   margin_left?: number; margin_right?: number;
+  outline_layers?: readonly {readonly color: string; readonly width: number}[];
 }
 export interface SubtitleStyle { version: 1; original: TextStyle; translation: TextStyle }
 export interface StyleTemplate { revision?: number; streamer?: string; workflow?: import('./studioModel').StudioWorkflow; id: string; name: string; style: SubtitleStyle; arctime_template_id: string | null; builtin: boolean }
@@ -59,11 +60,12 @@ export function automaticLayout(items: readonly {readonly count: number; readonl
   const anchors = items.map((_, i) => rows[i] === 2 ? margins[i] : rows[i] === 1 ? centers[i] : 1080 - margins[i]);
   const fits = items.every(({style, textWidth = 0}, i) => {
     if (style.x != null || style.y != null || style.hidden) return true;
-    const extent = heights[i] + style.outline + (style.padding ?? 0) + (style.shadow ?? 0);
+    const border = Math.max(style.outline, ...(style.outline_layers ?? []).map(layer => layer.width));
+    const extent = heights[i] + border + (style.padding ?? 0) + (style.shadow ?? 0);
     const column = (effectiveAlignment(style) - 1) % 3;
     const x = column === 0 ? style.margin_left ?? 20 : column === 1 ? (width + (style.margin_left ?? 20) - (style.margin_right ?? 20)) / 2 : width - (style.margin_right ?? 20);
     const left = -textWidth * column / 2;
-    const edge = style.outline + (style.padding ?? 0) + (style.shadow ?? 0);
+    const edge = border + (style.padding ?? 0) + (style.shadow ?? 0);
     if ((style.rotation ?? 0) % 360) {
       const top = -heights[i] * (2 - rows[i]) / 2, angle = (style.rotation ?? 0) * Math.PI / 180;
       return [left - edge, left + textWidth + edge].every(dx => [top - edge, top + heights[i] + edge].every(dy => {

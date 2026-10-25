@@ -88,10 +88,15 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
             color = paint(style.color, style.opacity)
             attributes = f'{-int(style.bold)},{-int(style.italic)},{-int(style.underline)},0,{style.scale_x:g},{style.scale_y:g},{style.spacing * scale:g},{style.rotation:g}'
             tail = f'{alignment},0,0,0,1'
-            header.append(f'Style: {name},{style.font},{size:g},{color},{color},{paint(style.outline_color, style.opacity)},{paint(style.shadow_color, style.opacity)},{attributes},1,{style.outline * scale:g},{style.shadow * scale:g},{tail}')
+            border = max([style.outline, *(layer.width for layer in style.outline_layers)])
+            header.append(f'Style: {name},{style.font},{size:g},{color},{color},{paint(style.outline_color, style.opacity)},{paint(style.shadow_color, style.opacity)},{attributes},1,{0 if style.outline_layers else style.outline * scale:g},{style.shadow * scale:g},{tail}')
+            layers = sorted([(style.outline, style.outline_color),
+                *((layer.width, layer.color) for layer in style.outline_layers)], reverse=True) if style.outline_layers else []
+            for layer_index, (thickness, layer_color) in enumerate(layers):
+                header.append(f'Style: {name}Outline{layer_index},{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,{paint(layer_color, style.opacity)},&HFFFFFFFF,{attributes},1,{thickness * scale:g},0,{tail}')
             if style.background_opacity:
                 background = paint(style.background_color, style.background_opacity)
-                header.append(f'Style: {name}Background,{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,{background},{background},{attributes},3,{(style.outline + style.padding) * scale:g},0,{tail}')
+                header.append(f'Style: {name}Background,{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,{background},{background},{attributes},3,{(border + style.padding) * scale:g},0,{tail}')
             timing = f'{_timestamp(cue.start_seconds)},{_timestamp(cue.end_seconds)}'
             for line_index, text in enumerate(lines):
                 offset = line_index if row == 2 else line_index - (len(lines) - 1) / 2 if row == 1 else line_index - len(lines) + 1
@@ -99,6 +104,8 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
                 if style.background_opacity:
                     # Emphasis retains metrics but must not paint glyphs on the background layer.
                     events.append(f'Dialogue: 0,{timing},{name}Background,,0,0,0,,{tags}{backgrounds[language][line_index]}')
+                for layer_index, _ in enumerate(layers):
+                    events.append(f'Dialogue: 1,{timing},{name}Outline{layer_index},,0,0,0,,{tags}{text}')
                 events.append(f'Dialogue: 1,{timing},{name},,0,0,0,,{tags}{text}')
     return '\n'.join([*header, '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text', *events, ''])
 
