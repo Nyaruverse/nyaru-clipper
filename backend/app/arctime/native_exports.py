@@ -24,7 +24,7 @@ def export_snapshot(host: NativeHost, task_id: str) -> ExportSnapshot:
         operations = session.exec(select(UnifiedOperation).where(UnifiedOperation.task_id == task_id,
             UnifiedOperation.kind == 'export').order_by(UnifiedOperation.created_at)).all()
         rows = session.exec(select(UnifiedPublication).join(UnifiedOperation)
-            .where(UnifiedOperation.task_id == task_id, UnifiedPublication.state == 'committed')).all()
+            .where(UnifiedOperation.task_id == task_id, UnifiedOperation.kind == 'export', UnifiedPublication.state == 'committed')).all()
         requests = {operation.id: json.loads(operation.snapshot_json).get('input', {}) for operation in operations}
         latest_state = operations[-1].state if operations else None
         metadata = {row.id: session.get(OperationStep, row.step_id).metadata_json for row in rows}

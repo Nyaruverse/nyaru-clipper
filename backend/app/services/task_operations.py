@@ -16,7 +16,7 @@ from app.models_unified import (
 from app.services.workstation_events import publish_event, publish_task_updated
 from app.services.unified_database import begin_unified_mutation
 
-OperationKind = Literal["process_recording", "process_live", "translate", "export"]
+OperationKind = Literal["process_recording", "process_live", "translate", "export", "analyze_topics", "export_topics"]
 TerminalState = Literal["succeeded", "failed", "interrupted", "cancelled"]
 
 
@@ -95,8 +95,14 @@ def enqueue_operation(
     binding = session.get(TaskBinding, task_id)
     if binding is None or binding.state != "activated":
         raise OperationConflict("task is not activated")
-    if kind not in {"process_recording", "process_live", "translate", "export"}:
+    if kind not in {"process_recording", "process_live", "translate", "export", "analyze_topics", "export_topics"}:
         raise OperationConflict("unsupported operation kind")
+    if kind == 'export_topics':
+        from app.models_unified import DocumentHead
+        head = session.get(DocumentHead, task_id)
+        revision = head.revision if head else 0
+        if snapshot.get('config', {}).get('topic_document_revision') != revision:
+            raise OperationConflict('document changed during topic export admission')
     body = canonical(snapshot)
     operations = session.exec(select(UnifiedOperation)).all()
     operation = UnifiedOperation(

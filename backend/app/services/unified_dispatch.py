@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from pydantic import TypeAdapter
 
-from app.api.schemas.operations import ExportOperation, LiveOperation, OperationInput, RecordingOperation, TranslateOperation
+from app.api.schemas.operations import AnalyzeTopicsOperation, ExportTopicsOperation, ExportOperation, LiveOperation, OperationInput, RecordingOperation, TranslateOperation
 from app.services.media_dispatch import process_media
 from app.services.task_execution import Execution, ExecutionCancelled, WorkflowFailure
 from app.services.task_requests import restore_request
@@ -23,6 +23,9 @@ def dispatch(host: NativeHost, execution: Execution) -> None:
     body = restore_request(host.root, snapshot['input'])
     payload = TypeAdapter(OperationInput).validate_python({'kind': execution.kind, 'task_id': execution.task_id, **body})
     match payload:
+        case AnalyzeTopicsOperation() | ExportTopicsOperation():
+            from app.services.unified_topics import execute_topics
+            execute_topics(host, execution, payload, snapshot["config"])
         case RecordingOperation() | LiveOperation():
             process_media(host, execution, payload, snapshot['config'])
         case ExportOperation(request=request):

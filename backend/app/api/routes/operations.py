@@ -58,6 +58,8 @@ def operations_router(session_dependency: Callable[[], Iterator[Session]], *,
 
     @router.post("", status_code=202, response_model=OperationView)
     def create_operation(payload: OperationInput, session: Session = Depends(session_dependency)) -> OperationView:
+        if payload.kind in {"analyze_topics", "export_topics"} and configuration is configuration_snapshot:
+            raise HTTPException(409, "unified-entry-required: topic operations require the unified companion host")
         body = payload.model_dump(mode="json", exclude={"task_id", "kind"})
         try:
             begin_unified_mutation(session)

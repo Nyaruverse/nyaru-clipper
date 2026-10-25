@@ -9,7 +9,8 @@ class OperationsBodyLimit:
         self.app, self.maximum = app, maximum
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] != 'http' or scope['method'] != 'POST' or scope['path'] != '/api/v2/operations':
+        if scope['type'] != 'http' or scope['method'] != 'POST' or not (scope['path'] == '/api/v2/operations' or
+                scope['path'].startswith('/companion-api/jobs/') and scope['path'].endswith(('/topic-segments', '/topic-clips'))):
             await self.app(scope, receive, send)
             return
         chunks = []

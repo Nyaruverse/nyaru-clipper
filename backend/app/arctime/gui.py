@@ -83,6 +83,8 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
 
     app.include_router(subtitle_router(manager, exports))
     app.include_router(saozi_router(manager))
+    from app.arctime.topic_api import topic_router
+    app.include_router(topic_router(manager))
     app.include_router(chatgpt_router(manager))
     if host is not None:
         from app.api.routes.operations import operations_router
