@@ -10,6 +10,13 @@ const settings: SubtitleSettings = {style:defaultStyle,templates:[{id:'user1',na
 afterEach(()=>vi.unstubAllGlobals());
 function Harness(){const [style,onStyle]=useState(defaultStyle);const [project,onProject]=useState<string|null>(null);return <SubtitleEditor settings={settings} error={null} style={style} onStyle={onStyle} project={project} onProject={onProject} busy={false}/>;}
 function mount(content=<Harness/>){return render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}>{content}</QueryClientProvider>);}
+it('offers searchable font families and shared favorites in the template editor', () => {
+ mount(<SubtitleEditor settings={settings} error={null} style={defaultStyle} onStyle={vi.fn()} project={null} onProject={vi.fn()} busy={false} fonts={{available:true,families:['Arial','苹方']}}/>);
+ fireEvent.click(screen.getByText('字幕样式与模板'));
+ expect(screen.getByLabelText('原文字体')).toHaveAttribute('list');
+ expect(screen.getByLabelText('译文字体')).toHaveAttribute('list');
+ expect(screen.getAllByRole('button',{name:'收藏当前字体'})).toHaveLength(2);
+});
 it('saves current default, copies binding, confirms rename/delete and uploads raw ATPJ', async()=>{
  const requests:{url:string;body:unknown}[]=[];
  vi.stubGlobal('fetch',vi.fn(async(url:string,init:RequestInit)=>{requests.push({url,body:typeof init.body==='string'?JSON.parse(init.body):init.body});return new Response('{}');}));

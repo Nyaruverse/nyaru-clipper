@@ -5,6 +5,7 @@ import { TextStyleFields, type FontCatalog } from './TextStyleFields';
 import { WorkflowFields } from './WorkflowFields';
 import { defaultWorkflow, type StudioWorkflow } from './studioModel';
 import { AssStyleImport } from './AssStyleImport';
+import { FontPicker } from './FontPicker';
 interface Props { settings?: SubtitleSettings; error: Error | null; style: SubtitleStyle; onStyle: (style: SubtitleStyle) => void; project: string | null; onProject: (id: string | null) => void; busy: boolean; readonly embedded?: boolean; readonly fonts?: FontCatalog }
 export function SubtitleEditor({settings,error,style,onStyle,project,onProject,busy,embedded = false,fonts}: Props) {
   const client = useQueryClient();
@@ -41,7 +42,7 @@ export function SubtitleEditor({settings,error,style,onStyle,project,onProject,b
     <fieldset disabled={disabled}>
       <label className="ny-field">样式模板<select className="ny-input" value={selected} onChange={event => { const id = event.target.value;setSelected(id);const item = choices.find(value => value.id === id);if (item) loadDraft(item);}}><option value="">当前自定义样式</option>{choices.map(item => <option key={item.id} value={item.id}>{item.name}{item.builtin ? ' · 内置' : ''}</option>)}</select></label>
       <div className="subtitle-style-columns">{(['original','translation'] as const).map(key => <fieldset key={key}><legend>{key === 'original' ? '原文' : '译文'}</legend>
-        <label className="ny-field">{key === 'original' ? '原文' : '译文'}字体<input className="ny-input" maxLength={100} value={style[key].font} onChange={event => { if (!/[,{}\\\x00-\x1f\x7f-\x9f]/.test(event.target.value)) update(key,{font:event.target.value}); }} /></label>
+        <FontPicker label={key === 'original' ? '原文字体' : '译文字体'} value={style[key].font} fonts={fonts?.families ?? []} onChange={font => update(key, {font})} />
         {([{key:'size',label:'字号',min:8,max:200,step:1},{key:'outline',label:'描边',min:0,max:20,step:1},{key:'background_opacity',label:'背景不透明度',min:0,max:1,step:0.05},{key:'margin',label:'垂直边距',min:0,max:1080,step:1}] as const).map(field => <label className="ny-field" key={field.key}>{key === 'original' ? '原文' : '译文'}{field.label}<input className="ny-input" type="number" min={field.min} max={field.max} step={field.step} value={style[key][field.key]} onChange={event => { const value = event.target.valueAsNumber;if (Number.isFinite(value)) update(key,{[field.key]:Math.max(field.min,Math.min(field.max,value))}); }} /></label>)}
         {([{key:'color',label:'文字颜色'},{key:'outline_color',label:'描边颜色'},{key:'background_color',label:'背景颜色'}] as const).map(field => <label className="ny-field" key={field.key}>{key === 'original' ? '原文' : '译文'}{field.label}<input className="ny-input" type="color" value={style[key][field.key]} onChange={event => update(key,{[field.key]:event.target.value})} /></label>)}
         <label className="ny-field">{key === 'original' ? '原文' : '译文'}位置<select className="ny-input" value={style[key].position} onChange={event => update(key,{position:event.target.value === 'top' ? 'top' : 'bottom',align:event.target.value === 'top' ? 8 : 2,x:null,y:null})}><option value="bottom">底部</option><option value="top">顶部</option></select></label>
