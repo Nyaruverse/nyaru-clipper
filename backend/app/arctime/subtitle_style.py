@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.services.subtitles import SubtitleSegment
 
 
+class OutlineLayer(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True, strict=True, allow_inf_nan=False)
+    color: str = Field(pattern=r'^#[0-9A-Fa-f]{6}$')
+    width: float = Field(ge=0, le=20)
+
+
 class TextStyle(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, allow_inf_nan=False)
     font: str = Field(default='Arial', min_length=1, max_length=100)
@@ -18,6 +24,7 @@ class TextStyle(BaseModel):
     color: str = Field(default='#FFFFFF', pattern=r'^#[0-9A-Fa-f]{6}$')
     outline_color: str = Field(default='#000000', pattern=r'^#[0-9A-Fa-f]{6}$')
     outline: float = Field(default=2, ge=0, le=20)
+    outline_layers: list[OutlineLayer] = Field(default_factory=list, max_length=2)
     background_color: str = Field(default='#000000', pattern=r'^#[0-9A-Fa-f]{6}$')
     background_opacity: float = Field(default=0, ge=0, le=1)
     position: Literal['top', 'bottom'] = 'bottom'
@@ -129,14 +136,15 @@ def automatic_layout(items: Sequence[tuple[int, TextStyle, float]], canvas_width
     for i, (_, style, text_width) in enumerate(items):
         if style.x is not None or style.y is not None or style.hidden:
             continue
-        extent = heights[i] + style.outline + style.padding + style.shadow
+        border = max([style.outline, *(layer.width for layer in style.outline_layers)])
+        extent = heights[i] + border + style.padding + style.shadow
         fits = (anchors[i] + extent <= 1060 if rows[i] == 2 else
                 anchors[i] - extent >= 20 if rows[i] == 0 else
                 anchors[i] - extent / 2 >= 20 and anchors[i] + extent / 2 <= 1060)
         column = (alignment_for(style) - 1) % 3
         x = style.margin_left if column == 0 else (canvas_width + style.margin_left - style.margin_right) / 2 if column == 1 else canvas_width - style.margin_right
         left = -text_width * column / 2
-        edge = style.outline + style.padding + style.shadow
+        edge = border + style.padding + style.shadow
         if style.rotation % 360:
             top = -heights[i] * (2 - rows[i]) / 2
             angle = math.radians(style.rotation)
@@ -173,7 +181,7 @@ def render_ass(original: Sequence[SubtitleSegment], translated: Sequence[Subtitl
         for a, b in zip(original, translated, strict=True)
     )):
         raise ValueError('Translation cue count and times must exactly match original cues.')
-    advanced = ('bold', 'italic', 'underline', 'opacity', 'spacing', 'line_height', 'align', 'x', 'y',
+    advanced = ('outline_layers', 'bold', 'italic', 'underline', 'opacity', 'spacing', 'line_height', 'align', 'x', 'y',
                 'rotation', 'scale_x', 'scale_y', 'shadow', 'shadow_color', 'padding', 'max_width', 'hidden', 'margin_left', 'margin_right')
     defaults = TextStyle()
     if any(getattr(item, key) != getattr(defaults, key) for item in (style.original, style.translation) for key in advanced):

@@ -25,6 +25,8 @@ function finite(value: unknown): value is number { return typeof value === 'numb
 function textStyle(value: unknown): value is TextStyle {
   if (!record(value)) return false;
   return typeof value.font === 'string' && finite(value.size) && finite(value.outline) && finite(value.margin)
+    && (value.outline_layers === undefined || (Array.isArray(value.outline_layers) && value.outline_layers.length <= 2
+      && value.outline_layers.every((layer: unknown) => record(layer) && typeof layer.color === 'string' && /^#[a-f\d]{6}$/i.test(layer.color) && finite(layer.width) && layer.width >= 0 && layer.width <= 20)))
     && typeof value.color === 'string' && typeof value.outline_color === 'string' && typeof value.background_color === 'string'
     && finite(value.background_opacity) && (value.position === 'top' || value.position === 'bottom');
 }
