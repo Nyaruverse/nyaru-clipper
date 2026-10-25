@@ -13,7 +13,7 @@ import pytest
 from sqlmodel import Session
 
 from app.arctime.subtitle_render import render_document_ass
-from app.arctime.subtitle_style import SubtitleStyle
+from app.arctime.subtitle_style import SubtitleStyle, TextStyle
 from app.arctime.subtitle_templates import TemplateStore
 from app.services.global_documents import GlobalDocuments
 from app.services.task_artifacts import resolve_workstation
@@ -72,6 +72,7 @@ def recovery_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         connection.execute("INSERT INTO alembic_version VALUES ('20261022_01')")
     base = context.document(SubtitleStyle())
     saved = Documents(engine, roots['task_root']).save(source.task_id, base.model_copy(update={
+        'style': SubtitleStyle(original=TextStyle(outline_layers=[{'color': '#00FF00', 'width': 6}])),
         'cues': [base.cues[0].model_copy(update={'text': '最后保存的原文', 'translation': '最後に保存した訳文'})]}), base=base)
     globals = GlobalDocuments(engine, roots['settings_root'])
     templates = TemplateStore(roots['settings_root'], documents=globals)
