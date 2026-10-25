@@ -679,3 +679,171 @@ def test_audio_without_danmaku_keeps_score_unavailable() -> None:
     )
     assert result.scoring == "unavailable" and result.segments[0].score is None
     assert result.audio_state == "available" and result.segments[0].loudness_db == -20.0
+
+
+@pytest.mark.parametrize("later_error", [False, True])
+def test_topic_cap_stops_paid_batches_and_reports_actual_coverage(
+    tmp_path: Path, monkeypatch, later_error: bool
+) -> None:
+    import json
+    from uuid import uuid4
+    from pydantic import SecretStr
+    from sqlmodel import Session
+    from app.arctime import topic_segments
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_style import SubtitleStyle
+    from app.arctime.topic_models import TopicAnalyzeOptions
+    from app.models_unified import UnifiedOperation
+    from app.services.task_execution import Executor
+    from app.services.task_operations import (
+        bind_task,
+        enqueue_operation,
+        set_admissions,
+    )
+    from test_unified_operations import database
+
+    # Given 2001 cues and one requested segment, the first batch already fills the output cap.
+    engine = database(tmp_path)
+    document = SubtitleDocument(
+        source_fingerprint="0" * 64,
+        revision=0,
+        style=SubtitleStyle(),
+        cues=[
+            Cue(
+                id=f"cue-{i + 1:06d}",
+                start_seconds=float(i * 10),
+                end_seconds=float((i + 1) * 10),
+                text=f"cue {i + 1}",
+            )
+            for i in range(2001)
+        ],
+        width=320,
+        height=180,
+        duration=20010.0,
+        fps=10.0,
+    )
+    with Session(engine) as session:
+        binding = bind_task(
+            session, uuid4(), "batch-cap", "generation", origin="native"
+        )
+        operation = enqueue_operation(
+            session, binding.task_id, "analyze_topics", {"input": {}, "config": {}}
+        )
+        identifier = operation.id
+        set_admissions(session, paused=False)
+        session.commit()
+    calls = []
+
+    def response(model, key, prompt, content, requester):
+        calls.append(len(json.loads(content)["segments"]))
+        if len(calls) > 1 and later_error:
+            raise OSError("unnecessary later provider call failed")
+        return '{"segments":[{"start_id":1,"end_id":2,"title":"kept topic","summary":"kept summary"}]}'
+
+    monkeypatch.setattr(topic_segments, "request_json", response)
+    results = []
+
+    def run(execution):
+        results.append(
+            topic_segments.analyze_document(
+                execution,
+                document,
+                TopicAnalyzeOptions(max_segments=1),
+                "deepseek-chat",
+                SecretStr("fixture-only"),
+                None,
+            )
+        )
+
+    # When real unified external-call tracking executes analysis, then no later request or error can discard the completed capped result.
+    Executor(engine, tmp_path / "tasks", tmp_path / "guard").iteration(run)
+    assert calls == [2000]
+    with Session(engine) as session:
+        assert session.get(UnifiedOperation, identifier).state == "succeeded"
+    assert len(results[0].segments) == 1
+    assert (
+        results[0].total_cues == 2001
+        and results[0].covered_cues == 2000
+        and results[0].truncated is True
+    )
+
+
+@pytest.mark.parametrize("max_segments", [1, 10])
+def test_overlapping_topic_boundaries_fail_without_retitle_or_trim(
+    tmp_path: Path, monkeypatch, max_segments: int
+) -> None:
+    from uuid import uuid4
+    from pydantic import SecretStr
+    from sqlmodel import Session
+    from app.arctime import topic_segments
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_style import SubtitleStyle
+    from app.arctime.topic_models import TopicAnalyzeOptions, TopicError
+    from app.models_unified import UnifiedOperation
+    from app.services.task_execution import Executor
+    from app.services.task_operations import (
+        bind_task,
+        enqueue_operation,
+        set_admissions,
+    )
+    from test_unified_operations import database
+
+    # Given overlapping model-selected topics, even a cap reached earlier in the same response must not hide invalid boundaries.
+    engine = database(tmp_path)
+    document = SubtitleDocument(
+        source_fingerprint="0" * 64,
+        revision=0,
+        style=SubtitleStyle(),
+        cues=[
+            Cue(
+                id=f"cue-{i + 1:06d}",
+                start_seconds=float(i * 10),
+                end_seconds=float((i + 1) * 10),
+                text=f"cue {i + 1}",
+            )
+            for i in range(3)
+        ],
+        width=320,
+        height=180,
+        duration=30.0,
+        fps=10.0,
+    )
+    with Session(engine) as session:
+        binding = bind_task(session, uuid4(), "overlap", "generation", origin="native")
+        operation = enqueue_operation(
+            session, binding.task_id, "analyze_topics", {"input": {}, "config": {}}
+        )
+        identifier = operation.id
+        set_admissions(session, paused=False)
+        session.commit()
+    monkeypatch.setattr(
+        topic_segments,
+        "request_json",
+        lambda *args: (
+            '{"segments":[{"start_id":1,"end_id":2,"title":"first","summary":"first"},{"start_id":2,"end_id":3,"title":"second","summary":"second"}]}'
+        ),
+    )
+    errors = []
+    results = []
+
+    def run(execution):
+        try:
+            results.append(
+                topic_segments.analyze_document(
+                    execution,
+                    document,
+                    TopicAnalyzeOptions(max_segments=max_segments),
+                    "deepseek-chat",
+                    SecretStr("fixture-only"),
+                    None,
+                )
+            )
+        except TopicError as error:
+            errors.append(str(error))
+            raise
+
+    # When the response crosses the analysis boundary, then it fails rather than trimming the second title onto cue 3.
+    Executor(engine, tmp_path / "tasks", tmp_path / "guard").iteration(run)
+    assert not results and errors == ["模型切片边界越界或重叠"]
+    with Session(engine) as session:
+        assert session.get(UnifiedOperation, identifier).state == "failed"
