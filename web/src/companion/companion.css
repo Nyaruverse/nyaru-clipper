@@ -286,3 +286,6 @@ body { margin: 0; }
   .ny-companion .topic-workbench, .ny-companion .font-picker, .ny-companion .outline-layers { font-size: 17px; }
   .ny-companion :is(.topic-workbench, .font-picker, .outline-layers) .companion-footnote { font-size: 15px; }
 }
+@media (max-width: 640px) {
+  .ny-companion :is(.topic-workbench, .font-picker, .outline-layers) :is(.ny-field, .ny-input) { font-size: 17px; }
+}
