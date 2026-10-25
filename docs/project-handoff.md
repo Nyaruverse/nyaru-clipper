@@ -1,5 +1,7 @@
 # Nyaru-Clipper project handoff
 
+Latest integration: [2026-10-26 selective highlight and subtitle integration](highlight-subtitle-integration-2026-10-26.md). Unified topic analysis/export, font search/favorites and three outline layers; formal App and data were not replaced.
+
 ## Unified architecture merge: 23 October 2026 (Asia/Shanghai)
 
 This branch merges unified architecture `eda736bd905fffcf321642cbd94823e4aacd7be5` into remote macOS base `18ea3a0a7ee641cbb46d06d4348ebfa96dfc1dd2`. It retains the native window, system saving, quit bridge, frozen backend, tool/model packaging, licenses and macOS-specific guides. Program sources match the verified unified commit. Swift typechecking passed; no repackaging or installed-App replacement occurred.

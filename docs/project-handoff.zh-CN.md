@@ -1,5 +1,7 @@
 # Nyaru-Clipper 项目交接
 
+最新整合：[2026-10-26 高光算法与字幕编辑定向整合](highlight-subtitle-integration-2026-10-26.zh-CN.md)。统一队列高光分析／导出、字体搜索收藏与三层描边；正式 App 和数据未替换。
+
 ## 统一架构合并记录：2026-10-23（Asia/Shanghai）
 
 本分支从远端 macOS 提交 `18ea3a0a7ee641cbb46d06d4348ebfa96dfc1dd2` 合并统一架构 `eda736bd905fffcf321642cbd94823e4aacd7be5`。保留原生窗口、系统保存、退出桥接、冻结后端、工具／模型打包、许可证与 macOS 专属文档；程序源码与已验证的统一架构提交一致。Swift 类型检查通过，未重新打包或替换正式 App。
