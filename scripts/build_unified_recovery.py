@@ -12,7 +12,7 @@ from packaging.requirements import Requirement
 
 
 DEFINITIONS = {
-    'subtitle_style.py': {'TextStyle', 'SubtitleStyle', '_color', 'centiseconds', '_timestamp', '_text', 'alignment_for', 'automatic_layout'},
+    'subtitle_style.py': {'OutlineLayer', 'TextStyle', 'SubtitleStyle', '_color', 'centiseconds', '_timestamp', '_text', 'alignment_for', 'automatic_layout'},
     'subtitle_document.py': {'Emphasis', 'Cue', 'SubtitleDocument'},
     'subtitle_render.py': {'_lines', 'render_document_ass'},
     '../services/publication_receipts.py': {'ReceiptError', 'OutputMember', 'PreparedReceipt'},
