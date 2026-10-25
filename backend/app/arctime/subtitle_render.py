@@ -89,11 +89,13 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
             attributes = f'{-int(style.bold)},{-int(style.italic)},{-int(style.underline)},0,{style.scale_x:g},{style.scale_y:g},{style.spacing * scale:g},{style.rotation:g}'
             tail = f'{alignment},0,0,0,1'
             border = max([style.outline, *(layer.width for layer in style.outline_layers)])
-            header.append(f'Style: {name},{style.font},{size:g},{color},{color},{paint(style.outline_color, style.opacity)},{paint(style.shadow_color, style.opacity)},{attributes},1,{0 if style.outline_layers else style.outline * scale:g},{style.shadow * scale:g},{tail}')
+            header.append(f'Style: {name},{style.font},{size:g},{color},{color},{paint(style.outline_color, style.opacity)},{paint(style.shadow_color, style.opacity)},{attributes},1,{0 if style.outline_layers else style.outline * scale:g},{0 if style.outline_layers else style.shadow * scale:g},{tail}')
             layers = sorted([(style.outline, style.outline_color),
                 *((layer.width, layer.color) for layer in style.outline_layers)], reverse=True) if style.outline_layers else []
             for layer_index, (thickness, layer_color) in enumerate(layers):
                 header.append(f'Style: {name}Outline{layer_index},{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,{paint(layer_color, style.opacity)},&HFFFFFFFF,{attributes},1,{thickness * scale:g},0,{tail}')
+            if layers and style.shadow:
+                header.append(f'Style: {name}Shadow,{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,&HFFFFFFFF,{paint(style.shadow_color, style.opacity)},{attributes},1,{border * scale:g},{style.shadow * scale:g},{tail}')
             if style.background_opacity:
                 background = paint(style.background_color, style.background_opacity)
                 header.append(f'Style: {name}Background,{style.font},{size:g},&HFFFFFFFF,&HFFFFFFFF,{background},{background},{attributes},3,{(border + style.padding) * scale:g},0,{tail}')
@@ -104,6 +106,8 @@ def render_document_ass(document: SubtitleDocument, bilingual: bool, *, matte: b
                 if style.background_opacity:
                     # Emphasis retains metrics but must not paint glyphs on the background layer.
                     events.append(f'Dialogue: 0,{timing},{name}Background,,0,0,0,,{tags}{backgrounds[language][line_index]}')
+                if layers and style.shadow:
+                    events.append(f'Dialogue: 1,{timing},{name}Shadow,,0,0,0,,{tags}{text}')
                 for layer_index, _ in enumerate(layers):
                     events.append(f'Dialogue: 1,{timing},{name}Outline{layer_index},,0,0,0,,{tags}{text}')
                 events.append(f'Dialogue: 1,{timing},{name},,0,0,0,,{tags}{text}')

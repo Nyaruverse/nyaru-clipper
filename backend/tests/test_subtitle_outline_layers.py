@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from app.arctime.subtitle_document import Cue, SubtitleDocument
 from app.arctime.subtitle_render import render_document_ass
 from app.arctime.subtitle_style import SubtitleStyle, TextStyle
-from test_subtitle_renderer import render
+from test_subtitle_renderer import render, require_libass
 
 
 def test_multiple_outline_colors_survive_real_libass_rendering(tmp_path: Path):
@@ -32,6 +32,24 @@ def test_old_style_without_extra_outlines_remains_readable():
 
     assert loaded.outline_layers == []
     assert loaded.outline == 2
+
+
+def test_shadow_stays_behind_multilayer_outline(tmp_path: Path):
+    style = TextStyle(size=120, outline=8, outline_color='#00FF00', shadow_color='#FF0000',
+        outline_layers=[{'color': '#FFFFFF', 'width': 0}])
+    document = SubtitleDocument(source_fingerprint='a' * 64, revision=0,
+        width=640, height=360, duration=1, fps=25, style=SubtitleStyle(original=style),
+        cues=[Cue(id='cue-000001', start_seconds=0, end_seconds=1, text='AB')])
+    without = render(tmp_path, 'no-shadow', render_document_ass(document, False))
+    shadow = style.model_copy(update={'shadow': 12.})
+
+    with_shadow = render(tmp_path, 'shadow', render_document_ass(document.model_copy(
+        update={'style': SubtitleStyle(original=shadow)}), False))
+
+    green = [index for index in range(0, len(without), 3)
+             if without[index + 1] > 220 and without[index] < 30 and without[index + 2] < 30]
+    assert green
+    assert not any(with_shadow[index] > 150 and with_shadow[index + 1] < 80 for index in green)
 
 
 @pytest.mark.parametrize('layers', [
