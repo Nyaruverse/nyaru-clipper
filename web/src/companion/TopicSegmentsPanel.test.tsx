@@ -6,11 +6,11 @@ import {TopicSegmentsPanel} from './TopicSegmentsPanel';
 const segments = [0, 1].map(index => ({index, start_seconds: index * 30, end_seconds: (index + 1) * 30,
   title: `话题${index + 1}`, summary: '字幕里的内容', score: index * 30 + 40, hot_words: []}));
 afterEach(() => vi.unstubAllGlobals());
-function setup(revision = 2) {
+function setup(revision = 2, state = 'completed') {
   const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const path = String(input);
     if (options?.method === 'POST') return new Response(JSON.stringify({state: 'queued', operation_id: 'operation'}));
-    if (path.endsWith('/topic-segments')) return new Response(JSON.stringify({state: 'completed', document_revision: 2, segments}));
+    if (path.endsWith('/topic-segments')) return new Response(JSON.stringify({state, document_revision: state === 'not_started' ? 0 : 2, segments}));
     if (path.endsWith('/topic-clips')) return new Response(JSON.stringify({state: 'not_started', items: []}));
     return new Response(JSON.stringify({count: 0, source: null}));
   });
@@ -38,4 +38,9 @@ it('rejects export of a topic analysis from an older editing revision', async ()
   fireEvent.click(screen.getByLabelText('选择话题1'));
   expect(screen.getByRole('button', {name: '生成选中视频'})).toBeDisabled();
   expect(screen.getByText(/字幕已修改/)).toBeInTheDocument();
+});
+it('does not claim subtitles changed before the first analysis', async () => {
+  setup(3, 'not_started');
+  await screen.findByText(/尚未生成/);
+  expect(screen.queryByText(/字幕已修改/)).not.toBeInTheDocument();
 });
