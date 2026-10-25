@@ -22,7 +22,7 @@ export function FontPicker({value, fonts, onChange, label = '字体'}: {value: s
   const list = useId();
   const pins = parsePins(useSyncExternalStore(subscribe, snapshot));
   const pinned = pins.includes(value);
-  return <div className="cue-wide">
+  return <div className="cue-wide font-picker">
     <label className="ny-field">{label}<input className="ny-input" list={list} maxLength={100} value={value} placeholder="搜索或输入字体名称"
       onChange={event => { if (!/[,{}\\\x00-\x1f\x7f-\x9f]/.test(event.target.value)) onChange(event.target.value); }} />
       <datalist id={list}>{[...new Set([...pins, ...fonts])].map(font => <option key={font} value={font} />)}</datalist>

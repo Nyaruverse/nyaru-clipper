@@ -12,6 +12,7 @@ import { TemplatePreview } from "./TemplatePreview";
 import { parseStudioDefaults } from "./studioModel";
 import { LlmSettings } from "./LlmSettings";
 import { SubtitleEditor } from "./SubtitleEditor";
+import { TopicSegmentsPanel } from './TopicSegmentsPanel';
 import { CueEditor } from "./CueEditor";
 import { useSubtitleDocument } from "./useSubtitleDocument";
 import { useNativeQuitBridge } from "./useNativeQuitBridge";
@@ -27,6 +28,7 @@ import { api, time, parseTime, running, statusLabel, fileUrl, bilingualFile, typ
 const TOOLS = [
   { id: "create", label: "新建任务", icon: Plus },
   { id: "slice", label: "切片方式", icon: Scissors },
+  { id: "topics", label: "高光分析", icon: Scissors },
   { id: "subtitle", label: "字幕样式", icon: Captions },
   { id: "ai", label: "AI 设置", icon: SlidersHorizontal },
   { id: "history", label: "任务记录", icon: History },
@@ -230,7 +232,7 @@ export function Companion() {
     <main hidden={settingsOpen} className={`companion-layout has-drawer studio-${studioMode}`}>
       <aside ref={drawer} id="companion-drawer" className="companion-drawer" aria-label="工具选项" >
         <div className="companion-drawer-heading"><h2>{tool ? TOOLS.find(item => item.id === tool)?.label : "本次任务"}</h2><button type="button" className="ny-button ny-button--quiet" aria-label="收起工具面板" onClick={closeDrawer}><X size={16} /></button></div>
-        <div className="studio-inspector-tools"><button className="ny-button" onClick={()=>setTool('subtitle')}>字幕样式</button><button data-slice-trigger className="ny-button" onClick={()=>setTool('slice')}>切片方式</button><button className="ny-button" onClick={()=>openSettings('AI与翻译')}>AI 设置</button></div>
+        <div className="studio-inspector-tools"><button className="ny-button" onClick={()=>setTool('subtitle')}>字幕样式</button><button data-slice-trigger className="ny-button" onClick={()=>setTool('slice')}>切片方式</button>{unified && studioMode === 'daily' && <button className="ny-button" onClick={()=>setTool('topics')}>高光分析</button>}<button className="ny-button" onClick={()=>openSettings('AI与翻译')}>AI 设置</button></div>
         <div className="companion-drawer-content">
         {!tool&&<section className="companion-panel"><p className="companion-muted">{job?.subtitle_template?`模板快照：${job.subtitle_template.name}`:'选择字幕以编辑，或创建新任务。'}</p><button className="ny-button" onClick={()=>setTool('subtitle')}>编辑当前字幕</button></section>}
         <section className="companion-panel" hidden={tool !== "create" && tool !== "slice"}>
@@ -290,6 +292,11 @@ export function Companion() {
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
+        {tool === 'topics' && studioMode === 'daily' && <section className="companion-panel">
+          {unified && job?.state === 'completed' && selectedId && documentDraft
+            ? <TopicSegmentsPanel key={selectedId} jobId={selectedId} documentRevision={documentDraft.revision} prepare={editing.flush} onSeek={seekSource} />
+            : <p className="companion-muted">请选择统一任务库中已完成识别的任务，再分析高光。</p>}
+        </section>}
         <section className="companion-panel" hidden={tool !== "subtitle"}>
           {studioMode === 'daily' && job?.state === 'completed' && <div className="cue-session-status">
             <p role="status">{editing.saving ? '正在保存字幕编辑稿…' : editing.dirty ? '有未保存修改，稍候自动保存' : documentDraft ? `字幕编辑稿已保存 · 第 ${documentDraft.revision} 版` : '载入字幕编辑稿…'}</p>

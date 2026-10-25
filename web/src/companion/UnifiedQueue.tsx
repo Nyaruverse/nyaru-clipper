@@ -7,7 +7,7 @@ import {QueueKeyboardSensor, queueKeyboardCoordinates} from '../workstation/feat
 import {workstationKeys} from '../workstation/api/queryKeys';
 import {admissions, cancel, reorder, retry, useUnifiedOperations, waiting, type Operation, type OperationsSnapshot} from './unifiedOperations';
 
-const kinds = {process_recording: '录像处理', process_live: '实时录播', translate: '字幕翻译', export: '导出'};
+const kinds = {process_recording: '录像处理', process_live: '实时录播', translate: '字幕翻译', export: '导出', analyze_topics: '高光分析', export_topics: '话题视频'};
 const states = {queued: '等待', paused: '已暂停', running: '运行中', succeeded: '已完成', failed: '失败', interrupted: '已中断', cancelled: '已取消'};
 type Action = (work: () => Promise<OperationsSnapshot>) => void;
 const failures: Record<string, string> = {

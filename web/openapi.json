@@ -1,6 +1,30 @@
 {
   "components": {
     "schemas": {
+      "AnalyzeTopicsOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "analyze_topics",
+            "title": "Kind",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/TopicAnalyzeOptions"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id"
+        ],
+        "title": "AnalyzeTopicsOperation",
+        "type": "object"
+      },
       "ArtifactReadinessOverview": {
         "description": "The availability state for the stage's expected public artifact.",
         "properties": {
@@ -767,6 +791,31 @@
         "title": "ExportRequest",
         "type": "object"
       },
+      "ExportTopicsOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "export_topics",
+            "title": "Kind",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/TopicClipOptions"
+          },
+          "task_id": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "task_id",
+          "request"
+        ],
+        "title": "ExportTopicsOperation",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1184,7 +1233,9 @@
               "process_recording",
               "process_live",
               "translate",
-              "export"
+              "export",
+              "analyze_topics",
+              "export_topics"
             ],
             "title": "Kind",
             "type": "string"
@@ -1259,6 +1310,28 @@
           "operations"
         ],
         "title": "OperationsSnapshot",
+        "type": "object"
+      },
+      "OutlineLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "color": {
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 20.0,
+            "minimum": 0.0,
+            "title": "Width",
+            "type": "number"
+          }
+        },
+        "required": [
+          "color",
+          "width"
+        ],
+        "title": "OutlineLayer",
         "type": "object"
       },
       "ProcessingProfileResponse": {
@@ -2384,6 +2457,14 @@
             "title": "Outline Color",
             "type": "string"
           },
+          "outline_layers": {
+            "items": {
+              "$ref": "#/components/schemas/OutlineLayer"
+            },
+            "maxItems": 2,
+            "title": "Outline Layers",
+            "type": "array"
+          },
           "padding": {
             "default": 0,
             "maximum": 40.0,
@@ -2481,6 +2562,84 @@
           }
         },
         "title": "TextStyle",
+        "type": "object"
+      },
+      "TopicAnalyzeOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "end_seconds": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Seconds"
+          },
+          "max_segments": {
+            "default": 100,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Max Segments",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Seconds"
+          }
+        },
+        "title": "TopicAnalyzeOptions",
+        "type": "object"
+      },
+      "TopicClipOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "indices": {
+            "items": {
+              "maximum": 99.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Indices",
+            "type": "array"
+          },
+          "mode": {
+            "default": "separate",
+            "enum": [
+              "separate",
+              "combined"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "variant": {
+            "default": "bilingual",
+            "enum": [
+              "original",
+              "zh",
+              "bilingual"
+            ],
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indices"
+        ],
+        "title": "TopicClipOptions",
         "type": "object"
       },
       "TranslateOperation": {
@@ -3481,7 +3640,9 @@
               "schema": {
                 "discriminator": {
                   "mapping": {
+                    "analyze_topics": "#/components/schemas/AnalyzeTopicsOperation",
                     "export": "#/components/schemas/ExportOperation",
+                    "export_topics": "#/components/schemas/ExportTopicsOperation",
                     "process_live": "#/components/schemas/LiveOperation",
                     "process_recording": "#/components/schemas/RecordingOperation",
                     "translate": "#/components/schemas/TranslateOperation"
@@ -3500,6 +3661,12 @@
                   },
                   {
                     "$ref": "#/components/schemas/ExportOperation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AnalyzeTopicsOperation"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ExportTopicsOperation"
                   }
                 ],
                 "title": "Payload"
