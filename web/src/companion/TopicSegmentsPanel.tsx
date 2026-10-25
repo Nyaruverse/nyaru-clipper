@@ -64,7 +64,7 @@ export function TopicSegmentsPanel({jobId, documentRevision, prepare, onSeek}: {
     return api(`${base}/danmaku`, {content: await file.text(), streamer: streamer.trim() || undefined});
   }, onSuccess: () => {setNotice('弹幕已导入，请重新分析以更新评分。'); refresh();}});
   const pending = analyze.isPending || generate.isPending || upload.isPending || working(store?.state) || working(clips.data?.state);
-  const stale = store?.state === 'stale' || (store?.document_revision !== undefined && store.document_revision !== documentRevision);
+  const stale = store?.state === 'stale' || (store?.state === 'completed' && store.document_revision !== undefined && store.document_revision !== documentRevision);
   const segments = store?.segments ?? [];
   const sorted = sort === 'score' ? [...segments].sort((a,b) => (b.score ?? -1) - (a.score ?? -1) || a.index - b.index) : segments;
   const error = topics.error ?? clips.error ?? danmaku.error ?? analyze.error ?? generate.error ?? upload.error;
