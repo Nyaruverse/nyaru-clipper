@@ -1,5 +1,7 @@
 # Nyaru-Clipper 项目交接
 
+最新整合：[2026-10-26 高光算法与字幕编辑定向整合](highlight-subtitle-integration-2026-10-26.zh-CN.md)。统一队列高光分析／导出、字体搜索收藏与三层描边；正式 App 和数据未替换。
+
 ## 统一架构合并记录：2026-10-23（Asia/Shanghai）
 
 本分支从远端 Web 提交 `13f7f6c27b7f506529c899691de83393de0ec5a4` 合并统一架构 `eda736bd905fffcf321642cbd94823e4aacd7be5`。保留原 Windows PowerShell 启动器、CUDA whisper.cpp 部署、锁、JSON 发布与读取、`.exe` 发现和 ChatGPT 私有凭据不可用边界；将 Windows 清理后发布终态的行为接入新的 OwnedUpload，并补执行槽互斥、异常传播与清理顺序回归。Windows 原生系统专属测试不能由本机模拟分支测试替代。

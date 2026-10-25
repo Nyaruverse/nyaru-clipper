@@ -1,5 +1,7 @@
 # Documentation Index
 
+Latest integration: [2026-10-26 selective highlight and subtitle integration](highlight-subtitle-integration-2026-10-26.md). Unified topic analysis/export, font search/favorites and three outline layers; formal App and data were not replaced.
+
 Windows standalone Companion: [PowerShell deployment](deployment-windows.zh-CN.md).
 
 Latest local candidate: [App02 historical-task fixes, repackaging and frozen-package revalidation](candidate-fixes-2026-10-23.md), with new hashes,25/25 historical-copy scenarios, real-source/native save/reopen and independent recovery evidence. No formal App replacement or data cutover.

@@ -1,5 +1,7 @@
 # Nyaru-Clipper project handoff
 
+Latest integration: [2026-10-26 selective highlight and subtitle integration](highlight-subtitle-integration-2026-10-26.md). Unified topic analysis/export, font search/favorites and three outline layers; formal App and data were not replaced.
+
 ## Unified architecture merge: 23 October 2026 (Asia/Shanghai)
 
 This branch merges unified architecture `eda736bd905fffcf321642cbd94823e4aacd7be5` into remote Web base `13f7f6c27b7f506529c899691de83393de0ec5a4`. It retains the Windows PowerShell launcher, CUDA whisper.cpp deployment, locking, JSON publication/reading, `.exe` discovery and the unavailable private-credential boundary for ChatGPT. Windows terminal publication follows OwnedUpload cleanup; regressions cover execution-slot exclusion, body-error propagation and cleanup order. Local simulation does not replace Windows-native tests.
