@@ -36,17 +36,24 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
     with manager.lock:
         active_burns = set(getattr(manager, "burning", set()))
     all_burns = read_burns(directory).get("clips", {})
+
+    def burns_of(video: str) -> dict:
+        result = {}
+        for variant, entry in (all_burns.get(video) or {}).items():
+            if isinstance(entry, dict) and entry.get("state") == "burning" and (job_id, video, variant) not in active_burns:
+                done = int(entry.get("segments_done") or 0)
+                entry = {**entry, "state": "failed", "file": None,
+                         "error": f"合成已中断，已完成 {done} 段，可继续合成" if done else "合成已中断，请重新生成"}
+            result[variant] = entry
+        return result
+
     clips = []
     for index, item in enumerate(job.get("completed_clips", [])):
         selection = job.get("selection", [])[index]
-        burns = {}
-        for variant, entry in (all_burns.get(item["video"]) or {}).items():
-            if isinstance(entry, dict) and entry.get("state") == "burning" and (job_id, item["video"], variant) not in active_burns:
-                entry = {"state": "failed", "file": None, "error": "合成已中断，请重新生成"}
-            burns[variant] = entry
-        clips.append({"video": item["video"], "subtitles": item["subtitles"], **selection, "burns": burns})
+        clips.append({"video": item["video"], "subtitles": item["subtitles"], **selection,
+                      "burns": burns_of(item["video"])})
     transcript = directory / "subtitles.srt"
-    segments = [asdict(cue) for cue in media.read_subtitles(transcript)] if include_segments and transcript.is_file() and not transcript.is_symlink() and transcript.read_text().strip() else []
+    segments = [asdict(cue) for cue in media.read_subtitles(transcript)] if include_segments and transcript.is_file() and not transcript.is_symlink() and transcript.read_text(encoding="utf-8-sig", errors="replace").strip() else []
     translation_state = translated.get("state", "not_started")
     translation_error = translated.get("error")
     if live and (live.get("state") == "translating" or (live.get("live") and translation_state == "translating")):
@@ -83,11 +90,13 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
         clip["bilingual_subtitles"] = name if name in bilingual_files else None
     bilingual_path = directory / "subtitles.ja-zh.srt"
     bilingual_segments = ([asdict(cue) for cue in media.read_subtitles(bilingual_path)]
-                          if include_segments and "subtitles.ja-zh.srt" in bilingual_files and bilingual_path.read_text().strip() else [])
+                          if include_segments and "subtitles.ja-zh.srt" in bilingual_files and bilingual_path.read_text(encoding="utf-8-sig", errors="replace").strip() else [])
     zh_path = directory / "subtitles.zh.srt"
     zh_segments = ([asdict(cue) for cue in media.read_subtitles(zh_path)]
                    if include_segments and translation_state == "completed" and zh_path.is_file()
-                   and not zh_path.is_symlink() and zh_path.read_text().strip() else [])
+                   and not zh_path.is_symlink() and zh_path.read_text(encoding="utf-8-sig", errors="replace").strip() else [])
+    range_burns = {key: burns_of(key) for key in all_burns
+                   if isinstance(key, str) and key.startswith("range-")}
     default_message = "处理完成" if state == "completed" else "处理已中断，可恢复已下载任务"
     if state == "completed" and record.get("state") != "completed":
         record = {**record, "message": default_message, "error": None}
@@ -98,8 +107,11 @@ def job_detail(manager: JobManager, job_id: str, *, include_segments: bool = Tru
             "saozi_model": job.get("saozi_model"),
             'llm_provider': job.get('llm_provider', 'chatgpt' if str(job.get('saozi_model', '')).startswith('chatgpt:') else 'deepseek'),
             "capture_warning": job.get("capture_warning"), "discontinuities": job.get("discontinuities", []),
+            "url": job.get("url"),
             "subtitle_template": job.get('subtitle_template'), "subtitle_style_error": job.get('subtitle_style_error'),
-            "clips": clips, "segments": segments, "has_source": bool(job.get("video")),
+            "clips": clips, "source_burns": burns_of(job.get("video") or ""), "range_burns": range_burns,
+            "segments": segments,
+            "has_source": bool(job.get("video")),
             "language": job.get("asr", {}).get("language", "auto"), "bilingual_segments": bilingual_segments,
             "zh_segments": zh_segments,
             "bilingual_files": bilingual_files,

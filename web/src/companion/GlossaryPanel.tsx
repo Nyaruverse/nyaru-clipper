@@ -113,4 +113,3 @@ export function GlossaryPanel() {
     {terms.length > 0 && !shownTerms.length && <p className="companion-muted">无匹配词条。</p>}
   </section>;
 }
-

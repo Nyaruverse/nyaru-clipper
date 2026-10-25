@@ -115,8 +115,13 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         return {"glossary_collect_candidates": manager.glossary_collect_candidates}
 
     @app.post("/companion-api/jobs/{job_id}/translate", status_code=202)
-    def translate(job_id: str):
-        return {"id": manager.submit_translation(job_id)}
+    def translate(job_id: str, payload: dict | None = None):
+        clip_index = payload.get("clip_index") if payload else None
+        return {"id": manager.submit_translation(job_id, clip_index=clip_index)}
+
+    @app.post("/companion-api/jobs/{job_id}/asr", status_code=202)
+    def reasr(job_id: str):
+        return {"id": manager.submit_asr(job_id)}
 
     @app.post("/companion-api/jobs", status_code=202)
     def create_job(payload: JobInput):
@@ -153,7 +158,7 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
     def file(job_id: str, name: str, download: bool = False):
         if name.endswith(".vtt"):
             path = manager.artifact(job_id, name.removesuffix(".vtt") + ".srt")
-            cues = media.read_subtitles(path) if path.read_text().strip() else []
+            cues = media.read_subtitles(path) if path.read_text(encoding="utf-8-sig", errors="replace").strip() else []
             content = "WEBVTT\n\n" + re.sub(r"(?<=\d{2}:\d{2}:\d{2}),", ".", media.render_srt(cues))
             return Response(content, media_type="text/vtt")
         path = manager.artifact(job_id, name)
@@ -169,4 +174,3 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         return FileResponse(web_dist / "companion.html")
 
     return app
-

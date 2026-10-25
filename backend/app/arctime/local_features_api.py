@@ -5,17 +5,23 @@
 from __future__ import annotations
 
 import json
+import math
+import os
+import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.arctime import glossary, media, topic_segments, topic_video, translation, workflow
+from app.arctime import (bilibili_auth, clip_words, danmaku, danmaku_fetch, glossary, media, topic_segments,
+                         topic_video, translation, workflow)
 from app.arctime import subtitle_style_legacy as legacy_style
 
 
@@ -28,10 +34,21 @@ class TopicClipsInput(BaseModel):
 class BurnInput(BaseModel):
     clip: str = Field(max_length=255)
     variant: Literal["bilingual", "zh", "original"] = "bilingual"
+    # 填写起止秒数时，只合成原视频的这一段（clip 仍传原视频文件名）
+    start: float | None = Field(default=None, ge=0)
+    end: float | None = Field(default=None, gt=0)
 
 
 class TranslationEditInput(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class JobIdsInput(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=200)
+
+
+class DanmakuFetchInput(BaseModel):
+    url: str | None = Field(default=None, max_length=8192)
 
 
 # ---- 管理器辅助（附加到 JobManager 实例，避免改动上游类定义）----
@@ -41,6 +58,18 @@ def _ensure_manager_extras(manager) -> None:
         manager.topic_clipping = set()
     if not hasattr(manager, "burning"):
         manager.burning = set()
+    if not hasattr(manager, "_storage_cache"):
+        manager._storage_cache = None
+
+
+def _clip_words(manager) -> clip_words.Lexicon:
+    """读取数据目录的合规风险词覆盖表，缺失时用内置词表。"""
+    return clip_words.load(manager.root / "clip_words.json")
+
+
+def _vocab_root(manager) -> Path:
+    """主播热词画像目录：按 UP 主分别累积本场提取的高分词汇。"""
+    return manager.root / "streamers"
 
 
 def _style_path(manager) -> Path:
@@ -208,14 +237,98 @@ def read_burns(directory: Path) -> dict:
     return value if isinstance(value, dict) and isinstance(value.get("clips"), dict) else {"clips": {}}
 
 
-def submit_burn(manager, job_id: str, clip_name: str, variant: str) -> dict:
+# 分段合成的每段秒数。分段编码后才能显示精确进度，并在中断后只补没跑完的段继续合成
+# （被中断的 mp4 没有 moov 索引，无法在旧文件上接着写，只能靠分段续跑）
+BURN_SEGMENT_SECONDS = 300
+
+# 编码器选择：N 卡装上较新驱动后 NVENC 可用，实测比 CPU 的 x264 快约 2~3 倍（瓶颈在字幕烧录/解码，
+# 所以只加分段并行没用，把编码甩给 GPU 才有效）。探测结果缓存复用；一旦运行中出错就降级到 x264，
+# 避免同一次长任务被硬件编码问题反复卡住。
+_NVENC_ARGS = ["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "26"]
+_X264_ARGS = ["-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+_encoder_cache: list[str] | None = None
+_encoder_lock = threading.Lock()
+
+
+def _probe_nvenc() -> bool:
+    """用一帧黑画面真正初始化一次 NVENC 编码器，能跑通才算可用（驱动过旧会在此暴露）。"""
+    try:
+        probe = subprocess.run(
+            [media.tool_path("ffmpeg"), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=c=black:s=320x240:d=0.1", "-frames:v", "1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
+
+
+def video_encoder_args() -> list[str]:
+    global _encoder_cache
+    with _encoder_lock:
+        if _encoder_cache is None:
+            _encoder_cache = list(_NVENC_ARGS) if _probe_nvenc() else list(_X264_ARGS)
+        return list(_encoder_cache)
+
+
+def video_encoder_name(args: list[str]) -> str:
+    return args[args.index("-c:v") + 1]
+
+
+def _downgrade_encoder() -> None:
+    global _encoder_cache
+    with _encoder_lock:
+        _encoder_cache = list(_X264_ARGS)
+
+
+def _burn_parts_dir(directory: Path, clip_name: str, variant: str) -> Path:
+    return workflow._path(directory, f".{Path(clip_name).stem}.burn.{variant}.parts")
+
+
+def _segment_cues(cues, translated: list[str] | None, seg_start: float, seg_len: float):
+    """截取落在本段区间内的字幕，并把时间轴平移成段内相对时间（供局部时间轴 ASS 使用）。"""
+    seg_end = seg_start + seg_len
+    picked = [(cue, translated[index] if translated is not None else None)
+              for index, cue in enumerate(cues)
+              if cue.end_seconds > seg_start and cue.start_seconds < seg_end]
+    seg_cues = [media.SubtitleSegment(str(order + 1), max(cue.start_seconds, seg_start) - seg_start,
+                                      min(cue.end_seconds, seg_end) - seg_start, cue.text)
+                for order, (cue, _) in enumerate(picked)]
+    seg_translated = [text for _, text in picked] if translated is not None else None
+    return seg_cues, seg_translated
+
+
+def _range_bounds(clip_name: str) -> tuple[float, float] | None:
+    """自定义时间段合成的记录键：range-<起点毫秒>-<终点毫秒>。"""
+    match = re.fullmatch(r"range-(\d+)-(\d+)", clip_name)
+    if not match:
+        return None
+    return int(match.group(1)) / 1000, int(match.group(2)) / 1000
+
+
+def submit_burn(manager, job_id: str, clip_name: str, variant: str,
+                start: float | None = None, end: float | None = None) -> dict:
     _ensure_manager_extras(manager)
     directory = manager.directory(job_id)
     job = manager.read_json(directory / "job.json")
     if job.get("state") != "completed":
         raise HTTPException(409, "请等待视频任务完成后再合成")
-    if not any(c["video"] == clip_name for c in job.get("completed_clips", [])):
+    is_source = bool(job.get("video")) and clip_name == job.get("video")
+    custom = start is not None or end is not None
+    if custom:
+        if not is_source:
+            raise HTTPException(409, "只有完整视频可以按时间段合成")
+        if start is None or end is None:
+            raise HTTPException(422, "请同时填写起始与结束时间")
+        duration = float(job.get("duration") or 0)
+        if not (0 <= start < end <= duration + 0.05):
+            raise HTTPException(422, f"时间范围需在 0 到 {duration:.1f} 秒之间，且起点早于终点")
+        clip_name = f"range-{int(round(start * 1000))}-{int(round(end * 1000))}"
+    if not is_source and _range_bounds(clip_name) is None \
+            and not any(c["video"] == clip_name for c in job.get("completed_clips", [])):
         raise HTTPException(404, "切片不存在")
+    if (is_source or custom) and not (directory / (job.get("video") or "")).is_file():
+        raise HTTPException(409, "原视频缺失，无法合成；请重新创建任务")
     if variant in {"bilingual", "zh"}:
         if manager.read_json(directory / "translation.json").get("state") != "completed":
             raise HTTPException(409, "请先生成中日双语字幕")
@@ -226,93 +339,223 @@ def submit_burn(manager, job_id: str, clip_name: str, variant: str) -> dict:
         if key in manager.burning:
             raise HTTPException(409, "该切片正在合成中，请稍候")
         burns = read_burns(directory)
-        burns["clips"].setdefault(clip_name, {})[variant] = {"state": "burning", "file": file, "error": None}
+        previous = burns["clips"].setdefault(clip_name, {}).get(variant) or {}
+        entry: dict = {"state": "burning", "file": file, "error": None}
+        if previous.get("state") != "completed" and int(previous.get("segments_done") or 0) > 0:
+            # 上次中断且已完成至少一段：保留进度，实现断点续跑
+            entry["progress"] = previous.get("progress", 0.0)
+            entry["segments_done"] = previous.get("segments_done")
+            entry["segments_total"] = previous.get("segments_total")
+            entry["encoder"] = previous.get("encoder")
+        else:
+            # 重新合成：清掉上次留下的分段文件，从头开始
+            parts = _burn_parts_dir(directory, clip_name, variant)
+            if parts.is_dir() and not parts.is_symlink():
+                shutil.rmtree(parts, ignore_errors=True)
+        burns["clips"][clip_name][variant] = entry
         media.write_json(directory / "burn.json", burns)
         manager.burning.add(key)
     manager.executor.submit(run_burn, manager, job_id, clip_name, variant)
     return {"file": file, "state": "burning"}
 
 
+def _encode_burn_segment(directory: Path, stem: str, source_name: str, variant: str, style, shape_pngs: list[Path],
+                         cues, translated: list[str] | None, seg_index: int, seg_start: float,
+                         seg_len: float, part: Path, encoder_args: list[str], on_progress,
+                         source_offset: float = 0.0) -> None:
+    """编码单个分段：局部时间轴 ASS + 图形 overlay，输出自包含的 part mp4（首帧为关键帧，便于 -c copy 拼接）。"""
+    seg_cues, seg_translated = _segment_cues(cues, translated, seg_start, seg_len)
+    # ASS 放在任务目录下（而非分段子目录），subtitles 滤镜按 cwd 相对文件名解析才能找到它
+    seg_ass = workflow._path(directory, f".{stem}.burn.{variant}.part{seg_index:04d}.ass")
+    workflow._publish_text(seg_ass, legacy_style.render_ass(seg_cues, seg_translated, style, variant))
+    # ffmpeg 以 cwd=任务目录 运行，输出需带上分段子目录的相对路径
+    part_arg = f"{part.parent.name}/{part.name}"
+    cmd = [media.tool_path("ffmpeg"), "-hide_banner", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats",
+           "-ss", f"{source_offset + seg_start:.3f}", "-t", f"{seg_len:.3f}", "-i", source_name]
+    if shape_pngs:
+        # 矩形图形按视频实际分辨率渲染为透明 PNG，overlay 叠加在字幕下层
+        for png in shape_pngs:
+            cmd += ["-loop", "1", "-i", png.name]
+        chain = ""
+        previous = "0:v"
+        for shape_index in range(len(shape_pngs)):
+            chain += f"[{previous}][{shape_index + 1}:v]overlay=0:0[s{shape_index}];"
+            previous = f"s{shape_index}"
+        cmd += ["-filter_complex", f"{chain}[{previous}]subtitles={seg_ass.name}"]
+    else:
+        cmd += ["-vf", f"subtitles={seg_ass.name}"]
+    # 音频必须重编码：-c:a copy 在输入 seek 下各段音频帧数不齐（259/517/419），拼接处会丢音/多音；
+    # 且不能加 -avoid_negative_ts make_zero——它会把每段首帧 PTS 顶到 seg_start，导致拼接总时长虚高
+    cmd += [*encoder_args, "-c:a", "aac", "-b:a", "192k", "-shortest", part_arg]
+    part.unlink(missing_ok=True)
+    err_path = part.with_suffix(".err")
+    timed_out = threading.Event()
+
+    def _kill() -> None:
+        timed_out.set()
+        proc.kill()
+
+    try:
+        with open(err_path, "w", encoding="utf-8") as err_file:
+            proc = subprocess.Popen(cmd, cwd=directory, stdout=subprocess.PIPE, stderr=err_file, text=True, bufsize=1)
+            guard = threading.Timer(max(900.0, seg_len * 8), _kill)
+            guard.daemon = True
+            guard.start()
+            try:
+                for line in proc.stdout or []:
+                    if not line.startswith("out_time_us="):
+                        continue
+                    try:
+                        seconds = int(line.strip().split("=", 1)[1]) / 1_000_000
+                    except ValueError:
+                        continue
+                    on_progress(seg_index, min(1.0, max(0.0, seconds / seg_len)))
+                code = proc.wait()
+            finally:
+                guard.cancel()
+        if timed_out.is_set():
+            raise TimeoutError(f"第 {seg_index + 1} 段编码超时")
+        if code != 0 or not part.is_file():
+            try:
+                tail = err_path.read_text(encoding="utf-8", errors="ignore").strip().splitlines()
+            except OSError:
+                tail = []
+            raise ValueError(f"第 {seg_index + 1} 段合成失败：{tail[-1] if tail else '未知错误'}")
+    finally:
+        err_path.unlink(missing_ok=True)
+        seg_ass.unlink(missing_ok=True)
+
+
 def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
     directory = manager.directory(job_id)
+    stem = Path(clip_name).stem
+    file = f"{stem}.burn.{variant}.mp4"
+    parts_dir = _burn_parts_dir(directory, clip_name, variant)
+    shape_pngs: list[Path] = []
+    encoder_args = video_encoder_args()
 
-    def record(state: str, error: str | None = None, file: str | None = None) -> None:
+    def record(state: str, error: str | None = None, *, done: int | None = None,
+               total: int | None = None, progress: float | None = None) -> None:
         with manager.lock:
             burns = read_burns(directory)
-            entry: dict = {"state": state, "file": file, "error": error}
-            if state == "completed" and file:
+            entry: dict = dict(burns["clips"].setdefault(clip_name, {}).get(variant) or {})
+            entry["state"] = state
+            entry["error"] = error
+            entry["file"] = file if state == "completed" else None
+            entry["encoder"] = video_encoder_name(encoder_args)
+            if done is not None:
+                entry["segments_done"] = done
+            if total is not None:
+                entry["segments_total"] = total
+            if progress is not None:
+                entry["progress"] = round(max(0.0, min(1.0, progress)), 4)
+            if state == "completed":
+                entry["progress"] = 1.0
                 entry["sha256"] = media.fingerprint(directory / file)
-            burns["clips"].setdefault(clip_name, {})[variant] = entry
+            burns["clips"][clip_name][variant] = entry
             media.write_json(directory / "burn.json", burns)
 
-    ass_path: Path | None = None
-    shape_pngs: list[Path] = []
     try:
         job = json.loads(workflow._path(directory, "job.json").read_text())
-        index = next(i for i, c in enumerate(job["completed_clips"]) if c["video"] == clip_name)
-        selection = job["selection"][index]
-        cues = media.clip_subtitles(media.read_subtitles(workflow._path(directory, job["subtitles"])),
-                                    selection["start"], selection["end"])
+        cues = media.read_subtitles(workflow._path(directory, job["subtitles"]))
+        source_name = clip_name
+        source_offset = 0.0
+        clip_zh = False
+        bounds = _range_bounds(clip_name)
+        if clip_name == job.get("video"):
+            # 完整视频：用整段字幕与原片时长，不走切片偏移
+            start, end = 0.0, float(job.get("duration") or 0)
+            zh_name = "subtitles.zh.srt"
+            if end <= 0:
+                raise ValueError("无法读取原视频时长，合成已取消")
+        elif bounds is not None:
+            # 自定义时间段：原视频取这一段，字幕按同区间裁剪
+            start, end = bounds
+            source_name = job.get("video") or ""
+            source_offset = start  # 原视频从 0 开始，分段起点要加上区间偏移
+            cues = media.clip_subtitles(cues, start, end)
+            zh_name = "subtitles.zh.srt"
+            clip_zh = True
+        else:
+            index = next(i for i, c in enumerate(job["completed_clips"]) if c["video"] == clip_name)
+            selection = job["selection"][index]
+            start, end = float(selection["start"]), float(selection["end"])
+            cues = media.clip_subtitles(cues, start, end)
+            zh_name = f"{stem}.zh.srt"
         translated: list[str] | None = None
         if variant in {"bilingual", "zh"}:
-            zh_path = workflow._path(directory, f"{Path(clip_name).stem}.zh.srt")
+            zh_path = workflow._path(directory, zh_name)
             if not zh_path.is_file():
                 translation.ensure_zh_srt(directory)
             if not zh_path.is_file():
                 raise ValueError("译文字幕缺失，无法合成；请重新生成双语字幕")
-            translated = [c.text for c in media.read_subtitles(zh_path)]
+            translated_cues = media.read_subtitles(zh_path)
+            if clip_zh:
+                translated_cues = media.clip_subtitles(translated_cues, start, end)
+            translated = [c.text for c in translated_cues]
+            if len(translated) != len(cues):
+                raise ValueError("译文数量与字幕不匹配，无法合成；请重新生成双语字幕")
         style_store = load_style_store(manager)
         style = style_store.current
-        stem = Path(clip_name).stem
-        file = f"{stem}.burn.{variant}.mp4"
-        ass_path = workflow._path(directory, f".{stem}.burn.{variant}.ass")
-        workflow._publish_text(ass_path, legacy_style.render_ass(cues, translated, style, variant))
         output = workflow._path(directory, file)
-        output.unlink(missing_ok=True)
-        # 矩形图形按视频实际分辨率渲染为透明 PNG，overlay 叠加在字幕下层
-        inputs = ["-i", clip_name]
+        duration = max(1.0, end - start)
+        total = max(1, math.ceil(duration / BURN_SEGMENT_SECONDS))
         if style_store.shapes:
             probe = subprocess.run(
                 [media.tool_path("ffprobe"), "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=width,height", "-of", "csv=p=0", clip_name],
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0", source_name],
                 cwd=directory, capture_output=True, text=True, timeout=60, check=False)
-            parts = probe.stdout.strip().split(",")
-            if probe.returncode != 0 or len(parts) != 2 or not all(p.isdigit() for p in parts):
+            dims = probe.stdout.strip().split(",")
+            if probe.returncode != 0 or len(dims) != 2 or not all(p.isdigit() for p in dims):
                 raise ValueError("无法读取视频分辨率，合成已取消")
             shape_pngs = legacy_style.render_shape_pngs(style_store.shapes, directory, stem,
-                                                        width=int(parts[0]), height=int(parts[1]))
-            for png in shape_pngs:
-                inputs += ["-loop", "1", "-i", png.name]
-            chain = ""
-            previous = "0:v"
-            for shape_index in range(len(shape_pngs)):
-                chain += f"[{previous}][{shape_index + 1}:v]overlay=0:0[s{shape_index}];"
-                previous = f"s{shape_index}"
-            video_filter = f"{chain}[{previous}]subtitles={ass_path.name}"
-            filter_arg = "-filter_complex"
-        else:
-            video_filter = f"subtitles={ass_path.name}"
-            filter_arg = "-vf"
+                                                        width=int(dims[0]), height=int(dims[1]))
+        parts_dir.mkdir(exist_ok=True)
+        with manager.lock:
+            previous = read_burns(directory)["clips"].get(clip_name, {}).get(variant) or {}
+        # 断点续跑：沿用上次已完成的段数（段按顺序编码，中断处之后的段需重做）
+        done = int(previous.get("segments_done") or 0)
+        if previous.get("segments_total") not in (None, total):
+            done = 0  # 分段数变化，旧分段不可复用
+        if done > 0 and previous.get("encoder") != video_encoder_name(encoder_args):
+            done = 0  # 编码器变了（如 NVENC 失败后降级），分段混用会让 -c copy 拼接失败，只能重头来
+        part_files = [parts_dir / f"part{i:04d}.mp4" for i in range(total)]
+        while done > 0 and not part_files[done - 1].is_file():
+            done -= 1
+        for stale in part_files[done:]:
+            stale.unlink(missing_ok=True)
+        record("burning", done=done, total=total, progress=done / total)
+        for seg_index in range(done, total):
+            seg_start = seg_index * BURN_SEGMENT_SECONDS
+            seg_len = min(float(BURN_SEGMENT_SECONDS), duration - seg_start)
+            _encode_burn_segment(directory, stem, source_name, variant, style, shape_pngs, cues, translated,
+                                 seg_index, seg_start, seg_len, part_files[seg_index], encoder_args,
+                                 lambda idx, ratio: record("burning", done=idx, total=total,
+                                                           progress=(idx + ratio) / total),
+                                 source_offset=source_offset)
+            record("burning", done=seg_index + 1, total=total, progress=(seg_index + 1) / total)
+        # 所有分段完成后 -c copy 直接拼接（不重新编码，很快），再删掉中间分段
+        list_path = workflow._path(directory, f".{stem}.burn.{variant}.concat.txt")
+        workflow._publish_text(list_path, "\n".join(
+            f"file '{parts_dir.name}/part{i:04d}.mp4'" for i in range(total)) + "\n")
         result = subprocess.run(
-            [media.tool_path("ffmpeg"), "-hide_banner", "-y", *inputs,
-             filter_arg, video_filter,
-             "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-c:a", "copy",
-             "-shortest", "-movflags", "+faststart", file],
+            [media.tool_path("ffmpeg"), "-hide_banner", "-y", "-f", "concat", "-safe", "0",
+             "-i", list_path.name, "-c", "copy", "-movflags", "+faststart", file],
             cwd=directory, capture_output=True, text=True, timeout=1800, check=False)
+        list_path.unlink(missing_ok=True)
         if result.returncode != 0 or not output.is_file():
             tail = (result.stderr or "").strip().splitlines()
-            raise ValueError(f"视频合成失败：{tail[-1] if tail else '未知错误'}")
-        record("completed", file=file)
-    except subprocess.TimeoutExpired:
-        record("failed", error="合成超时，请重试")
+            raise ValueError(f"视频拼接失败：{tail[-1] if tail else '未知错误'}")
+        shutil.rmtree(parts_dir, ignore_errors=True)
+        record("completed", done=total, total=total)
+    except TimeoutError as exc:
+        record("failed", f"{exc}；可点击「继续合成视频」接着跑")
     except Exception as exc:
-        record("failed", error=str(exc)[:300])
+        if video_encoder_name(encoder_args) == "h264_nvenc":
+            # 硬件编码报错：降级到 x264，用户点「继续合成视频」时会自动用 CPU 重跑
+            _downgrade_encoder()
+        record("failed", str(exc)[:300])
     finally:
-        if ass_path is not None:
-            try:
-                ass_path.unlink(missing_ok=True)
-            except OSError:
-                pass
         for png in shape_pngs:
             try:
                 png.unlink(missing_ok=True)
@@ -320,6 +563,193 @@ def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
                 pass
         with manager.lock:
             manager.burning.discard((job_id, clip_name, variant))
+
+
+# ---- 任务记录占用统计与清理 ----
+#
+# 单个任务目录里体积最大的是可重新生成的合成/切片视频（*.burn.*.mp4、topic-*.mp4），
+# 其次是原视频 source.mp4。因此提供两级操作：
+#   清理产物：只删可重新生成的视频产物与中断残留，保留原视频、切片原片、字幕与翻译；
+#   彻底删除：连同任务记录、原视频与全部结果一起删除。
+
+# 目录遍历只统计大小、不读取内容；结果缓存 20 秒，避免任务列表轮询反复扫盘。
+_STORAGE_TTL = 20.0
+
+
+def _job_ids(manager) -> set[str]:
+    return {p.name for p in manager.root.iterdir()
+            if p.is_dir() and not p.is_symlink() and re.fullmatch(r"[0-9a-f]{12}", p.name)}
+
+
+def _walk_size(path: Path) -> int:
+    """统计文件/目录真实占用，不跟随符号链接。"""
+    if path.is_symlink():
+        return 0
+    try:
+        if path.is_file():
+            return path.stat().st_size
+    except OSError:
+        return 0
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            item = Path(root) / name
+            try:
+                if not item.is_symlink():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _cleanable(manager, directory: Path) -> tuple[list[Path], list[Path]]:
+    """可安全清理的产物文件与临时目录（保留 source.mp4、切片原片、字幕与翻译）。"""
+    files: list[Path] = []
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add_file(name) -> None:
+        if not isinstance(name, str) or Path(name).name != name or name in seen:
+            return
+        seen.add(name)
+        path = directory / name
+        if path.is_file() and not path.is_symlink():
+            files.append(path)
+
+    # 合成视频（*.burn.*.mp4）
+    for variants in read_burns(directory).get("clips", {}).values():
+        if isinstance(variants, dict):
+            for entry in variants.values():
+                if isinstance(entry, dict):
+                    add_file(entry.get("file"))
+    # 切片视频（topic-NN.mp4 / topic-combined.mp4）
+    topic_clips = read_topic_clips(manager, directory)
+    for item in topic_clips.get("items", []):
+        if isinstance(item, dict):
+            add_file(item.get("file"))
+    if isinstance(topic_clips.get("combined"), dict):
+        add_file(topic_clips["combined"].get("file"))
+    # 中断残留：编码临时目录、分段目录、拼接清单、错误输出与中间 ASS
+    for child in directory.iterdir():
+        if child.is_symlink():
+            continue
+        name = child.name
+        if child.is_dir():
+            if name.startswith(".encoding-") or name.endswith(".parts"):
+                dirs.append(child)
+        elif name.endswith(".concat.txt") or name.endswith(".err") or (name.startswith(".") and name.endswith(".ass")):
+            files.append(child)
+    return files, dirs
+
+
+def _reset_products(manager, directory: Path, removed: set[str]) -> None:
+    """产物被清理后复位登记，界面恢复为可重新合成/生成。"""
+    burns = read_burns(directory)
+    changed = False
+    for variants in burns.get("clips", {}).values():
+        if not isinstance(variants, dict):
+            continue
+        for variant, entry in list(variants.items()):
+            if isinstance(entry, dict) and entry.get("file") in removed:
+                del variants[variant]
+                changed = True
+    if changed:
+        media.write_json(directory / "burn.json", burns)
+    topic = read_topic_clips(manager, directory)
+    if topic.get("state") != "not_started":
+        items = [item for item in topic.get("items", [])
+                 if not (isinstance(item, dict) and item.get("file") in removed)]
+        combined = topic.get("combined")
+        if isinstance(combined, dict) and combined.get("file") in removed:
+            combined = None
+        if items != topic.get("items") or combined != topic.get("combined"):
+            topic["items"] = items
+            topic["combined"] = combined
+            media.write_json(directory / "topic_clips.json", topic)
+
+
+def _reject_busy(manager, job_id: str) -> None:
+    _ensure_manager_extras(manager)
+    with manager.lock:
+        if manager.active and manager.active.get("id") == job_id:
+            raise HTTPException(409, "任务正在处理中，无法清理或删除")
+        if job_id in manager.topic_clipping:
+            raise HTTPException(409, "切片视频正在生成中，无法清理或删除")
+        if any(key[0] == job_id for key in manager.burning):
+            raise HTTPException(409, "合成视频正在生成中，无法清理或删除")
+
+
+def job_storage(manager, job_id: str) -> dict:
+    directory = manager.directory(job_id)
+    if not directory.is_dir():
+        return {"total": 0, "cleanable": 0}
+    files, dirs = _cleanable(manager, directory)
+    return {"total": _walk_size(directory),
+            "cleanable": sum(_walk_size(item) for item in (*files, *dirs))}
+
+
+def storage_snapshot(manager) -> dict:
+    _ensure_manager_extras(manager)
+    cache = manager._storage_cache
+    if cache and time.time() - cache[0] < _STORAGE_TTL:
+        return cache[1]
+    jobs = {}
+    for job_id in _job_ids(manager):
+        try:
+            jobs[job_id] = job_storage(manager, job_id)
+        except (HTTPException, OSError):
+            continue
+    snapshot = {"jobs": jobs,
+                "total": sum(item["total"] for item in jobs.values()),
+                "cleanable": sum(item["cleanable"] for item in jobs.values())}
+    manager._storage_cache = (time.time(), snapshot)
+    return snapshot
+
+
+def cleanup_job(manager, job_id: str) -> dict:
+    directory = manager.directory(job_id)
+    if not directory.is_dir():
+        raise HTTPException(404, "任务不存在")
+    _reject_busy(manager, job_id)
+    files, dirs = _cleanable(manager, directory)
+    freed = 0
+    for path in files:
+        size = _walk_size(path)
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        freed += size
+    for path in dirs:
+        freed += _walk_size(path)
+        shutil.rmtree(path, ignore_errors=True)
+    _reset_products(manager, directory, {path.name for path in files})
+    return {"id": job_id, "freed": freed}
+
+
+def delete_job(manager, job_id: str) -> dict:
+    directory = manager.directory(job_id)
+    if not directory.is_dir():
+        raise HTTPException(404, "任务不存在")
+    _reject_busy(manager, job_id)
+    freed = _walk_size(directory)
+    shutil.rmtree(directory, ignore_errors=True)
+    with manager.lock:
+        if manager.last and manager.last.get("id") == job_id:
+            manager.last = None
+    return {"id": job_id, "freed": freed}
+
+
+def run_batch(manager, ids: list[str], action) -> dict:
+    results = []
+    for job_id in ids:
+        try:
+            results.append({**action(manager, job_id), "ok": True})
+        except HTTPException as exc:
+            results.append({"id": job_id, "ok": False, "freed": 0, "error": exc.detail})
+    with manager.lock:
+        manager._storage_cache = None
+    return {"results": results, "freed": sum(item["freed"] for item in results)}
 
 
 # ---- 路由 ----
@@ -366,6 +796,20 @@ def local_features_router(manager) -> APIRouter:
         manager.cancel(job_id)
         return {"id": job_id, "state": "cancelling"}
 
+    # ---- 任务记录占用统计与批量清理 ----
+
+    @router.get("/storage")
+    def get_storage():
+        return storage_snapshot(manager)
+
+    @router.post("/jobs/cleanup")
+    def cleanup_jobs(payload: JobIdsInput):
+        return run_batch(manager, payload.ids, cleanup_job)
+
+    @router.post("/jobs/delete")
+    def delete_jobs(payload: JobIdsInput):
+        return run_batch(manager, payload.ids, delete_job)
+
     # ---- 内容切片 ----
 
     @router.get("/jobs/{job_id}/topic-segments")
@@ -394,13 +838,25 @@ def local_features_router(manager) -> APIRouter:
         if not manager.api_key:
             raise HTTPException(409, "请先输入 DeepSeek API Key")
         translated = manager.read_json(directory / "translation.json")
-        if translated.get("state") != "completed":
-            raise HTTPException(409, "请先完成日译中翻译后再生成内容切片")
+        # 未翻译也能直接基于原文切分（不需要翻译的主播）；已翻译则自动用双语字幕
         if topic_segments.current_identity(directory) is None:
-            raise HTTPException(409, "双语字幕文件缺失，请重新生成翻译后再试")
+            raise HTTPException(409, "字幕文件缺失，请等待语音识别完成后再试")
         if job_id in manager.topic_clipping:
             raise HTTPException(409, "切片视频正在生成中，请等待完成后再重新分析")
         model = translated.get("identity", {}).get("model") or manager.translation_model
+        # 首次生成内容切片时，按任务保留的来源链接自动拉一次弹幕；失败不阻断切片分析
+        if not danmaku.read_store(directory):
+            source_url = job.get("url")
+            if source_url:
+                try:
+                    info, entries = danmaku_fetch.fetch(source_url)
+                except Exception:
+                    pass
+                else:
+                    danmaku.save_store(directory, "bilibili", entries,
+                                       {"url": source_url, "title": info.get("title"),
+                                        "cid": info.get("cid"), "owner_mid": info.get("owner_mid"),
+                                        "owner_name": info.get("owner_name"), "fetched_at": time.time()})
         try:
             store = topic_segments.analyze_directory(directory, manager.api_key, model, options=options)
         except ValueError as exc:
@@ -408,7 +864,93 @@ def local_features_router(manager) -> APIRouter:
         # 内容切片已更新，旧切片视频的编号/边界可能错位，标记过期
         if read_topic_clips(manager, directory).get("state") != "not_started":
             media.write_json(directory / "topic_clips.json", {"state": "stale", "items": []})
-        return store.model_dump(mode="json")
+        return danmaku.apply(directory, store.model_dump(mode="json"),
+                             words=_clip_words(manager), build_audio=True,
+                             vocab_root=_vocab_root(manager))
+
+    # ---- 弹幕（浏览器插件导出的 ASS / XML）----
+
+    @router.get("/jobs/{job_id}/danmaku")
+    def get_danmaku(job_id: str):
+        directory = manager.directory(job_id)
+        if not (directory / "job.json").is_file():
+            raise HTTPException(404, "任务不存在")
+        return danmaku.summary(directory)
+
+    @router.post("/jobs/{job_id}/danmaku")
+    async def upload_danmaku(job_id: str, request: Request):
+        directory = manager.directory(job_id)
+        if not (directory / "job.json").is_file():
+            raise HTTPException(404, "任务不存在")
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > danmaku.MAX_FILE_BYTES:
+            raise HTTPException(413, "弹幕文件过大（上限 64 MB）")
+        body = await request.body()
+        if not body:
+            raise HTTPException(422, "请选择弹幕文件")
+        if len(body) > danmaku.MAX_FILE_BYTES:
+            raise HTTPException(413, "弹幕文件过大（上限 64 MB）")
+        source, entries = danmaku.parse(body.decode("utf-8-sig", errors="replace"))
+        if not entries:
+            raise HTTPException(422, "未解析到弹幕，请确认导出的是 ASS 或 XML 弹幕文件")
+        saved = danmaku.save_store(directory, source, entries)
+        stored_topics = topic_segments.read_store(directory)
+        topics = (danmaku.apply(directory, stored_topics, words=_clip_words(manager),
+                                vocab_root=_vocab_root(manager)) if stored_topics else None)
+        return {"count": saved["count"], "source": source, "topics": topics}
+
+    # ---- B 站扫码登录（历史弹幕需要登录态） ----
+
+    @router.get("/bilibili/auth")
+    def bilibili_auth_status():
+        return bilibili_auth.login_status()
+
+    @router.post("/bilibili/login/qrcode", status_code=201)
+    def bilibili_login_qrcode():
+        try:
+            return bilibili_auth.qr_code()
+        except (bilibili_auth.LoginError, danmaku_fetch.UpstreamError) as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @router.get("/bilibili/login/qrcode/{key}")
+    def bilibili_login_poll(key: str):
+        try:
+            return bilibili_auth.poll(key)
+        except (bilibili_auth.LoginError, danmaku_fetch.UpstreamError) as exc:
+            raise HTTPException(502, str(exc)) from None
+
+    @router.delete("/bilibili/auth")
+    def bilibili_logout():
+        return bilibili_auth.logout()
+
+    @router.post("/jobs/{job_id}/danmaku/fetch")
+    def fetch_danmaku(job_id: str, payload: DanmakuFetchInput | None = None):
+        directory = manager.directory(job_id)
+        if not (directory / "job.json").is_file():
+            raise HTTPException(404, "任务不存在")
+        stored = danmaku.read_store(directory)
+        url = (payload.url if payload else None) or (stored or {}).get("url")
+        if not url:
+            raise HTTPException(422, "请填写 B站视频链接或 BV 号")
+        try:
+            info, entries = danmaku_fetch.fetch(url)
+        except danmaku_fetch.CookieMissing as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        except danmaku_fetch.UpstreamError as exc:
+            raise HTTPException(502, str(exc)) from None
+        except Exception as exc:
+            raise HTTPException(502, f"弹幕拉取失败：{str(exc)[:200]}") from None
+        saved = danmaku.save_store(directory, "bilibili", entries,
+                                   {"url": url, "title": info.get("title"),
+                                    "cid": info.get("cid"), "owner_mid": info.get("owner_mid"),
+                                    "owner_name": info.get("owner_name"), "fetched_at": time.time()})
+        topics = topic_segments.read_store(directory)
+        topics = (danmaku.apply(directory, topics, words=_clip_words(manager),
+                                vocab_root=_vocab_root(manager)) if topics else None)
+        return {"count": saved["count"], "source": "bilibili",
+                "title": info.get("title"), "topics": topics}
 
     @router.get("/jobs/{job_id}/topic-segments.txt")
     def topic_segments_text(job_id: str):
@@ -530,7 +1072,7 @@ def local_features_router(manager) -> APIRouter:
 
     @router.post("/jobs/{job_id}/burn", status_code=202)
     def create_burn(job_id: str, payload: BurnInput):
-        return submit_burn(manager, job_id, payload.clip, payload.variant)
+        return submit_burn(manager, job_id, payload.clip, payload.variant, payload.start, payload.end)
 
     # ---- 图形绘制（存于 legacy style.json 的 shapes 字段）----
 
@@ -544,6 +1086,27 @@ def local_features_router(manager) -> APIRouter:
         store.shapes = payload.shapes
         save_style_store(manager, store)
         return {"shapes": [s.model_dump(mode="json") for s in store.shapes]}
+
+    # ---- 图形模板 ----
+
+    @router.get("/shapes/templates")
+    def get_shapes_templates():
+        store = load_style_store(manager)
+        return {"templates": {k: [s.model_dump(mode="json") for s in v] for k, v in store.shapes_templates.items()}}
+
+    @router.put("/shapes/templates/{name}")
+    def put_shapes_template(name: str, payload: legacy_style.ShapesUpdate):
+        store = load_style_store(manager)
+        store.shapes_templates[name] = payload.shapes
+        save_style_store(manager, store)
+        return {"templates": {k: [s.model_dump(mode="json") for s in v] for k, v in store.shapes_templates.items()}}
+
+    @router.delete("/shapes/templates/{name}")
+    def delete_shapes_template(name: str):
+        store = load_style_store(manager)
+        store.shapes_templates.pop(name, None)
+        save_style_store(manager, store)
+        return {"templates": {k: [s.model_dump(mode="json") for s in v] for k, v in store.shapes_templates.items()}}
 
     @router.put("/jobs/{job_id}/translation/{cue_id}")
     def edit_job_translation(job_id: str, cue_id: int, payload: TranslationEditInput):

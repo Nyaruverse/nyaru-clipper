@@ -13,7 +13,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $Python) { $Python = Join-Path $repoRoot 'backend\.venv\Scripts\python.exe' }
-if (-not $Model) { $Model = Join-Path $repoRoot 'data\model-cache\whisper.cpp\ggml-small.bin' }
+if (-not $Model) {
+    # Prefer large-v3-turbo for accuracy; fall back to small when it is absent.
+    $turboModel = Join-Path $repoRoot 'data\model-cache\whisper.cpp\ggml-large-v3-turbo.bin'
+    $smallModel = Join-Path $repoRoot 'data\model-cache\whisper.cpp\ggml-small.bin'
+    $Model = if (Test-Path -LiteralPath $turboModel -PathType Leaf) { $turboModel } else { $smallModel }
+}
 if (-not $OutputDir) { $OutputDir = Join-Path $repoRoot 'data\companion' }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'Python environment missing. Run scripts\setup.ps1 first.'
@@ -40,6 +45,7 @@ try {
     $env:PYTHONDONTWRITEBYTECODE = '1'
     $cliArgs = @((Join-Path $PSScriptRoot 'local_companion.py'), $Command, '--model', $Model, '--threads', $Threads)
     if ($Command -eq 'gui') { $cliArgs += @('--port', $Port, '--output-dir', $OutputDir) }
+    # 服务日志和启动信息走 stderr；脚本重定向捕获时不要让 PowerShell 中断服务
     & $Python @cliArgs
     $result = $LASTEXITCODE
 }

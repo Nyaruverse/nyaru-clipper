@@ -9,7 +9,7 @@ from typing import Callable
 import httpx
 from pydantic import SecretStr
 
-from app.arctime import media, translation, workflow
+from app.arctime import glossary, media, translation, workflow
 from app.services.subtitles import SubtitleSegment, render_bilingual_srt, render_srt
 
 PROMPT = (
@@ -29,11 +29,50 @@ def _source(directory: Path) -> tuple[dict, list[SubtitleSegment]]:
     path = workflow._path(directory, "subtitles.srt")
     if media.fingerprint(path) != job.get("artifacts", {}).get("subtitles.srt"):
         raise ValueError("原字幕校验失败；保留现有文件，请检查字幕")
-    return job, media.read_subtitles(path) if path.read_text().strip() else []
+    return job, media.read_subtitles(path) if path.read_text(encoding="utf-8-sig", errors="replace").strip() else []
 
 
 def _cues(cues: list[SubtitleSegment]) -> list[dict]:
     return [{"start": c.start_seconds, "end": c.end_seconds, "text": c.text} for c in cues]
+
+
+# 空术语表的指纹；旧缓存没有 terms_sha256 字段时按空表处理，避免无谓重翻
+TERMS_EMPTY = hashlib.sha256(b"[]").hexdigest()
+
+
+def _terms_sha256(terms: list[dict] | None) -> str:
+    if not terms:
+        return TERMS_EMPTY
+    return hashlib.sha256(json.dumps(terms, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _source_terms(source: list[dict], terms: list[glossary.Term] | None) -> list[dict]:
+    """把确实出现在这段原文里的术语转成请求用的精简结构。"""
+    if not terms:
+        return []
+    return [{"src": term.src, "dst": term.dst}
+            for term in glossary.match_terms(terms, [row["text"] for row in source])]
+
+
+def _prefix(batches: list[dict]) -> list[str]:
+    """按批次顺序取出已完成的连续译文前缀。"""
+    translated: list[str] = []
+    for batch in batches:
+        rows = batch.get("rows")
+        if not rows:
+            break
+        translated.extend(row["zh"] for row in rows)
+    return translated
+
+
+def _drop_artifacts(directory: Path, state: dict) -> None:
+    """删除并注销双语产物；调用前必须先通过 _artifacts 校验，避免覆盖用户手改的字幕。"""
+    for name in list(state.get("artifacts", {})):
+        try:
+            workflow._path(directory, name).unlink()
+        except OSError:
+            pass
+    state["artifacts"] = {}
 
 
 def _artifacts(directory: Path, state: dict) -> None:
@@ -45,7 +84,7 @@ def _artifacts(directory: Path, state: dict) -> None:
             raise ValueError("已生成的双语字幕发生变化；保留文件，请检查任务")
 
 
-def _reuse(directory: Path, cues: list[SubtitleSegment], model: str) -> list[dict]:
+def _reuse(directory: Path, cues: list[SubtitleSegment], model: str, terms_sha256: str) -> list[dict]:
     job, original = _source(directory)
     state = json.loads(workflow._path(directory, "translation.json").read_text())
     identity = {"version": 1, "source_sha256": media.fingerprint(directory / "subtitles.srt"),
@@ -53,6 +92,7 @@ def _reuse(directory: Path, cues: list[SubtitleSegment], model: str) -> list[dic
                 "batch_size": translation.BATCH_SIZE}
     expected = {"subtitles.ja-zh.srt"} | {Path(c["video"]).stem + ".ja-zh.srt" for c in job["completed_clips"]}
     if (state.get("identity") != identity or state.get("state") != "completed"
+            or state.get("terms_sha256", TERMS_EMPTY) != terms_sha256
             or _cues(original) != _cues(cues) or set(state.get("artifacts", {})) != expected):
         raise ValueError("旧翻译与当前字幕或模型不一致；保留原任务")
     _artifacts(directory, state)
@@ -100,35 +140,67 @@ def _publish(directory: Path, job: dict, cues: list[SubtitleSegment], translated
 def translate(directory: Path, key: SecretStr, *, model: str = translation.MODEL, final: bool = True,
               reuse_from: Path | None = None, progress: Callable[[str], None] | None = None,
               client: httpx.Client | None = None, locked: bool = False,
-              request_json: translation.JsonRequest | None = None) -> dict:
+              request_json: translation.JsonRequest | None = None,
+              terms: list[glossary.Term] | None = None) -> dict:
     translation.validate_model(model, request_json)
     with nullcontext() if locked else workflow.exclusive_lock(directory / ".lock"):
         job, cues = _source(directory)
+        # 术语表只取原字幕里确实出现的词条，避免无关术语干扰模型
+        active_terms = _source_terms(_cues(cues), terms) if terms and request_json is None else []
+        terms_sha256 = _terms_sha256(active_terms)
         checkpoint = workflow._path(directory, "translation.json")
         identity = {"version": 2, "model": model, "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest()}
         state = json.loads(checkpoint.read_text()) if checkpoint.exists() else {
             "identity": identity, "batches": [], "artifacts": {}}
         if state.get("identity", {}).get("version") == 1:
             return translation.translate_run(directory, key, client=client, progress=progress, model=model, locked=True,
+                                             terms=terms,
                                              **({"request_json": request_json} if request_json is not None else {}))
         if state.get("identity") != identity or not isinstance(state.get("batches"), list):
             raise ValueError("翻译配置与缓存不一致；保留缓存，请检查任务")
+        # 先校验产物指纹：不通过就停下，后面的术语重译不会覆盖用户手改的字幕
         _artifacts(directory, state)
-        if reuse_from is not None and not state["batches"]:
-            state["batches"] = _reuse(reuse_from, cues, model)
-        translated = []
-        for batch in state["batches"]:
+        batches = state["batches"]
+        legacy = any("terms_sha256" not in batch for batch in batches if isinstance(batch, dict))
+        if legacy and state.get("terms_sha256", TERMS_EMPTY) != terms_sha256:
+            # 旧缓存没有逐批术语指纹，无法判断哪一批受影响，只能整段重来
+            _drop_artifacts(directory, state)
+            state["batches"] = batches = []
+        state["terms_sha256"] = terms_sha256
+        if reuse_from is not None and not batches:
+            state["batches"] = batches = _reuse(reuse_from, cues, model, terms_sha256)
+        start = 0
+        stale = False
+        for batch in batches:
             if not isinstance(batch, dict):
                 raise ValueError("翻译缓存校验失败")
-            start = len(translated)
             source = batch.get("source")
             if (not isinstance(source, list) or not source or len(source) > translation.BATCH_SIZE
                     or source != _cues(cues[start:start + len(source)])):
                 raise ValueError("原字幕与翻译缓存前缀不一致；保留缓存")
-            rows = translation.validate_rows(batch.get("rows"), list(range(start + 1, start + len(source) + 1)))
-            if translation._digest(rows) != batch.get("sha256"):
-                raise ValueError("翻译缓存校验失败")
-            translated.extend(row["zh"] for row in rows)
+            rows = batch.get("rows")
+            if rows:
+                rows = translation.validate_rows(rows, list(range(start + 1, start + len(source) + 1)))
+                if translation._digest(rows) != batch.get("sha256"):
+                    raise ValueError("翻译缓存校验失败")
+                batch["rows"] = rows
+            else:
+                batch["rows"] = []
+            expected = _terms_sha256(_source_terms(source, terms))
+            if batch.get("terms_sha256", expected) != expected:
+                # 这一批用到的术语变了：只作废这一批，其余批次继续复用
+                batch["rows"] = []
+                batch["sha256"] = ""
+                stale = True
+            batch["terms_sha256"] = expected
+            start += len(source)
+        for begin in range(start, len(cues), translation.BATCH_SIZE):
+            source = _cues(cues[begin:begin + translation.BATCH_SIZE])
+            batches.append({"source": source, "rows": [], "sha256": "",
+                            "terms_sha256": _terms_sha256(_source_terms(source, terms))})
+        if stale:
+            _drop_artifacts(directory, state)
+        translated = _prefix(batches)
         state.update(state="translating", error=None, total=len(cues), done=len(translated), model=model)
         media.write_json(checkpoint, state)
         own_client = client is None
@@ -136,18 +208,26 @@ def translate(directory: Path, key: SecretStr, *, model: str = translation.MODEL
         try:
             _publish(directory, job, cues, translated, state)
             media.write_json(checkpoint, state)
-            for start in range(len(translated), len(cues), translation.BATCH_SIZE):
-                if progress:
-                    progress(f"正在补齐中日双语：{start}/{len(cues)} 条（{model}）")
-                batch_cues = cues[start:start + translation.BATCH_SIZE]
-                rows = translation._request(client, key, batch_cues, start, model, prompt=PROMPT,
-                                            **({"request_json": request_json} if request_json is not None else {}))
-                translated.extend(row["zh"] for row in rows)
-                state["batches"].append({"source": _cues(batch_cues), "rows": rows, "sha256": translation._digest(rows)})
-                state["done"] = len(translated)
-                media.write_json(checkpoint, state)
-                _publish(directory, job, cues, translated, state)
-                media.write_json(checkpoint, state)
+            offset = 0
+            for batch in batches:
+                source = batch["source"]
+                if not batch["rows"]:
+                    if progress:
+                        progress(f"正在补齐中日双语：{offset}/{len(cues)} 条（{model}）")
+                    batch_cues = [SubtitleSegment(offset + index + 1, row["start"], row["end"], row["text"])
+                                  for index, row in enumerate(source)]
+                    rows = translation._request(client, key, batch_cues, offset, model, prompt=PROMPT,
+                                                terms=active_terms,
+                                                **({"request_json": request_json} if request_json is not None else {}))
+                    batch["rows"] = rows
+                    batch["sha256"] = translation._digest(rows)
+                    translated = _prefix(batches)
+                    state["done"] = len(translated)
+                    media.write_json(checkpoint, state)
+                    _publish(directory, job, cues, translated, state)
+                    media.write_json(checkpoint, state)
+                offset += len(source)
+            translated = _prefix(batches)
             expected = {"subtitles.ja-zh.srt"} | {
                 Path(c["video"]).stem + ".ja-zh.srt" for c in job["completed_clips"]}
             if final and (len(translated) != len(cues) or set(state["artifacts"]) != expected):

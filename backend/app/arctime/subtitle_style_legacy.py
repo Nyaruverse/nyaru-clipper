@@ -94,6 +94,7 @@ class StyleStore(BaseModel):
     current: SubtitleStyleConfig = Field(default_factory=SubtitleStyleConfig)
     templates: dict[str, SubtitleStyleConfig] = Field(default_factory=dict)
     shapes: list[Shape] = Field(default_factory=list, max_length=MAX_SHAPES)
+    shapes_templates: dict[str, list[Shape]] = Field(default_factory=dict)
 
 
 def load_style_store(path: Path) -> StyleStore:

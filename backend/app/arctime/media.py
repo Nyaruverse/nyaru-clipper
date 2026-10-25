@@ -34,18 +34,33 @@ _ACTIVE_PROCESSES_LOCK = threading.Lock()
 def run_managed(command: list, **kwargs) -> subprocess.CompletedProcess:
     """subprocess.run 的可终止版本：登记 Popen 句柄，支持 taskkill 进程树。"""
     kwargs.pop("capture_output", None)  # Popen 不支持 capture_output，手动转换
-    if kwargs.get("stdout") is None and "stdout" not in kwargs:
-        kwargs["stdout"] = subprocess.PIPE
-    if kwargs.get("stderr") is None and "stderr" not in kwargs:
-        kwargs["stderr"] = subprocess.PIPE
-    kwargs.pop("check", None)
     text = kwargs.pop("text", False)
     timeout = kwargs.pop("timeout", None)
+    # 把调用方传入的 stdout/stderr 统一捕获到 PIPE，再手动 utf-8 replace 写回。
+    # 否则在 Windows 上当 stdout 是 TextIOWrapper 时 Popen 会用 cp936 locale decode，
+    # 子进程输出 UTF-8 日文等多字节序列就触发 UnicodeDecodeError。
+    external_stdout = kwargs.pop("stdout", None)
+    external_stderr = kwargs.pop("stderr", None)
+    # 统一走 binary PIPE，避免 Windows locale (cp936) 解码 UTF-8 子进程输出
+    kwargs["stdout"] = subprocess.PIPE
+    kwargs["stderr"] = subprocess.PIPE
+    kwargs.pop("check", None)
     process = subprocess.Popen(command, **kwargs)
     with _ACTIVE_PROCESSES_LOCK:
         _ACTIVE_PROCESSES.add(process)
     try:
         stdout, stderr = process.communicate(timeout=timeout)
+        # 调用方要求 stderr 合并到 stdout：手动拼接
+        if external_stderr is subprocess.STDOUT and stderr:
+            stdout = (stdout or b"") + stderr
+            stderr = None
+        if external_stdout is subprocess.STDOUT:
+            # 调用方明确要求 stderr 合并但 stdout 就是 PIPE——此时 CompletedProcess.stdout 保持 bytes
+            external_stdout = None
+        if isinstance(stdout, bytes) and external_stdout is not None:
+            _write_output(external_stdout, stdout)
+        if isinstance(stderr, bytes) and external_stderr is not None and external_stderr is not subprocess.STDOUT:
+            _write_output(external_stderr, stderr)
         if text and isinstance(stdout, bytes):
             stdout = stdout.decode("utf-8", errors="replace")
         if text and isinstance(stderr, bytes):
@@ -57,6 +72,27 @@ def run_managed(command: list, **kwargs) -> subprocess.CompletedProcess:
     finally:
         with _ACTIVE_PROCESSES_LOCK:
             _ACTIVE_PROCESSES.discard(process)
+
+
+def _write_output(target, payload: bytes) -> None:
+    """向调用方传入的 stdout/stderr 目标写回内容，兼容 TextIOWrapper / BufferedWriter / 路径等。"""
+    if not payload:
+        return
+    try:
+        if hasattr(target, "write") and hasattr(target, "encoding"):
+            # TextIOWrapper：utf-8 replace 后写字符串
+            target.write(payload.decode("utf-8", errors="replace"))
+        elif hasattr(target, "write"):
+            # BufferedWriter：直接写 bytes
+            target.write(payload)
+        elif target is subprocess.STDOUT or target is None:
+            return
+        else:
+            # 兜底：尝试以二进制写入路径
+            with open(target, "ab") as handle:
+                handle.write(payload)
+    except OSError:
+        pass
 
 
 def _kill_process(process: subprocess.Popen) -> None:
@@ -128,7 +164,9 @@ def parse_time(value: str) -> float:
 
 def read_subtitles(path: Path, *, merge_contiguous_zero_duration: bool = False) -> list[SubtitleSegment]:
     try:
-        content = path.read_text(encoding="utf-8-sig").replace("\r\n", "\n").strip()
+        # errors="replace" 兜底：whisper.cpp 在 Windows 上会把 CRLF 插进 UTF-8 多字节序列中间，
+        # 导致原生 utf-8 decode 崩；replace 只替换坏字节不丢内容。
+        content = path.read_text(encoding="utf-8-sig", errors="replace").replace("\r\n", "\n").strip()
     except OSError:
         # Windows 文件锁竞态：读取失败返回空列表，避免前端白屏
         return []
@@ -243,20 +281,41 @@ def download_video(url: str, directory: Path) -> Path:
     if (directory / "source.mp4").exists():
         raise FileExistsError("Download destination already exists")
     downloader = [tool_path("yt-dlp")]
+    host = parsed.hostname or ""
     # B 站登录态 cookie（需要登录的视频）
     cookie_path = os.environ.get("APP_BILIBILI_COOKIE_PATH", "").strip()
     cookie_args: list[str] = []
-    if cookie_path and ("bilibili.com" in (parsed.hostname or "") or "b23.tv" in (parsed.hostname or "")):
+    if cookie_path and ("bilibili.com" in host or "b23.tv" in host):
         cookie_file = Path(cookie_path).expanduser()
         if cookie_file.is_file():
             cookie_args = ["--cookies", str(cookie_file)]
-    result = run_managed([*downloader, *cookie_args, "--no-playlist", "--no-progress", "--no-overwrites",
-                          "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
-                          "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
-                          "-o", str(directory / "source.%(ext)s"), "--", url],
-                         text=True, timeout=7200)
+    # YouTube 反爬严格，可通过 cookie 文件或浏览器登录态绕过人机校验
+    is_youtube = "youtube.com" in host or "youtu.be" in host
+    if is_youtube:
+        yt_cookie_path = os.environ.get("APP_YOUTUBE_COOKIE_PATH", "").strip()
+        yt_browser = os.environ.get("APP_YOUTUBE_COOKIES_FROM_BROWSER", "").strip()
+        if yt_cookie_path and Path(yt_cookie_path).expanduser().is_file():
+            cookie_args = ["--cookies", str(Path(yt_cookie_path).expanduser())]
+        elif yt_browser:
+            cookie_args = ["--cookies-from-browser", yt_browser]
+
+    def attempt(extra_args: list[str]) -> subprocess.CompletedProcess:
+        return run_managed([*downloader, *cookie_args, *extra_args, "--no-playlist", "--no-progress", "--no-overwrites",
+                            "--no-write-info-json", "--restrict-filenames", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
+                            "--remux-video", "mp4", "--ffmpeg-location", tool_path("ffmpeg"),
+                            "-o", str(directory / "source.%(ext)s"), "--", url],
+                           text=True, timeout=7200)
+
+    result = attempt([])
+    if result.returncode and is_youtube:
+        # 兜底：android 客户端通常不需要登录态即可过人机校验，但可用清晰度较低
+        for leftover in directory.glob("source.*"):
+            leftover.unlink(missing_ok=True)
+        result = attempt(["--extractor-args", "youtube:player_client=android"])
     if result.returncode:
-        raise RuntimeError("yt-dlp download failed; check URL access and downloader configuration")
+        tail = [line.strip() for line in (result.stderr or "").strip().splitlines() if line.strip()][-2:]
+        detail = "；".join(tail) or "未知错误"
+        raise RuntimeError(f"yt-dlp download failed: {detail}")
     path = directory / "source.mp4"
     probe_video(path)
     return path

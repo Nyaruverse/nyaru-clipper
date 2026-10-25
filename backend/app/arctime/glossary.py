@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Literal
 
@@ -38,6 +39,56 @@ class GlossaryStore(BaseModel):
     terms: list[Term] = Field(default_factory=list, max_length=MAX_TERMS)
     candidates: list[Candidate] = Field(default_factory=list, max_length=MAX_CANDIDATES)
     ignored: list[str] = Field(default_factory=list, max_length=MAX_TERMS)
+
+
+# whisper.cpp 初始提示词上限约 224 token；中日文按字符保守截断，避免靠后的词条被丢弃
+ASR_PROMPT_CHARS = 120
+
+
+def asr_prompt(terms: list[Term], limit: int = ASR_PROMPT_CHARS) -> str:
+    """把术语原文拼成 whisper 初始提示词，降低专名误听。
+
+    人名、作品名优先于普通术语；超长时跳过放不下的词条，而不是截断词条本身。
+    """
+    ordered = sorted(terms, key=lambda term: (term.category == "术语", term.src))
+    values: list[str] = []
+    used = 0
+    for term in ordered:
+        src = term.src.strip()
+        if not src or src in values:
+            continue
+        extra = len(src) + (1 if values else 0)
+        if used + extra > limit:
+            continue
+        values.append(src)
+        used += extra
+    return "、".join(values)
+
+
+# 匹配时需要忽略的符号：间隔符与长音符（ASR 对同一专名的写法经常不一致）
+_IGNORED_MARKS = {"・", "･", "·", "ー"}
+
+
+def normalize_text(value: str) -> str:
+    """归一化用于「术语是否出现」的比对，不改变发给模型的原文。
+
+    全半角统一、片假名转平假名，并去掉空白、间隔符与长音符，
+    让 `星街スイセイ` / `星街すいせい` / `星街 すいせい` 视作同一个名字。
+    """
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join(chr(ord(ch) - 0x60) if "\u30a1" <= ch <= "\u30f6" else ch for ch in text)
+    return "".join(ch for ch in text if not ch.isspace() and ch not in _IGNORED_MARKS)
+
+
+def match_terms(terms: list[Term], texts: list[str]) -> list[Term]:
+    """返回确实出现在给定文本里的术语；比对前两边都做归一化。"""
+    normalized = [normalize_text(text) for text in texts]
+    found: list[Term] = []
+    for term in terms:
+        src = normalize_text(term.src)
+        if src and any(src in text for text in normalized):
+            found.append(term)
+    return found
 
 
 def load_glossary(path: Path) -> GlossaryStore:

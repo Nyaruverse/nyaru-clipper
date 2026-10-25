@@ -57,4 +57,3 @@ class JobInput(BaseModel):
             if media.parse_time(start) >= media.parse_time(end):
                 raise ValueError("结束时间必须大于开始时间")
         return self
-

@@ -53,6 +53,23 @@ export function ShapesPanel() {
   const shapesQuery = useShapes();
   const [draft, setDraft] = useState<Shape[] | null>(null);
   const seeded = useRef(false);
+  const [templatePick, setTemplatePick] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const templatesQuery = useQuery({ queryKey: ["companion", "shapes-templates"], queryFn: () => api<{ templates: Record<string, Shape[]> }>("/shapes/templates") });
+  const saveTemplate = useMutation({
+    mutationFn: (payload: { name: string; shapes: Shape[] }) =>
+      api<{ templates: Record<string, Shape[]> }>(`/shapes/templates/${encodeURIComponent(payload.name)}`, payload, "PUT"),
+    onSuccess: data => { queryClient.setQueryData(["companion", "shapes-templates"], data); setTemplateName(""); },
+  });
+  const deleteTemplate = useMutation({
+    mutationFn: (name: string) => api<{ templates: Record<string, Shape[]> }>(`/shapes/templates/${encodeURIComponent(name)}`, undefined, "DELETE"),
+    onSuccess: data => { queryClient.setQueryData(["companion", "shapes-templates"], data); setTemplatePick(""); },
+  });
+  const templateNames = Object.keys(templatesQuery.data?.templates ?? {});
+  const applyTemplate = () => {
+    const template = templatesQuery.data?.templates[templatePick];
+    if (template) commit(template.map(shape => ({ ...shape })));
+  };
   const save = useMutation({
     mutationFn: (next: Shape[]) => api<{ shapes: Shape[] }>("/shapes", { shapes: next }, "PUT"),
     onSuccess: data => { queryClient.setQueryData(["companion", "shapes"], data); },
@@ -80,6 +97,22 @@ export function ShapesPanel() {
   return <section className="companion-panel companion-shapes" aria-label="图形绘制">
     <h2><Shapes size={17} />图形绘制 <span>{shapes.length}/{MAX_SHAPES}</span></h2>
     <p className="companion-muted">矩形显示在所有字幕下层，预览与合成视频实时生效。</p>
+    <div className="style-templates">
+      <label className="ny-field">模板
+        <select className="ny-input" value={templatePick} onChange={event => setTemplatePick(event.target.value)}>
+          <option value="">{templateNames.length ? "选择模板…" : "暂无保存的模板"}</option>
+          {templateNames.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      <div className="style-template-actions">
+        <button className="ny-button" type="button" disabled={!templatePick} onClick={applyTemplate}>应用模板</button>
+        <button className="ny-button ny-button--quiet" type="button" disabled={!templatePick || deleteTemplate.isPending} onClick={() => { if (templatePick) deleteTemplate.mutate(templatePick); }}>删除模板</button>
+      </div>
+      <form className="style-template-save" onSubmit={event => { event.preventDefault(); const name = templateName.trim(); if (name) saveTemplate.mutate({ name, shapes }); }}>
+        <input className="ny-input" placeholder="新模板名称" maxLength={32} value={templateName} onChange={event => setTemplateName(event.target.value)} />
+        <button className="ny-button" type="submit" disabled={!templateName.trim() || saveTemplate.isPending}>存为模板</button>
+      </form>
+    </div>
     <button className="ny-button" type="button" disabled={shapes.length >= MAX_SHAPES} onClick={() => commit([...shapes, { ...DEFAULT_SHAPE }])}><Plus size={15} />添加矩形</button>
     {shapes.map((shape, index) => <ShapeFields key={index} shape={shape} index={index}
       onChange={next => commit(shapes.map((item, i) => i === index ? next : item))}
@@ -87,5 +120,7 @@ export function ShapesPanel() {
     {!shapes.length && <p className="companion-muted">还没有图形。添加矩形后可调整位置、尺寸、圆角、填充与描边。</p>}
     <p className="companion-footnote">{save.isPending ? "正在保存图形…" : "修改后自动保存"}</p>
     {save.isError && <p className="companion-error" role="alert">{save.error.message}</p>}
+    {saveTemplate.isError && <p className="companion-error" role="alert">{saveTemplate.error.message}</p>}
+    {deleteTemplate.isError && <p className="companion-error" role="alert">{deleteTemplate.error.message}</p>}
   </section>;
 }

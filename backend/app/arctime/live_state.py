@@ -144,7 +144,7 @@ def export_pending(directory, job, notify):
             if target.exists():
                 expected = render_srt(media.clip_subtitles(cues, clip['start'], clip['end']))
                 length = clip['end'] - clip['start']
-                if (not subtitle.is_file() or subtitle.read_text() != expected
+                if (not subtitle.is_file() or subtitle.read_text(encoding="utf-8-sig", errors="replace") != expected
                         or abs(media.probe_video(target) - length) > max(.5, length * .05)):
                     raise ValueError('已发布切片与检查点不一致，保留原文件')
             else:

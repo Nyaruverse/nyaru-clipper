@@ -211,6 +211,7 @@ def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], 
         # 术语表随用户数据注入，PROMPT 保持不变以兼容既有翻译缓存
         payload["glossary"] = [{"src": term["src"], "dst": term["dst"]} for term in terms]
         payload["glossary_note"] = "glossary 中的术语必须采用指定译法"
+    last_error = "DeepSeek 返回了无效译文，请重试翻译"
     for attempt in range(3):
         try:
             response = client.post("https://api.deepseek.com/chat/completions",
@@ -233,15 +234,21 @@ def _request(client: httpx.Client, key: SecretStr, cues: list[SubtitleSegment], 
             raise ValueError("DeepSeek 账户余额不足，请充值后继续翻译")
         if response.status_code != 200:
             raise ValueError(f"DeepSeek 请求失败（HTTP {response.status_code}）；已完成翻译已保留")
+        # 模型偶尔会漏条、返回空译文或截断，这类输出问题同样重试；
+        # 否则一条坏行会让整场翻译中断，重试又会停在同一个批次。
         try:
             choice = response.json()["choices"][0]
             if choice["finish_reason"] != "stop":
                 raise ValueError("DeepSeek 返回不完整，请重试翻译")
-            payload = json.loads(choice["message"]["content"])
-            return validate_rows(payload["segments"], [row["id"] for row in rows])
+            result = json.loads(choice["message"]["content"])
+            return validate_rows(result["segments"], [row["id"] for row in rows])
         except (KeyError, IndexError, TypeError, json.JSONDecodeError):
-            raise ValueError("DeepSeek 返回格式无效，请重试翻译") from None
-    raise ValueError("DeepSeek 请求失败，请稍后重试")
+            last_error = "DeepSeek 返回格式无效，请重试翻译"
+        except ValueError as exc:
+            last_error = str(exc)
+        if attempt < 2:
+            time.sleep(2 ** attempt)
+    raise ValueError(f"{last_error}（已自动重试 3 次）")
 
 
 def translate_run(directory: Path, key: SecretStr, *, client: httpx.Client | None = None,
@@ -261,8 +268,9 @@ def translate_run(directory: Path, key: SecretStr, *, client: httpx.Client | Non
         cues = media.read_subtitles(source)
         active_terms: list[dict] | None = None
         if terms and request_json is None:
+            # 只注入确实出现在原字幕里的词条，避免无关术语干扰模型
             matched = [{"src": term.src, "dst": term.dst}
-                       for term in terms if any(term.src in cue.text for cue in cues)]
+                       for term in glossary.match_terms(terms, [cue.text for cue in cues])]
             active_terms = matched or None
         identity = {"version": 1, "source_sha256": source_hash, "model": model,
                     "prompt_sha256": hashlib.sha256(PROMPT.encode()).hexdigest(), "batch_size": BATCH_SIZE}
@@ -388,3 +396,74 @@ def extract_candidates(client: httpx.Client, key: SecretStr, model: str, cues: l
                                         category=category if category in glossary.CATEGORIES else "术语"))
         known.add(src)
     return found[:glossary.MAX_CANDIDATES]
+
+
+def translate_clip(directory: Path, key: SecretStr, clip_index: int, *,
+                   client: httpx.Client | None = None,
+                   progress: Callable[[str], None] | None = None, model: str = MODEL,
+                   locked: bool = False,
+                   request_json: JsonRequest | None = None,
+                   terms: list[glossary.Term] | None = None) -> dict:
+    """只翻译指定切片的字幕范围，生成该切片的双语字幕。
+
+    与 translate_run 的区别：不生成 subtitles.ja-zh.srt，只生成 clip-XXX.ja-zh.srt。
+    用于重新翻译单个切片来修正错误，或按需翻译减少 token 消耗。
+    """
+    validate_model(model, request_json)
+    notify = progress or (lambda message: None)
+    with nullcontext() if locked else workflow.exclusive_lock(directory / ".lock"):
+        job = json.loads(workflow._path(directory, "job.json").read_text())
+        if job.get("version") != 2 or job.get("state") != "completed":
+            raise ValueError("请等待视频任务完成后再生成双语字幕")
+        if clip_index < 0 or clip_index >= len(job.get("completed_clips", [])):
+            raise ValueError("切片索引超出范围")
+        source = workflow._path(directory, job["subtitles"])
+        source_hash = media.fingerprint(source)
+        if source_hash != job["artifacts"].get(job["subtitles"]):
+            raise ValueError("原字幕校验失败；保留现有文件，请检查字幕")
+        cues = media.read_subtitles(source)
+        active_terms: list[dict] | None = None
+        if terms and request_json is None:
+            matched = [{"src": term.src, "dst": term.dst}
+                       for term in glossary.match_terms(terms, [cue.text for cue in cues])]
+            active_terms = matched or None
+
+        # 筛选该切片范围内的字幕（含扩展区间，保证上下文）
+        clip = job["completed_clips"][clip_index]
+        selection = job["selection"][clip_index]
+        range_cues = [c for c in cues
+                      if c.end_seconds > selection["start"] and c.start_seconds < selection["end"]]
+        if not range_cues:
+            raise ValueError("该切片范围内没有字幕")
+
+        notify(f"正在日译中切片 {clip_index + 1}：0/{len(range_cues)} 条（{model}）")
+        translated: list[str] = []
+        own_client = client is None
+        client = client or httpx.Client(timeout=120, follow_redirects=False)
+        try:
+            for start in range(0, len(range_cues), BATCH_SIZE):
+                batch = range_cues[start:start + BATCH_SIZE]
+                rows = _request(client, key, batch, start, model,
+                                **({"request_json": request_json} if request_json is not None else {}),
+                                terms=active_terms)
+                translated.extend(row["zh"] for row in rows)
+                notify(f"正在日译中切片 {clip_index + 1}：{len(translated)}/{len(range_cues)} 条（{model}）")
+
+            bilingual = [SubtitleSegment(c.id, c.start_seconds, c.end_seconds, f"{c.text}\n{text}")
+                         for c, text in zip(range_cues, translated, strict=True)]
+            output_name = Path(clip["video"]).stem + ".ja-zh.srt"
+            output_path = workflow._path(directory, output_name)
+            content = render_srt(media.clip_subtitles(bilingual, selection["start"], selection["end"]))
+            if output_path.exists() and output_path.read_text(encoding="utf-8-sig", errors="replace") != content:
+                raise ValueError("已有双语字幕内容不同；保留文件，请检查任务")
+            if not output_path.exists():
+                workflow._publish_text(output_path, content)
+            notify(f"切片 {clip_index + 1} 双语字幕已完成：{len(range_cues)} 条")
+            return {"translated": len(range_cues), "clip": output_name}
+        except media.RunCancelled:
+            raise
+        except Exception:
+            raise ValueError("切片翻译失败；已完成部分已保留，请重试") from None
+        finally:
+            if own_client:
+                client.close()

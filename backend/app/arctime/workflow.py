@@ -100,6 +100,9 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
         asr_end = None  # 在 duration 探测后回填
     job: dict = {"version": 2, "state": "downloading", "ranges": ranges, "highlight_count": highlight_count,
                  "asr": identity, "completed_clips": [], "asr_offset": asr_offset}
+    if not local_source:
+        # 保留来源链接，供生成内容切片时自动拉取 B站弹幕
+        job["url"] = url
     if saozi:
         job["saozi"] = True
     if not ranges and highlight_count is None and not saozi:
@@ -202,7 +205,16 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
             asr_duration = float(job.get("asr_duration", job["duration"]))
             notify("正在本地识别并生成时间轴")
             try:
-                cues = adapter.transcribe(video, directory, asr_duration, offset=asr_offset, should_cancel=should_cancel)
+                if job.get("mode") == "ranges" and job.get("ranges"):
+                    # 切片模式：按切片时长分级扩展，各区间独立转录
+                    expanded = []
+                    for s, e in job["ranges"]:
+                        dur = e - s
+                        pad = 10.0 if dur <= 120 else 20.0 if dur <= 300 else 30.0
+                        expanded.append((max(0.0, s - pad), min(job["duration"], e + pad)))
+                    cues = adapter.transcribe_ranges(video, directory, expanded, should_cancel=should_cancel)
+                else:
+                    cues = adapter.transcribe(video, directory, asr_duration, offset=asr_offset, should_cancel=should_cancel)
             except ValueError as exc:
                 if not job.get("saozi") or str(exc) != "No speech was recognized; check the source audio and language":
                     raise
@@ -223,7 +235,7 @@ def resume_run(directory: Path, transcriber: LocalASR | None = None,
             if fingerprint(_path(directory, name)) != digest:
                 raise ValueError("Managed transcript changed; create a new run rather than mixing results")
         subtitle_path = _path(directory, job["subtitles"])
-        cues = media.read_subtitles(subtitle_path) if subtitle_path.read_text().strip() else []
+        cues = media.read_subtitles(subtitle_path) if subtitle_path.read_text(encoding="utf-8-sig", errors="replace").strip() else []
         # 完整视频模式：只字幕不切片，跳过 selection/export
         if job.get("mode") == "full":
             job["state"] = "completed"

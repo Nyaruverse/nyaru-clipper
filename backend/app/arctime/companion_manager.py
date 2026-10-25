@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -20,6 +23,7 @@ from app.arctime.subtitle_exports import export_artifact, SubtitleExports
 from app.arctime.subtitle_templates import TemplateStore, StyleTemplate
 from app.arctime.subtitle_encoding import burn_available
 from app.arctime.companion_projection import job_detail
+from app.services.subtitles import render_srt
 
 
 class JobManager:
@@ -129,7 +133,7 @@ class JobManager:
             if self.active and self.active["id"] == job_id:
                 self.active["message"] = f"正在终止任务（已结束 {killed} 个子进程）"
 
-    def submit_translation(self, job_id: str) -> str:
+    def submit_translation(self, job_id: str, clip_index: int | None = None) -> str:
         record = self.detail(job_id)
         if record["state"] != "completed":
             raise HTTPException(409, "请等待视频任务完成后再生成双语字幕")
@@ -146,11 +150,12 @@ class JobManager:
             if self.last and self.last["id"] == job_id:
                 self.last = None
             self.cancel_event.clear()
-            self.active = {"id": job_id, "state": "translating", "message": "准备日译中", "error": None, "model": model}
-            self.executor.submit(self.run_translation, job_id, key, model)
+            msg = "准备日译中" if clip_index is None else f"准备日译中切片 {clip_index + 1}"
+            self.active = {"id": job_id, "state": "translating", "message": msg, "error": None, "model": model}
+            self.executor.submit(self.run_translation, job_id, key, model, clip_index)
         return job_id
 
-    def run_translation(self, job_id: str, key: SecretStr, model: str):
+    def run_translation(self, job_id: str, key: SecretStr, model: str, clip_index: int | None = None):
         def progress(message: str):
             if self.cancel_event.is_set():
                 raise media.RunCancelled()
@@ -162,12 +167,18 @@ class JobManager:
             options = {'request_json': request_json} if request_json is not None else {}
             if self.read_json(directory / "job.json").get("saozi"):
                 from app.arctime.saozi_translation import translate
-                translate(directory, key, progress=progress, model=model, **options)
+                # 术语表只走 DeepSeek 经典路径（ChatGPT 订阅路径不注入）
+                store = None if request_json is not None else self._load_glossary()
+                terms = store.terms if store is not None else None
+                translate(directory, key, progress=progress, model=model, terms=terms, **options)
             else:
                 # 术语表只走 DeepSeek 经典路径（ChatGPT 订阅路径不注入）
                 store = None if request_json is not None else self._load_glossary()
                 terms = store.terms if store is not None else None
-                translation.translate_run(directory, key, progress=progress, model=model, terms=terms, **options)
+                if clip_index is not None:
+                    translation.translate_clip(directory, key, clip_index, progress=progress, model=model, terms=terms, **options)
+                else:
+                    translation.translate_run(directory, key, progress=progress, model=model, terms=terms, **options)
                 if request_json is None and store is not None and self.glossary_collect_candidates:
                     self._collect_glossary_candidates(directory, key, model, store, progress)
             with workflow.exclusive_lock(directory / '.lock'):
@@ -187,9 +198,137 @@ class JobManager:
                 self.last = self.active
                 self.active = None
 
+    def submit_asr(self, job_id: str) -> str:
+        """对已完成的视频重新跑一遍 ASR，保留原视频与切片视频。"""
+        saved = self.read_json(self.directory(job_id) / "job.json")
+        if saved.get("version") != 2 or not saved.get("video") or not saved.get("asr"):
+            raise HTTPException(409, "该任务没有可重新识别的视频")
+        if self.detail(job_id)["state"] not in {"completed", "failed", "interrupted", "cancelled"}:
+            raise HTTPException(409, "任务仍在处理中，完成后再重新识别")
+        with self.lock:
+            if self.active:
+                raise HTTPException(409, "已有任务正在处理，请等待完成")
+            if self.last and self.last["id"] == job_id:
+                self.last = None
+            self.stop_event.clear()
+            self.cancel_event.clear()
+            self.active = {"id": job_id, "state": "transcribing", "message": "准备重新识别", "error": None,
+                           "translation_error": None, "live": False, "saozi": bool(saved.get("saozi")),
+                           "model": saved.get("saozi_model") or saved.get("llm_model") or translation.MODEL}
+            self.executor.submit(self.run_asr, job_id)
+        return job_id
+
+    def run_asr(self, job_id: str):
+        def progress(message: str):
+            if self.cancel_event.is_set():
+                raise media.RunCancelled()
+            with self.lock:
+                if self.active:
+                    self.active["message"] = message
+        try:
+            directory = self.directory(job_id)
+            with workflow.exclusive_lock(directory / ".lock"):
+                job = self.read_json(directory / "job.json")
+                video = workflow._verify(directory, job)
+                saved = job.get("asr") or {}
+                # 重新识别沿用原模型与语言，但使用当前术语表作为提示词
+                adapter = LocalASR(Path(saved.get("model") or self.model), saved.get("language", "auto"),
+                                   saved.get("threads", self.threads), prompt=self._asr_prompt())
+                identity = adapter.identity()
+                progress("正在清理旧识别结果")
+                self._clear_asr_products(directory)
+                job["asr"] = identity
+                job["state"] = "transcribing"
+                job.pop("artifacts", None)
+                job.pop("subtitles", None)
+                workflow.write_manifest(directory, job)
+                progress("正在重新识别并生成时间轴")
+                offset = float(job.get("asr_offset", 0.0) or 0.0)
+                duration = float(job.get("asr_duration", job["duration"]))
+                cues = adapter.transcribe(video, directory, duration, offset=offset,
+                                          should_cancel=self.cancel_event.is_set)
+                if (not cues and not job.get("saozi")) or any(
+                        not math.isfinite(c.start_seconds) or not math.isfinite(c.end_seconds)
+                        or not 0 <= c.start_seconds < c.end_seconds <= job["duration"] or not c.text.strip()
+                        for c in cues):
+                    raise ValueError("本地字幕必须非空且位于视频时长内")
+                cues.sort(key=lambda c: (c.start_seconds, c.end_seconds))
+                workflow._publish_text(directory / "subtitles.srt", render_srt(cues))
+                workflow._publish_text(directory / "transcript.txt", "\n".join(c.text for c in cues) + "\n")
+                media.write_json(directory / "transcript.json",
+                                 {"asr": identity, "segments": [asdict(c) for c in cues]})
+                artifacts = {name: media.fingerprint(directory / name)
+                             for name in ("subtitles.srt", "transcript.txt", "transcript.json")}
+                job.update(state="completed", subtitles="subtitles.srt", artifacts=artifacts)
+                # 切片视频不重切，只按新时间轴刷新旁挂字幕
+                for index, clip in enumerate(job.get("completed_clips") or []):
+                    selection = (job.get("selection") or [])[index]
+                    subtitle = workflow._path(directory, clip["subtitles"])
+                    workflow._publish_text(subtitle, render_srt(
+                        media.clip_subtitles(cues, selection["start"], selection["end"])))
+                    clip["subtitles_sha256"] = media.fingerprint(subtitle)
+                workflow.write_manifest(directory, job)
+                with self.lock:
+                    if self.active:
+                        self.active["message"] = "重新识别完成，可重新生成字幕"
+        except media.RunCancelled:
+            with self.lock:
+                if self.active:
+                    self.active["state"] = "cancelled"
+                    self.active["message"] = "重新识别已手动终止"
+                    self.active["error"] = None
+        except Exception as exc:
+            with self.lock:
+                if self.active:
+                    self.active["state"] = "failed"
+                    self.active["message"] = "重新识别失败；原视频已保留"
+                    self.active["error"] = str(exc) if isinstance(exc, ValueError) else "重新识别失败；原视频已保留"
+        finally:
+            with self.lock:
+                self.last = self.active
+                self.active = None
+
+    def _clear_asr_products(self, directory: Path) -> None:
+        """删除重新识别后会过期的产物：识别缓存、字幕、翻译与合成视频。"""
+        from app.arctime.local_features_api import _cleanable, _reset_products
+        files, dirs = _cleanable(self, directory)
+        removed: set[str] = set()
+        for path in [*files, *dirs]:
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                removed.add(path.name)
+            except OSError:
+                pass
+        _reset_products(self, directory, removed)
+        cache = directory / "asr"
+        if cache.is_dir() and not cache.is_symlink():
+            shutil.rmtree(cache)
+        for child in directory.iterdir():
+            if child.is_symlink() or not child.is_file():
+                continue
+            name = child.name
+            if (name in {"subtitles.srt", "transcript.txt", "transcript.json", "translation.json"}
+                    or name.endswith(".zh.srt") or name.endswith(".ja-zh.srt")
+                    or (name.startswith("clip-") and name.endswith(".srt"))):
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
+
     def _load_glossary(self):
         from app.arctime.local_features_api import load_glossary_store
         return load_glossary_store(self)
+
+    def _asr_prompt(self) -> str:
+        """术语表原文拼成的 whisper 初始提示词；读取失败时不影响转录。"""
+        from app.arctime import glossary
+        try:
+            return glossary.asr_prompt(self._load_glossary().terms)
+        except Exception:
+            return ""
 
     def _save_glossary(self, store) -> None:
         from app.arctime.local_features_api import save_glossary_store
@@ -264,7 +403,8 @@ class JobManager:
                         self.active["translation_error"] = "双语字幕未完成；原文切片已保留，可继续生成双语字幕"
             if (request and request.live) or (not request and saved.get("live")):
                 from app.arctime.saozi_live import run_live
-                adapter = LocalASR(self.model, request.language if request else saved["asr"]["language"], self.threads)
+                adapter = LocalASR(self.model, request.language if request else saved["asr"]["language"],
+                                   self.threads, prompt=self._asr_prompt())
                 directory.mkdir(mode=0o700, exist_ok=True)
                 job = run_live(directory, selector, adapter, self.stop_event,
                                lambda message: self.update("recording", message), url=request.url if request else None,
@@ -280,7 +420,7 @@ class JobManager:
                                 ('；自动样式导出未完成，可恢复处理重试' if job.get('subtitle_style_error') else ''))
                 return
             if request:
-                adapter = LocalASR(self.model, request.language, self.threads)
+                adapter = LocalASR(self.model, request.language, self.threads, prompt=self._asr_prompt())
                 ranges = [(media.parse_time(start), media.parse_time(end)) for start, end in request.ranges]
                 directory = workflow.create_run(request.url, self.root, ranges, request.highlights, adapter, run_id=job_id,
                                                 progress=lambda message: self.update("downloading", message),
@@ -290,7 +430,11 @@ class JobManager:
                 snapshot.update(llm_provider='chatgpt' if selected.startswith('chatgpt:') else 'deepseek', llm_model=selected)
                 workflow.write_manifest(directory, snapshot)
             else:
-                adapter = None
+                saved_asr = saved.get("asr") or {}
+                # 恢复任务沿用原模型参数，同时带上当前术语表提示词
+                adapter = (LocalASR(Path(saved_asr["model"]), saved_asr.get("language", "auto"),
+                                    saved_asr.get("threads", self.threads), prompt=self._asr_prompt())
+                           if saved_asr.get("model") else None)
 
             def progress(message: str):
                 stage = json.loads((directory / "job.json").read_text())["state"]
@@ -399,4 +543,3 @@ class JobManager:
         if name.endswith(".ja-zh.srt") and media.fingerprint(path) != translated["artifacts"][name]:
             raise HTTPException(409, "双语字幕校验失败，原文件已保留")
         return path
-

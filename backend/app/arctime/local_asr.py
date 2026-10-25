@@ -17,10 +17,19 @@ from app.services.subtitles import SubtitleSegment
 
 CHUNK_SECONDS = 300
 ASR_TAIL_WINDOW_SECONDS = 30.0
-ASR_CACHE_VERSION = 2  # v2: whisper 幻觉过滤（v1 缓存不自动重识别）
+ASR_CACHE_VERSION = 4  # v4: 切片模式支持多区间独立转录（v3 及以前缓存不自动重识别）
 HALLUCINATION_MIN_REPEATS = 5   # 同一段归一化文本至少出现 N 次才算幻觉候选
 HALLUCINATION_MAX_LEN = 60      # whisper 幻觉通常短，超长文本大概率为真
 HALLUCINATION_MAX_GAP = 15.0    # 重复之间相邻时间间隔中位数 > 此值视为真实语音
+
+# 语言探测：whisper 只在传入音频的前 30 秒上做语言检测，而整段开头常是 BGM/纯音乐，
+# 直接喂整段会被音乐带偏（实测把日语整段认成威尔士语，开头字幕全毁）。改为在区间内取
+# 多个 30 秒窗口分别检测，取置信度最高的结果；置信度都太低则退回 whisper 自己的 auto。
+LANGUAGE_PROBE_SECONDS = 30.0
+LANGUAGE_PROBE_AT = (0.10, 0.35, 0.60, 0.85)
+LANGUAGE_PROBE_MIN_PROB = 0.60
+
+_LANGUAGE_RE = re.compile(r"auto-detected language:\s*([a-z]{2,3})\s*\(p\s*=\s*([0-9.]+)\)")
 
 # 字幕单行显示宽度上限：全角字符 ≤ 20 个，英文/数字等半角字符 ≤ 28 个。
 # 半角按 20/28 折算宽度，混排行按宽度之和判定，避免语速快时长行超出显示区域。
@@ -160,19 +169,64 @@ def _split_long_rows(rows: list[dict]) -> list[dict]:
     return result
 
 
+def _probe_language(identity: dict, video: Path, directory: Path, offset: float, duration: float,
+                    should_cancel: Callable[[], bool] | None = None) -> str | None:
+    """在区间内取多个 30 秒窗口做语言检测，返回置信度最高者；都不够确信则返回 None。
+
+    避免开头 BGM 让 whisper 把整段语言认错（见 LANGUAGE_PROBE_* 注释）。只提取 30 秒小段，
+    所以每个窗口的开销只是几秒的解码 + 语言头推理，与整段识别相比可忽略。
+    """
+    probe_len = min(LANGUAGE_PROBE_SECONDS, duration)
+    if probe_len < 5.0:
+        return None
+    best: tuple[float, str] | None = None
+    with tempfile.TemporaryDirectory(prefix=".lang-probe-", dir=directory) as temporary:
+        audio = Path(temporary) / "probe.wav"
+        for fraction in LANGUAGE_PROBE_AT:
+            if should_cancel is not None and should_cancel():
+                raise media.RunCancelled()
+            start = offset + min(duration - probe_len, duration * fraction)
+            try:
+                extract = subprocess.run(
+                    [media.tool_path("ffmpeg"), "-nostdin", "-v", "error", "-y", "-ss", f"{start:.3f}",
+                     "-i", str(video), "-t", f"{probe_len:.3f}", "-vn", "-ac", "1", "-ar", "16000",
+                     "-c:a", "pcm_s16le", str(audio)], capture_output=True, text=True, timeout=300, check=False)
+                if extract.returncode:
+                    continue
+                detect = subprocess.run(
+                    [identity["binary"], "-m", identity["model"], "-f", str(audio),
+                     "-t", str(identity["threads"]), "-dl"], capture_output=True, text=True, timeout=600, check=False)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            match = _LANGUAGE_RE.search(f"{detect.stdout or ''}\n{detect.stderr or ''}")
+            if match is None:
+                continue
+            probability = float(match.group(2))
+            if probability >= LANGUAGE_PROBE_MIN_PROB and (best is None or probability > best[0]):
+                best = (probability, match.group(1))
+    return best[1] if best is not None else None
+
+
 def resolve_default_model() -> Path:
     """解析默认 whisper.cpp 模型路径。
 
-    优先级：NYARU_WHISPER_MODEL 环境变量 → 项目内 data/model-cache/whisper.cpp/ggml-small.bin
-    → 用户缓存目录 ~/.cache/nyaru-clipper/models/ggml-small.bin
+    优先级：NYARU_WHISPER_MODEL 环境变量 → 项目内 data/model-cache/whisper.cpp/
+    （优先 large-v3-turbo，缺失时回退 small）→ 用户缓存目录同名文件。
+    turbo 准确率明显高于 small，且换模型后 ASR 缓存会按 model_sha256 自动失效。
     """
     env = os.environ.get("NYARU_WHISPER_MODEL", "").strip()
     if env:
         return Path(env).expanduser()
-    repo_model = Path(__file__).resolve().parents[3] / "data" / "model-cache" / "whisper.cpp" / "ggml-small.bin"
-    if repo_model.is_file():
-        return repo_model
-    return Path.home() / ".cache" / "nyaru-clipper" / "models" / "ggml-small.bin"
+    names = ("ggml-large-v3-turbo.bin", "ggml-small.bin")
+    repo_root = Path(__file__).resolve().parents[3] / "data" / "model-cache" / "whisper.cpp"
+    for name in names:
+        if (repo_root / name).is_file():
+            return repo_root / name
+    cache_root = Path.home() / ".cache" / "nyaru-clipper" / "models"
+    for name in names:
+        if (cache_root / name).is_file():
+            return cache_root / name
+    return cache_root / "ggml-small.bin"
 
 
 DEFAULT_MODEL = resolve_default_model()
@@ -187,6 +241,8 @@ class LocalASR:
     model: Path = field(default_factory=resolve_default_model)
     language: str = "auto"
     threads: int = 4
+    # 术语表原文拼成的初始提示词；为空时不传给 whisper，缓存行为与旧版本一致
+    prompt: str = ""
 
     def identity(self) -> dict:
         model = self.model.expanduser().resolve(strict=True)
@@ -203,11 +259,13 @@ class LocalASR:
                 "chunk_seconds": CHUNK_SECONDS, "cache_version": ASR_CACHE_VERSION}
 
     def transcribe(self, video: Path, directory: Path, duration: float, offset: float = 0.0,
-                   should_cancel: Callable[[], bool] | None = None) -> list[SubtitleSegment]:
+                   should_cancel: Callable[[], bool] | None = None,
+                   cache_prefix: str = "") -> list[SubtitleSegment]:
         """转录视频的指定区间。
 
         duration：要转录的区间长度（秒）。
         offset：区间起点相对视频的偏移（秒）。0 = 从头开始。
+        cache_prefix：缓存文件名前缀，多区间独立转录时避免冲突。
         """
         if not math.isfinite(duration) or duration <= 0:
             raise ValueError("ASR requires a finite positive media duration")
@@ -215,6 +273,11 @@ class LocalASR:
             raise ValueError("ASR offset must be non-negative")
         identity = self.identity()
         source_hash = media.fingerprint(video)
+        # auto：先自己探测语言，探不出才交给 whisper 的 auto（避免开头 BGM 把整段语言带偏）
+        language = self.language
+        if language == "auto":
+            language = _probe_language(identity, video, directory, offset, duration, should_cancel) or "auto"
+        prompt = " ".join(self.prompt.split())[:400]
         cache = directory / "asr"
         if cache.is_symlink():
             raise ValueError("ASR cache must not be a symlink")
@@ -225,14 +288,17 @@ class LocalASR:
                 raise media.RunCancelled()
             start = offset + index * CHUNK_SECONDS
             length = min(CHUNK_SECONDS, duration - index * CHUNK_SECONDS)
-            key = {"version": 2, "source_sha256": source_hash, "asr": identity,
-                   "start": start, "duration": length, "offset": offset}
-            destination = cache / f"chunk-{index + 1:04d}.json"
+            key = {"version": ASR_CACHE_VERSION, "source_sha256": source_hash, "asr": identity,
+                   "language": language, "start": start, "duration": length, "offset": offset}
+            if prompt:
+                # 提示词参与缓存键：术语表变化后旧分块自动失效
+                key["prompt"] = prompt
+            destination = cache / f"{cache_prefix}chunk-{index + 1:04d}.json"
             if destination.is_symlink():
                 raise ValueError("ASR chunk must not be a symlink")
             rows = self._cached_rows(destination, key)
             if rows is None:
-                rows = self._recognize(video, cache, index + 1, start, length, identity)
+                rows = self._recognize(video, cache, index + 1, start, length, identity, language, prompt)
                 media.write_json(destination, {"key": key, "segments": rows, "segments_sha256": _segments_hash(rows)})
             # 长行按显示宽度切分（缓存读取后执行，旧缓存无需重识别即可生效）
             for row in _split_long_rows(rows):
@@ -241,6 +307,26 @@ class LocalASR:
         if not cues:
             raise ValueError("No speech was recognized; check the source audio and language")
         return cues
+
+    def transcribe_ranges(self, video: Path, directory: Path,
+                          ranges: list[tuple[float, float]],
+                          should_cancel: Callable[[], bool] | None = None) -> list[SubtitleSegment]:
+        """转录多个不连续区间，每个区间独立缓存、独立语言探测。
+
+        ranges：[(start, end), ...]，单位秒，全局时间戳（相对于视频开头）。
+        返回按时间排序的合并字幕。
+        """
+        if not ranges:
+            raise ValueError("ASR ranges must not be empty")
+        cues: list[SubtitleSegment] = []
+        for i, (start, end) in enumerate(ranges):
+            if should_cancel is not None and should_cancel():
+                raise media.RunCancelled()
+            sub = self.transcribe(video, directory, end - start, offset=start,
+                                  should_cancel=should_cancel,
+                                  cache_prefix=f"range-{i:04d}-")
+            cues.extend(sub)
+        return sorted(cues, key=lambda c: c.start_seconds)
 
     @staticmethod
     def _cached_rows(path: Path, key: dict) -> list[dict] | None:
@@ -263,7 +349,8 @@ class LocalASR:
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def _recognize(self, video: Path, cache: Path, index: int, start: float, length: float, identity: dict) -> list[dict]:
+    def _recognize(self, video: Path, cache: Path, index: int, start: float, length: float,
+                   identity: dict, language: str, prompt: str = "") -> list[dict]:
         log_path = cache / f"chunk-{index:04d}.log"
         if log_path.is_symlink():
             raise ValueError("ASR log must not be a symlink")
@@ -273,9 +360,15 @@ class LocalASR:
             commands = [
                 [media.tool_path("ffmpeg"), "-nostdin", "-v", "error", "-y", "-ss", str(start), "-i", str(video),
                  "-t", str(length), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(audio)],
-                [identity["binary"], "-m", identity["model"], "-f", str(audio), "-l", self.language,
-                 "-t", str(self.threads), "-osrt", "-of", str(prefix), "-ml", "80", "-sow", "-np"],
+                # -sns 抑制非语音 token（音乐段的 "(音楽)"、♪ 之类标注不会再进字幕）；
+                # -mc 0 关掉文本上下文，避免音乐段产出的幻觉顺着上下文带偏后面的真实语音
+                [identity["binary"], "-m", identity["model"], "-f", str(audio), "-l", language,
+                 "-t", str(self.threads), "-osrt", "-of", str(prefix), "-ml", "80", "-sow", "-np",
+                 "-sns", "-mc", "0"],
             ]
+            if prompt:
+                # 术语表作为初始提示词，从源头减少专名误听
+                commands[1] += ["--prompt", prompt]
             with log_path.open("w", encoding="utf-8") as log:
                 for command in commands:
                     result = media.run_managed(command, stdin=subprocess.DEVNULL, stdout=log,
@@ -285,7 +378,8 @@ class LocalASR:
             subtitle = prefix.with_suffix(".srt")
             if not subtitle.is_file():
                 raise RuntimeError(f"Local ASR failed to produce subtitles; see asr/{log_path.name}")
-            if not subtitle.read_text(encoding="utf-8-sig").strip():
+            # whisper.cpp 在 Windows 上会把 CRLF 插进 UTF-8 多字节序列，errors=replace 兜底
+            if not subtitle.read_text(encoding="utf-8-sig", errors="replace").strip():
                 return []
             segments = media.read_subtitles(subtitle, merge_contiguous_zero_duration=True)
             tail_window = min(ASR_TAIL_WINDOW_SECONDS, length / 2)

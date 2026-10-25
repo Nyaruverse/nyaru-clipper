@@ -10,7 +10,7 @@ import { GlossaryPanel } from "./GlossaryPanel";
 import { ShapesPanel, useShapes } from "./ShapesPanel";
 import { TopicSegmentsPanel } from "./TopicSegmentsPanel";
 
-import { api, time, parseTime, running, cancellable, statusLabel, fileUrl, clipSegments, type BurnVariant, type Job, type JobInput, type CompanionConfig, type SubtitleMode } from "./companionApi";
+import { api, time, parseTime, running, cancellable, statusLabel, fileUrl, clipSegments, bytes, type BurnVariant, type Job, type JobInput, type CompanionConfig, type SubtitleMode, type StorageSnapshot, type BatchResult, type Segment } from "./companionApi";
 
 const TOOLS = [
   { id: "subtitle", label: "字幕样式", icon: Captions },
@@ -50,13 +50,23 @@ export function Companion() {
   const [error, setError] = useState<string | null>(null);
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("bilingual");
   const [burnVariant, setBurnVariant] = useState<Record<string, BurnVariant>>({});
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
+  const [rangePick, setRangePick] = useState<{ start: number | null; end: number | null }>({ start: null, end: null });
+  const [rangeTarget, setRangeTarget] = useState<{ start: number; end: number } | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
   const [editCue, setEditCue] = useState<{ id: string; value: string } | null>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [confirmBatch, setConfirmBatch] = useState<"cleanup" | "delete" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [translateClipIndex, setTranslateClipIndex] = useState<string>("all");
   const video = useRef<HTMLVideoElement>(null);
   const config = useQuery({ queryKey: ["companion", "config"], queryFn: () => api<CompanionConfig>("/config"), refetchInterval: 15000 });
   const history = useQuery({ queryKey: ["companion", "jobs"], queryFn: () => api<Job[]>("/jobs"), refetchInterval: 3000 });
   const detail = useQuery({ queryKey: ["companion", "job", selectedId], queryFn: () => api<Job>(`/jobs/${selectedId}`), enabled: selectedId !== null,
     refetchInterval: query => query.state.status === "error" ? 3000 : running(query.state.data) ? 1000 : false });
   const settings = useQuery({queryKey:["companion","subtitle-settings"],queryFn:()=>subtitleApi<SubtitleSettings>("/subtitle-settings")});
+  const storage = useQuery({ queryKey: ["companion", "storage"], queryFn: () => api<StorageSnapshot>("/storage"), refetchInterval: 10000 });
   const liveTemplateId = liveTemplate ?? (settings.data?.templates?.some(item=>item.id==='nyaru') ? 'nyaru' : '');
   const legacyStyle = useLegacyStyle();
   const job = detail.data;
@@ -77,13 +87,16 @@ export function Companion() {
     const response = await fetch(`/companion-api/jobs/${id}/resume`, { method: "POST" });
     if (!response.ok) throw new Error("恢复失败，请检查是否已有任务运行");
   }, onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
-  const translate = useMutation({ mutationFn: (id: string) => api(`/jobs/${id}/translate`, {}),
+  const translate = useMutation({ mutationFn: (payload: { id: string; clip_index?: number }) => api(`/jobs/${payload.id}/translate`, payload.clip_index === undefined ? {} : { clip_index: payload.clip_index }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
+  const reasr = useMutation({ mutationFn: (id: string) => api(`/jobs/${id}/asr`, {}),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
   const stop = useMutation({mutationFn:(id:string)=>api(`/jobs/${id}/stop`,{}),
     onSuccess:()=>{void queryClient.invalidateQueries({queryKey:["companion"]});},onError:err=>setError(err.message)});
   const cancel = useMutation({ mutationFn: (id: string) => api(`/jobs/${id}/cancel`, {}),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
-  const burn = useMutation({ mutationFn: (payload: { id: string; clip: string; variant: BurnVariant }) => api(`/jobs/${payload.id}/burn`, { clip: payload.clip, variant: payload.variant }),
+  const burn = useMutation({ mutationFn: (payload: { id: string; clip: string; variant: BurnVariant; start?: number; end?: number }) => api(`/jobs/${payload.id}/burn`, {
+      clip: payload.clip, variant: payload.variant, ...(payload.start === undefined ? {} : { start: payload.start, end: payload.end }) }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion", "job", selectedId] }); },
     onError: err => setError(err.message) });
   const editTranslation = useMutation({ mutationFn: (payload: { id: string; text: string }) => api(`/jobs/${selectedId}/translation/${payload.id}`, { text: payload.text }, "PUT"),
@@ -93,9 +106,13 @@ export function Companion() {
   const glossarySettings = useMutation({ mutationFn: (collect: boolean) => api("/glossary-settings", { collect_candidates: collect }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion", "config"] }); },
     onError: err => setError(err.message) });
+  const cleanupJobs = useMutation({ mutationFn: (ids: string[]) => api<BatchResult>("/jobs/cleanup", { ids }),
+    onSuccess: result => finishBatch(result, false), onError: err => setError(err.message) });
+  const deleteJobs = useMutation({ mutationFn: (ids: string[]) => api<BatchResult>("/jobs/delete", { ids }),
+    onSuccess: result => finishBatch(result, true), onError: err => setError(err.message) });
 
   useEffect(() => { if (!selectedId && history.data?.length) setSelectedId(history.data[0].id); }, [selectedId, history.data]);
-  useEffect(() => { setPreview("source.mp4"); setSeek(null); setEditCue(null); }, [selectedId]);
+  useEffect(() => { setPreview("source.mp4"); setSeek(null); setEditCue(null); setRangeStart(""); setRangeEnd(""); setRangePick({ start: null, end: null }); setRangeTarget(null); setRangeError(null); }, [selectedId]);
   useEffect(() => { if (job?.live && !job.has_source && preview === "source.mp4" && job.clips.length) setPreview(job.clips[0].video); }, [job,preview]);
   useEffect(() => {
     if (seek !== null && video.current && video.current.readyState >= 1) { video.current.currentTime = seek; setSeek(null); }
@@ -128,6 +145,35 @@ export function Companion() {
   const stage = job?.state === "completed" ? 4 : ({ preparing: 0, downloading: 1, download_failed: 1, downloaded: 2, transcribing: 2, subtitles_ready: 3, exporting: 3 }[job?.phase ?? ""] ?? 0);
   const unavailable = config.isError || history.isError || detail.isError;
   const hasBilingual = job?.translation?.state === "completed";
+  const sourceChoice = burnVariant["source.mp4"] ?? "bilingual";
+  const sourceVariant: BurnVariant = !hasBilingual && sourceChoice !== "original" ? "original" : sourceChoice;
+  const sourceBurn = job?.source_burns?.[sourceVariant];
+  const sourceBurning = sourceBurn?.state === "burning";
+  const sourceBurnPercent = Math.round((sourceBurn?.progress ?? 0) * 100);
+  const sourceResumable = !sourceBurning && sourceBurn?.state !== "completed" && (sourceBurn?.segments_done ?? 0) > 0;
+  const rangeCues: Segment[] = (hasBilingual && job?.bilingual_segments?.length ? job.bilingual_segments : job?.segments) ?? [];
+  const cueLabel = (cue: Segment) => `${time(cue.start_seconds)} → ${time(cue.end_seconds)} · ${cue.text.replace(/\n+/g, " ｜ ")}`;
+  const rangeChoice = burnVariant.range ?? "bilingual";
+  const rangeVariant: BurnVariant = !hasBilingual && rangeChoice !== "original" ? "original" : rangeChoice;
+  const rangeKey = rangeTarget ? `range-${Math.round(rangeTarget.start * 1000)}-${Math.round(rangeTarget.end * 1000)}` : null;
+  const rangeEntry = rangeKey ? job?.range_burns?.[rangeKey]?.[rangeVariant] : undefined;
+  const rangeBurning = rangeEntry?.state === "burning";
+  const rangePercent = Math.round((rangeEntry?.progress ?? 0) * 100);
+  const rangeResumable = !rangeBurning && rangeEntry?.state !== "completed" && (rangeEntry?.segments_done ?? 0) > 0;
+  const submitRange = () => {
+    if (!job) return;
+    setRangeError(null);
+    let start: number;
+    let end: number;
+    try {
+      start = parseTime(rangeStart);
+      end = parseTime(rangeEnd);
+    } catch (err) { setRangeError(err instanceof Error ? err.message : "时间格式无效"); return; }
+    if (!(start < end)) { setRangeError("终点必须晚于起点"); return; }
+    if (job.duration && end > job.duration + 0.05) { setRangeError(`终点不能超过视频时长 ${time(job.duration)}`); return; }
+    setRangeTarget({ start, end });
+    burn.mutate({ id: job.id, clip: "source.mp4", variant: rangeVariant, start, end });
+  };
   const previewMode: SubtitleMode = hasBilingual ? subtitleMode : "original";
   const subtitleBase = (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, "");
   const subtitleFile = previewMode === "bilingual" ? `${subtitleBase}.ja-zh.vtt` : previewMode === "zh" ? `${subtitleBase}.zh.vtt` : `${subtitleBase}.vtt`;
@@ -139,6 +185,48 @@ export function Companion() {
     if (job?.has_source) { setPreview('source.mp4'); setSeek(at); }
     else { const target = job?.clips.find(item => item.start <= at && at < item.end); if (target) {setPreview(target.video);setSeek(at-target.start);} }
   };
+
+  const selectable = (visibleJobs ?? []).filter(item => !running(item)).map(item => item.id);
+  const allChecked = selectable.length > 0 && selectable.every(id => checked.has(id));
+  const someChecked = selectable.some(id => checked.has(id));
+  const batchPending = cleanupJobs.isPending || deleteJobs.isPending;
+
+  function toggleCheck(id: string) {
+    setChecked(current => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setChecked(current => {
+      const next = new Set(current);
+      if (allChecked) selectable.forEach(id => next.delete(id));
+      else selectable.forEach(id => next.add(id));
+      return next;
+    });
+  }
+
+  function runBatch(mode: "cleanup" | "delete") {
+    const ids = [...checked].filter(id => selectable.includes(id));
+    setConfirmBatch(null);
+    setError(null);
+    setNotice(null);
+    if (!ids.length) return;
+    (mode === "cleanup" ? cleanupJobs : deleteJobs).mutate(ids);
+  }
+
+  function finishBatch(result: BatchResult, removed: boolean) {
+    const failed = result.results.filter(item => !item.ok);
+    const done = new Set(result.results.filter(item => item.ok).map(item => item.id));
+    setChecked(current => new Set([...current].filter(id => !done.has(id))));
+    if (removed && selectedId && done.has(selectedId)) setSelectedId(null);
+    if (failed.length) setError(`${failed.length} 个任务未处理：${failed[0].error ?? "未知错误"}`);
+    if (done.size) setNotice(`已${removed ? "彻底删除" : "清理"} ${done.size} 个任务，释放 ${bytes(result.freed)}`);
+    void queryClient.invalidateQueries({ queryKey: ["companion"] });
+  }
 
   function closeDrawer() {
     const trigger = toolbar.current?.querySelector<HTMLButtonElement>('[aria-expanded="true"]');
@@ -181,7 +269,7 @@ export function Companion() {
                 {SOURCES.map(({id,label}) => <button key={id} type="button" className="ny-button" aria-pressed={source === id} onClick={() => {setSource(id);setError(null);}}>{label}</button>)}
               </div>
               <label className="ny-field" hidden={source !== "live"}>直播间号<input className="ny-input" type="text" inputMode="numeric" disabled={source !== "live"} required={source === "live"} pattern="[1-9][0-9]*" title="只需输入数字直播间号，例如 12345" placeholder="例如：12345" value={room} onChange={event => setRoom(event.target.value)} /></label>
-              <label className="ny-field" hidden={source !== "replay"}>BV 号<input className="ny-input" type="text" disabled={source !== "replay"} required={source === "replay"} pattern="BV[A-Za-z0-9]{10}" title="只需输入 BV 开头的视频编号，例如 BV1xx411c7mD" placeholder="例如：BV1xx411c7mD" value={url} onChange={event => setUrl(event.target.value)} /></label>
+              <label className="ny-field" hidden={source !== "replay"}>视频链接 / BV 号<input className="ny-input" type="text" disabled={source !== "replay"} required={source === "replay"} pattern="(?:BV[A-Za-z0-9]{10}|https?://\S+)" title="支持 B 站 BV 号，以及 Bilibili / YouTube / Twitch 视频链接" placeholder="BV1xx411c7mD 或 https://youtube.com/watch?v=… 或 https://twitch.tv/…" value={url} onChange={event => setUrl(event.target.value)} /></label>
               <label className="ny-field" hidden={source !== "file"}>本地视频文件<input className="ny-input" type="file" disabled={source !== "file"} accept="video/*,.mkv,.flv,.ts" onChange={event=>setLocalFile(event.target.files?.[0] ?? null)} /></label>
               {source === "live" && <p className="companion-muted">录制正在直播的房间，按约 1–2 分钟连续处理；需要先配置 AI。点击停止后处理剩余内容。</p>}
               {source === 'live' && <>
@@ -227,8 +315,34 @@ export function Companion() {
         </form>
         <section className="companion-panel companion-history" aria-label="任务记录">
           <h2>任务记录 <span>{history.data?.length ?? 0}</span></h2>
+          {storage.data && <p className="companion-muted">共占用 {bytes(storage.data.total)}，其中可清理的合成／切片视频约 {bytes(storage.data.cleanable)}。</p>}
           {!history.data?.length && <p className="companion-muted">开始第一个任务后，结果会保存在这里。</p>}
-          {visibleJobs?.map(item => <button className="companion-history-item" key={item.id} aria-pressed={item.id === selectedId} onClick={() => { setSelectedId(item.id); setError(null); }}><span><strong>{item.mode === "saozi" ? item.live ? "臊子 · 实时" : "臊子" : item.mode === "highlights" ? "高光切片" : item.mode === "full" ? "完整视频" : "指定片段"}</strong><small>{new Date(item.started_at * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {item.id.slice(0, 6)}</small></span><span>{statusLabel(item)}</span></button>)}
+          {!!history.data?.length && <div className="companion-history-tools">
+            <label className="companion-history-selectall"><input type="checkbox" checked={allChecked} ref={element => { if (element) element.indeterminate = someChecked && !allChecked; }} onChange={toggleAll} />全选</label>
+            <span className="companion-muted">已选 {checked.size} 项</span>
+            <button className="ny-button" type="button" disabled={!checked.size || batchPending} onClick={() => { setNotice(null); setConfirmBatch("cleanup"); }}>清理产物</button>
+            <button className="ny-button ny-button--danger" type="button" disabled={!checked.size || batchPending} onClick={() => { setNotice(null); setConfirmBatch("delete"); }}>彻底删除</button>
+          </div>}
+          {confirmBatch && <div className="companion-history-confirm" role="alertdialog" aria-label={confirmBatch === "cleanup" ? "确认清理产物" : "确认彻底删除"}>
+            <p className="companion-muted">{confirmBatch === "cleanup"
+              ? `确认清理所选 ${checked.size} 个任务？将删除可重新生成的合成／切片视频与中断残留，保留原视频、切片原片与字幕翻译，之后可重新合成。`
+              : `确认彻底删除所选 ${checked.size} 个任务？将连同任务记录、原视频与全部结果一起删除，无法恢复。`}</p>
+            <div className="companion-history-confirm-actions">
+              <button className={`ny-button ${confirmBatch === "delete" ? "ny-button--danger" : "ny-button--primary"}`} type="button" disabled={batchPending} onClick={() => runBatch(confirmBatch)}>{batchPending ? "处理中…" : "确认"}</button>
+              <button className="ny-button" type="button" disabled={batchPending} onClick={() => setConfirmBatch(null)}>取消</button>
+            </div>
+          </div>}
+          {notice && <p className="companion-history-notice" role="status">{notice}</p>}
+          {visibleJobs?.map(item => {
+            const info = storage.data?.jobs[item.id];
+            const busyItem = running(item);
+            return <div className="companion-history-row" key={item.id}>
+              <label className="companion-history-check" title={busyItem ? "任务处理中，暂不能清理或删除" : "选择该任务"}>
+                <input type="checkbox" checked={checked.has(item.id)} disabled={busyItem} onChange={() => toggleCheck(item.id)} aria-label={`选择任务 ${item.id.slice(0, 6)}`} />
+              </label>
+              <button className="companion-history-item" aria-pressed={item.id === selectedId} onClick={() => { setSelectedId(item.id); setError(null); setNotice(null); }}><span><strong>{item.mode === "saozi" ? item.live ? "臊子 · 实时" : "臊子" : item.mode === "highlights" ? "高光切片" : item.mode === "full" ? "完整视频" : "指定片段"}</strong><small>{new Date(item.started_at * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} · {item.id.slice(0, 6)}{info ? ` · 占用 ${bytes(info.total)}${info.cleanable ? `（可清理 ${bytes(info.cleanable)}）` : ""}` : ""}</small></span><span>{statusLabel(item)}</span></button>
+            </div>;
+          })}
         </section>
       </aside>
       <aside ref={drawer} id="companion-drawer" className="companion-drawer" aria-label="工具选项" hidden={!tool}>
@@ -244,7 +358,6 @@ export function Companion() {
         {tool === "glossary" && <GlossaryPanel />}
         {tool === "shapes" && <ShapesPanel />}
         <section className="companion-panel companion-results" aria-label="导出结果" hidden={tool !== "export"}>
-          <p className="companion-muted">{job?.clips.length ?? 0} 个切片</p>
           {job?.segments.length ? <div className="companion-downloads">
             <a className="ny-button" href={fileUrl(job.id, "subtitles.srt", true)}><ArrowDownToLine size={16} />完整字幕 SRT</a>
             {hasBilingual && <a className="ny-button" href={fileUrl(job.id, "subtitles.zh.srt", true)}><ArrowDownToLine size={16} />完整译文字幕 SRT</a>}
@@ -252,11 +365,78 @@ export function Companion() {
             <a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a>
           </div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
+          {job?.state === "completed" && job.has_source && <div className="companion-result">
+            <div><strong>完整视频</strong><p>{job.duration ? time(job.duration) : ""} <span>· 全部字幕 — {job.clips.length} 个切片</span></p></div>
+            <div className="companion-result-actions">
+              <a className="ny-button" aria-label="下载完整视频" href={fileUrl(job.id, "source.mp4", true)}><ArrowDownToLine size={16} />原视频 MP4</a>
+              <div className="companion-burn">
+                <select className="ny-input" aria-label="完整视频合成字幕内容" value={sourceVariant} onChange={event => setBurnVariant({ ...burnVariant, "source.mp4": event.target.value as BurnVariant })}>
+                  <option value="bilingual" disabled={!hasBilingual}>双语字幕</option>
+                  <option value="zh" disabled={!hasBilingual}>仅译文</option>
+                  <option value="original">仅原文</option>
+                </select>
+                <button className="ny-button" type="button" disabled={sourceBurning || burn.isPending || !job.segments.length} onClick={() => { setError(null); burn.mutate({ id: job.id, clip: "source.mp4", variant: sourceVariant }); }}>
+                  {sourceBurning ? "正在合成…" : sourceBurn?.state === "completed" ? "重新合成视频" : sourceResumable ? "继续合成视频" : "合成完整视频"}
+                </button>
+                {sourceBurning && <span className="companion-burn-progress" role="status" aria-label={`完整视频合成进度 ${sourceBurnPercent}%`}>
+                  <span className="companion-burn-bar"><span style={{ width: `${sourceBurnPercent}%` }} /></span>
+                  <span className="companion-burn-percent">{sourceBurnPercent}%{sourceBurn?.segments_total ? `（${sourceBurn.segments_done ?? 0}/${sourceBurn.segments_total} 段）` : ""}</span>
+                </span>}
+                {sourceBurn?.state === "completed" && sourceBurn.file && <a className="ny-button" href={fileUrl(job.id, sourceBurn.file, true)}><ArrowDownToLine size={16} />下载合成版</a>}
+                {sourceBurn?.state === "failed" && <span className="companion-error" role="alert">{sourceBurn.error ?? "合成失败，请重试"}</span>}
+                {!hasBilingual && <span className="companion-muted">生成双语字幕后可合成译文版本</span>}
+              </div>
+            </div>
+          </div>}
+          {job?.state === "completed" && job.has_source && rangeCues.length > 0 && <div className="companion-result">
+            <div className="companion-range">
+              <div className="companion-range-row">
+                <input className="ny-input" aria-label="合成起始时间" placeholder="00:00 或秒数" value={rangeStart}
+                  onChange={event => { setRangeStart(event.target.value); setRangePick({ ...rangePick, start: null }); }} />
+                <select className="ny-input" aria-label="从字幕选择起始时间" value={rangePick.start ?? ""}
+                  onChange={event => { const index = Number(event.target.value); const cue = rangeCues[index]; if (!cue) return;
+                    setRangeStart(time(cue.start_seconds)); setRangePick({ ...rangePick, start: index }); }}>
+                  <option value="">从字幕选择起点…</option>
+                  {rangeCues.map((cue, index) => <option key={`rs${index}`} value={index}>{cueLabel(cue)}</option>)}
+                </select>
+              </div>
+              <div className="companion-range-row">
+                <input className="ny-input" aria-label="合成结束时间" placeholder="00:30 或秒数" value={rangeEnd}
+                  onChange={event => { setRangeEnd(event.target.value); setRangePick({ ...rangePick, end: null }); }} />
+                <select className="ny-input" aria-label="从字幕选择结束时间" value={rangePick.end ?? ""}
+                  onChange={event => { const index = Number(event.target.value); const cue = rangeCues[index]; if (!cue) return;
+                    setRangeEnd(time(cue.end_seconds)); setRangePick({ ...rangePick, end: index }); }}>
+                  <option value="">从字幕选择终点…</option>
+                  {rangeCues.map((cue, index) => <option key={`re${index}`} value={index}>{cueLabel(cue)}</option>)}
+                </select>
+              </div>
+              <div className="companion-burn">
+                <select className="ny-input" aria-label="时间段合成字幕内容" value={rangeVariant} onChange={event => setBurnVariant({ ...burnVariant, range: event.target.value as BurnVariant })}>
+                  <option value="bilingual" disabled={!hasBilingual}>双语字幕</option>
+                  <option value="zh" disabled={!hasBilingual}>仅译文</option>
+                  <option value="original">仅原文</option>
+                </select>
+                <button className="ny-button" type="button" disabled={!rangeStart.trim() || !rangeEnd.trim() || rangeBurning || burn.isPending || !!busy} onClick={submitRange}>
+                  {rangeBurning ? "正在合成…" : rangeEntry?.state === "completed" ? "重新合成这一段" : rangeResumable ? "继续合成这一段" : "合成所选时间段"}
+                </button>
+                {rangeBurning && <span className="companion-burn-progress" role="status" aria-label={`时间段合成进度 ${rangePercent}%`}>
+                  <span className="companion-burn-bar"><span style={{ width: `${rangePercent}%` }} /></span>
+                  <span className="companion-burn-percent">{rangePercent}%{rangeEntry?.segments_total ? `（${rangeEntry.segments_done ?? 0}/${rangeEntry.segments_total} 段）` : ""}</span>
+                </span>}
+                {rangeEntry?.state === "completed" && rangeEntry.file && <a className="ny-button" href={fileUrl(job.id, rangeEntry.file, true)}><ArrowDownToLine size={16} />下载合成版</a>}
+                {rangeEntry?.state === "failed" && <span className="companion-error" role="alert">{rangeEntry.error ?? "合成失败，请重试"}</span>}
+                {rangeError && <span className="companion-error" role="alert">{rangeError}</span>}
+              </div>
+            </div>
+          </div>}
           {job?.clips.map((item, index) => {
             const chosen = burnVariant[item.video] ?? "bilingual";
             const variant: BurnVariant = !hasBilingual && chosen !== "original" ? "original" : chosen;
             const entry = item.burns?.[variant];
             const burningThis = entry?.state === "burning";
+            const doneSegments = entry?.segments_done ?? 0;
+            const resumable = !burningThis && entry?.state !== "completed" && doneSegments > 0;
+            const burnPercent = Math.round((entry?.progress ?? 0) * 100);
             return <div className="companion-result" key={item.video}>
               <div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div>
               <div>
@@ -272,8 +452,12 @@ export function Companion() {
                   <option value="original">仅原文</option>
                 </select>
                 <button className="ny-button" type="button" disabled={burningThis || burn.isPending} onClick={() => { setError(null); burn.mutate({ id: job.id, clip: item.video, variant }); }}>
-                  {burningThis ? "正在合成…" : entry?.state === "completed" ? "重新合成视频" : "合成视频"}
+                  {burningThis ? "正在合成…" : entry?.state === "completed" ? "重新合成视频" : resumable ? "继续合成视频" : "合成视频"}
                 </button>
+                {burningThis && <span className="companion-burn-progress" role="status" aria-label={`合成进度 ${burnPercent}%`}>
+                  <span className="companion-burn-bar"><span style={{ width: `${burnPercent}%` }} /></span>
+                  <span className="companion-burn-percent">{burnPercent}%{entry?.segments_total ? `（${doneSegments}/${entry.segments_total} 段）` : ""}</span>
+                </span>}
                 {entry?.state === "completed" && entry.file && <a className="ny-button" href={fileUrl(job.id, entry.file, true)}><ArrowDownToLine size={16} />下载合成版</a>}
                 {entry?.state === "failed" && <span className="companion-error" role="alert">{entry.error ?? "合成失败，请重试"}</span>}
                 {!hasBilingual && <span className="companion-muted">生成双语字幕后可合成译文版本</span>}
@@ -302,14 +486,17 @@ export function Companion() {
           {!!job?.discontinuities?.length && <p className="companion-muted">发生 {job.discontinuities.length} 次断流，缺失内容无法恢复；已分别保留断流前后片段。</p>}
           {job?.state === "failed" && !job.can_resume && <p className="companion-muted">下载未完成，请检查链接后重新创建任务。</p>}
           {job?.can_resume && <button className="ny-button" disabled={!!busy || resume.isPending} onClick={() => { setError(null); resume.mutate(job.id); }}>恢复处理</button>}
+          {job?.state === "failed" && job.has_source && <button className="ny-button" disabled={!!busy || reasr.isPending || unavailable} onClick={() => { setError(null); reasr.mutate(job.id); }}>{reasr.isPending ? "正在重新识别…" : "重新识别"}</button>}
           {cancellable(job ?? undefined) && <button className="ny-button" disabled={cancel.isPending || job?.state === "cancelling"} onClick={() => { setError(null); cancel.mutate(job!.id); }}>{job?.state === "cancelling" ? "正在终止…" : "终止任务"}</button>}
           {job?.state === "completed" && <>
             <span className="translate-actions">
-              <button className="ny-button" disabled={!translationConfigured || !!busy || translate.isPending || !!hasBilingual || unavailable} onClick={() => { setError(null); translate.mutate(job.id); }}>{hasBilingual ? "中日双语字幕已生成" : ["failed", "interrupted"].includes(job.translation?.state) ? "继续生成中日双语字幕" : "生成中日双语字幕"}</button>
-              <label className="cue-toggle glossary-collect-toggle" title="翻译完成后自动识别未收录词条，加入术语表待确认候选">
-                <input type="checkbox" checked={config.data?.glossary_collect_candidates ?? true} disabled={glossarySettings.isPending || unavailable}
-                  onChange={event => glossarySettings.mutate(event.target.checked)} />收集术语候选词
-              </label>
+              <button className="ny-button" disabled={!job.has_source || !!busy || reasr.isPending || unavailable} onClick={() => { setError(null); reasr.mutate(job.id); }}>{reasr.isPending ? "正在重新识别…" : "重新识别"}</button>
+              <button className="ny-button" disabled={!translationConfigured || !!busy || translate.isPending || unavailable} onClick={() => { setError(null); translate.mutate({ id: job.id, clip_index: translateClipIndex === "all" ? undefined : Number(translateClipIndex) }); }}>{hasBilingual ? "重新翻译" : ["failed", "interrupted"].includes(job.translation?.state) ? "继续翻译" : "生成翻译"}</button>
+              <button className={`ny-button ${config.data?.glossary_collect_candidates ? "ny-button--primary" : ""}`} disabled={glossarySettings.isPending || unavailable} onClick={() => glossarySettings.mutate(!(config.data?.glossary_collect_candidates ?? true))}>{config.data?.glossary_collect_candidates ? "收集术语✓" : "收集术语"}</button>
+              <select className="ny-input translate-range" aria-label="翻译范围" value={translateClipIndex} onChange={event => setTranslateClipIndex(event.target.value)} disabled={translate.isPending || unavailable}>
+                <option value="all">全部切片</option>
+                {job.clips.map((item, index) => <option key={item.video} value={String(index)}>切片 {index + 1}（{time(item.start)} — {time(item.end)}）</option>)}
+              </select>
             </span>
             {job.translation && job.translation.state !== "not_started" && <p role="status">{job.translation.message ?? `翻译 ${job.translation.done}/${job.translation.total} 条`}{hasBilingual ? " · 已完成" : job.translation.state === "interrupted" ? " · 已中断，可继续" : ""}</p>}
             {job.translation?.error && <p className="companion-error" role="alert">{job.translation.error}</p>}
@@ -346,4 +533,3 @@ export function Companion() {
     </main>
   </div>;
 }
-
