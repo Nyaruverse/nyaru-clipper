@@ -155,3 +155,37 @@ def test_executor_reconciles_partial_publication_before_terminalizing_attempt(tm
         assert session.get(UnifiedOperation, ids[0]).state == 'interrupted'
         assert session.exec(select(UnifiedPublication)).one().state == 'committed'
     assert calls == ['engine invoked']
+
+
+def test_release_reaps_exited_child_before_retrying_denied_group_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    import subprocess
+    import sys
+    # Given an owned child that has exited and a macOS-style zombie EPERM response.
+    process = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+    process.wait(timeout=5)
+    signal_group = os.killpg
+    calls = []
+    def signal_once_denied(pid: int, sig: int) -> None:
+        calls.append((pid, sig))
+        if len(calls) == 1:
+            raise PermissionError(1, 'fixture zombie group')
+        signal_group(pid, sig)
+    monkeypatch.setattr(os, 'killpg', signal_once_denied)
+    # When release retries after reaping, then group absence is still positively checked.
+    Execution._release_process(process)
+    assert len(calls) == 2
+
+
+def test_release_does_not_swallow_persistent_group_permission_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    import subprocess
+    import sys
+    process = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+    process.wait(timeout=5)
+    def denied(pid: int, sig: int) -> None:
+        raise PermissionError(1, 'fixture persistent denial')
+    monkeypatch.setattr(os, 'killpg', denied)
+    # Given persistent permission denial, when release runs, then it fails closed.
+    with pytest.raises(PermissionError):
+        Execution._release_process(process)

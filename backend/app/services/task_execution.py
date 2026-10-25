@@ -119,7 +119,12 @@ class Execution:
     @staticmethod
     def _release_process(process: subprocess.Popen[str]) -> None:
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except PermissionError:
+                # macOS may deny signals to an exiting zombie; reap before checking the group again.
+                process.wait(timeout=2)
+                os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             process.wait()
             return
