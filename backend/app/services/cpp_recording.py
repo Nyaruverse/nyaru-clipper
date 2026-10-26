@@ -62,6 +62,7 @@ def process_cpp_recording(execution: Execution, request: JobInput, configuration
         directory = workflow.create_run(request.url, root,
             [(media.parse_time(start), media.parse_time(end)) for start, end in request.ranges],
             request.highlights, adapter, run_id=execution.task_id, saozi=request.saozi,
+            recognition_only=request.recognition_only,
             local_source=local_source, llm_model=selector.model if selector else None,
             progress=lambda message: execution.check())
     try:

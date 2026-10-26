@@ -29,12 +29,25 @@ class TopicAnalyzeOptions(TopicModel):
         return self
 
 
+class TopicExportRange(TopicModel):
+    index: int = Field(strict=True, ge=0, le=99)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def ordered_range(self) -> TopicExportRange:
+        if self.end_seconds <= self.start_seconds:
+            raise TopicError("结束时间必须大于开始时间")
+        return self
+
+
 class TopicClipOptions(TopicModel):
     indices: list[Annotated[int, Field(strict=True, ge=0, le=99)]] = Field(
         min_length=1, max_length=100
     )
     mode: Literal["separate", "combined"] = "separate"
     variant: Literal["original", "zh", "bilingual"] = "bilingual"
+    ranges: list[TopicExportRange] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def unique_indices(self) -> TopicClipOptions:
@@ -42,6 +55,11 @@ class TopicClipOptions(TopicModel):
             index < 0 or index > 100 for index in self.indices
         ):
             raise TopicError("切片索引必须唯一且在 0–100 范围内；顺序按所选顺序保留")
+        range_indices = [item.index for item in self.ranges]
+        if len(set(range_indices)) != len(range_indices):
+            raise TopicError("切片范围索引必须唯一")
+        if not set(range_indices).issubset(self.indices):
+            raise TopicError("切片范围只能覆盖所选索引")
         return self
 
 

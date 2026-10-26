@@ -882,6 +882,11 @@
             "title": "Ranges",
             "type": "array"
           },
+          "recognition_only": {
+            "default": false,
+            "title": "Recognition Only",
+            "type": "boolean"
+          },
           "saozi": {
             "default": false,
             "title": "Saozi",
@@ -2625,6 +2630,14 @@
             "title": "Mode",
             "type": "string"
           },
+          "ranges": {
+            "items": {
+              "$ref": "#/components/schemas/TopicExportRange"
+            },
+            "maxItems": 100,
+            "title": "Ranges",
+            "type": "array"
+          },
           "variant": {
             "default": "bilingual",
             "enum": [
@@ -2640,6 +2653,34 @@
           "indices"
         ],
         "title": "TopicClipOptions",
+        "type": "object"
+      },
+      "TopicExportRange": {
+        "additionalProperties": false,
+        "properties": {
+          "end_seconds": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Seconds",
+            "type": "number"
+          },
+          "index": {
+            "maximum": 99.0,
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "start_seconds": {
+            "minimum": 0.0,
+            "title": "Start Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "index",
+          "start_seconds",
+          "end_seconds"
+        ],
+        "title": "TopicExportRange",
         "type": "object"
       },
       "TranslateOperation": {

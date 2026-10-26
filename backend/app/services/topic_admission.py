@@ -91,6 +91,25 @@ def topic_configuration(
                 for index in request.indices
             ):
                 raise OperationConflict("切片索引越界或未分析")
+            if any(item.end_seconds > document.duration for item in request.ranges):
+                raise OperationConflict("切片范围超过视频时长")
+            if request.ranges:
+                ranges = {item.index: item for item in request.ranges}
+                result = result.model_copy(
+                    update={
+                        "segments": [
+                            segment.model_copy(
+                                update={
+                                    "start_seconds": ranges[index].start_seconds,
+                                    "end_seconds": ranges[index].end_seconds,
+                                }
+                            )
+                            if index in ranges
+                            else segment
+                            for index, segment in enumerate(result.segments)
+                        ]
+                    }
+                )
             if request.variant in {"zh", "bilingual"}:
                 if request.variant == "zh" and context.source.source_language == "zh":
                     pass

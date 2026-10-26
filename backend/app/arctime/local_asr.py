@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from app.arctime import media
 from app.services.subtitles import SubtitleSegment
 from app.services.task_execution import current_execution
@@ -31,8 +33,23 @@ def _vad_model() -> Path:
     return path
 
 
-def _segments_hash(rows: list[dict]) -> str:
-    return hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+def _segments_hash(rows: list[dict], language: str) -> str:
+    return hashlib.sha256(json.dumps({'segments': rows, 'language': language}, sort_keys=True,
+        ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+class DetectedLanguage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    language: str = Field(pattern=r'^[a-z]{2,3}$')
+
+
+class ASRLanguage(DetectedLanguage):
+    source_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class _Recognition(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    result: DetectedLanguage
 
 
 @dataclass(frozen=True)
@@ -64,32 +81,43 @@ class LocalASR:
             raise ValueError("ASR cache must not be a symlink")
         cache.mkdir(exist_ok=True)
         cues: list[SubtitleSegment] = []
+        languages: dict[str, float] = {}
         for index in range(math.ceil(duration / CHUNK_SECONDS)):
             start = index * CHUNK_SECONDS
             length = min(CHUNK_SECONDS, duration - start)
-            key = {"version": 1, "source_sha256": source_hash, "asr": identity, "start": start, "duration": length}
+            key = {"version": 2, "source_sha256": source_hash, "asr": identity, "start": start, "duration": length}
             destination = cache / f"chunk-{index + 1:04d}.json"
             if destination.is_symlink():
                 raise ValueError("ASR chunk must not be a symlink")
-            rows = self._cached_rows(destination, key)
-            if rows is None:
-                rows = self._recognize(video, cache, index + 1, start, length, identity)
-                media.write_json(destination, {"key": key, "segments": rows, "segments_sha256": _segments_hash(rows)})
+            result = self._cached_rows(destination, key)
+            if result is None:
+                result = self._recognize(video, cache, index + 1, start, length, identity)
+                rows, language = result
+                media.write_json(destination, {"key": key, "segments": rows, 'language': language,
+                    "segments_sha256": _segments_hash(rows, language)})
+            rows, language = result
+            languages[language] = languages.get(language, 0.) + sum(row['end_seconds'] - row['start_seconds'] for row in rows)
             for row in rows:
                 cues.append(SubtitleSegment(str(len(cues) + 1), start + row["start_seconds"],
                                             start + row["end_seconds"], row["text"]))
         if not cues:
             raise ValueError("No speech was recognized; check the source audio and language")
+        detected = ASRLanguage(source_sha256=source_hash, language=max(languages, key=lambda code: languages[code]))
+        target = directory / 'asr-language.json'
+        if target.is_symlink():
+            raise ValueError('ASR language must not be a symlink')
+        media.write_json(target, detected.model_dump())
         return cues
 
     @staticmethod
-    def _cached_rows(path: Path, key: dict) -> list[dict] | None:
+    def _cached_rows(path: Path, key: dict) -> tuple[list[dict], str] | None:
         if not path.exists():
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             rows = payload["segments"]
-            if payload["key"] != key or payload["segments_sha256"] != _segments_hash(rows):
+            language = DetectedLanguage.model_validate(payload).language
+            if payload["key"] != key or payload["segments_sha256"] != _segments_hash(rows, language):
                 return None
             if not isinstance(rows, list) or any(
                 not isinstance(row["text"], str) or not row["text"].strip()
@@ -99,11 +127,11 @@ class LocalASR:
                 return None
             if rows != sorted(rows, key=lambda row: (row["start_seconds"], row["end_seconds"])):
                 return None
-            return rows
+            return rows, language
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def _recognize(self, video: Path, cache: Path, index: int, start: float, length: float, identity: dict) -> list[dict]:
+    def _recognize(self, video: Path, cache: Path, index: int, start: float, length: float, identity: dict) -> tuple[list[dict], str]:
         log_path = cache / f"chunk-{index:04d}.log"
         if log_path.is_symlink():
             raise ValueError("ASR log must not be a symlink")
@@ -114,7 +142,7 @@ class LocalASR:
                 [media.tool_path("ffmpeg"), "-nostdin", "-v", "error", "-y", "-ss", str(start), "-i", str(video),
                  "-t", str(length), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(audio)],
                 [identity["binary"], "-m", identity["model"], "-f", str(audio), "-l", self.language,
-                 "-t", str(self.threads), "-osrt", "-of", str(prefix), "-ml", "80", "-sow", "-np"],
+                 "-t", str(self.threads), "-osrt", "-oj", "-of", str(prefix), "-ml", "80", "-sow", "-np"],
             ]
             with log_path.open("w", encoding="utf-8") as log:
                 tools = Path(identity['binary']).parent
@@ -126,6 +154,7 @@ class LocalASR:
                         log.write('\nRetrying invalid ASR timestamps with voice activity detection\n')
                         log.flush()
                         prefix.with_suffix('.srt').unlink()
+                        prefix.with_suffix('.json').unlink(missing_ok=True)
                     for command in pending:
                         execution = current_execution.get()
                         result = execution.run_command(command, log=log, timeout=7200,
@@ -137,8 +166,9 @@ class LocalASR:
                     subtitle = prefix.with_suffix(".srt")
                     if not subtitle.is_file():
                         raise RuntimeError(f"Local ASR failed to produce subtitles; see asr/{log_path.name}")
+                    language = _Recognition.model_validate_json(prefix.with_suffix('.json').read_bytes()).result.language if self.language == 'auto' else self.language
                     if not subtitle.read_text(encoding="utf-8-sig").strip():
-                        return []
+                        return [], language
                     segments = media.read_subtitles(subtitle, merge_contiguous_zero_duration=True)
                     tail_window = min(ASR_TAIL_WINDOW_SECONDS, length / 2)
                     end_tolerance = min(1.0, length / 2)
@@ -147,7 +177,7 @@ class LocalASR:
                         for c in segments)
                     if not invalid:
                         return [asdict(SubtitleSegment(c.id, c.start_seconds, min(c.end_seconds, length), c.text))
-                                for c in segments if c.start_seconds < length]
+                                for c in segments if c.start_seconds < length], language
                     if attempt:
                         raise ValueError("Local ASR timestamps exceed chunk duration")
         raise AssertionError('ASR retry did not terminate')

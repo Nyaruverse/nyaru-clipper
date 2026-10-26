@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 from app.arctime import media
-from app.arctime.local_asr import LocalASR
+from app.arctime.local_asr import ASRLanguage, LocalASR
 from app.services.asr_adapter import AsrAdapter
 from app.services.subtitles import render_srt
 
@@ -116,9 +116,10 @@ def write_manifest(directory: Path, job: dict) -> None:
 def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highlight_count: int | None,
                transcriber: AsrAdapter | None = None, *, run_id: str | None = None,
                progress: Callable[[str], None] | None = None, saozi: bool = False,
+               recognition_only: bool = False,
                local_source: Path | None = None, llm_model: str | None = None,
                owned_upload: OwnedUpload | None = None) -> Path:
-    if sum((bool(ranges), highlight_count is not None, saozi)) != 1 or (highlight_count is not None and highlight_count <= 0):
+    if sum((bool(ranges), highlight_count is not None, saozi, recognition_only)) != 1 or (highlight_count is not None and highlight_count <= 0):
         raise ValueError("Choose at least one explicit range or a positive highlight count")
     if any(not math.isfinite(s) or not math.isfinite(e) or not 0 <= s < e for s, e in ranges):
         raise ValueError("Clip bounds must be finite and satisfy 0 <= start < end")
@@ -138,6 +139,8 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
            "asr": identity, "completed_clips": []}
     if saozi:
         job["saozi"] = True
+    if recognition_only:
+        job['recognition_only'] = True
     if llm_model is not None:
         job.update(llm_model=llm_model, llm_provider='chatgpt' if llm_model.startswith('chatgpt:') else 'deepseek')
     write_manifest(directory, job)
@@ -158,7 +161,7 @@ def create_run(url: str, root: Path, ranges: list[tuple[float, float]], highligh
         if source != video:
             source.rename(video)
         duration = media.probe_video(video)
-        if not saozi:
+        if not saozi and not recognition_only:
             media.select_clips([], duration, ranges, highlight_count)
         job.update(state="downloaded", video=video.name, video_sha256=fingerprint(video), duration=duration)
         write_manifest(directory, job)
@@ -189,7 +192,7 @@ def _verify(directory: Path, job: dict) -> Path:
         raise ValueError("Source video changed; create a new run")
     if not math.isfinite(float(job["duration"])) or float(job["duration"]) <= 0:
         raise ValueError("Invalid media duration")
-    if not job.get("saozi"):
+    if not job.get("saozi") and not job.get('recognition_only'):
         media.select_clips([], float(job["duration"]), [tuple(r) for r in job["ranges"]], job["highlight_count"])
     return video
 
@@ -245,9 +248,16 @@ def resume_run(directory: Path, transcriber: AsrAdapter | None = None,
                                for c in cues):
                 raise ValueError("Local subtitles must be nonempty and within video duration")
             cues.sort(key=lambda c: (c.start_seconds, c.end_seconds))
+            detected_path = _path(directory, 'asr-language.json')
+            if detected_path.exists():
+                detected = ASRLanguage.model_validate_json(detected_path.read_bytes())
+                if detected.source_sha256 != job['video_sha256']:
+                    raise ValueError('ASR language belongs to another source')
+                job['detected_language'] = detected.language
             _publish_text(directory / "subtitles.srt", render_srt(cues))
             _publish_text(directory / "transcript.txt", "\n".join(c.text for c in cues) + "\n")
-            media.write_json(directory / "transcript.json", {"asr": job["asr"], "segments": [asdict(c) for c in cues]})
+            media.write_json(directory / "transcript.json", {"asr": job["asr"],
+                'detected_language': job.get('detected_language'), "segments": [asdict(c) for c in cues]})
             artifacts = {name: fingerprint(directory / name) for name in ("subtitles.srt", "transcript.txt", "transcript.json")}
             job.update(state="subtitles_ready", subtitles="subtitles.srt", artifacts=artifacts)
             write_manifest(directory, job)
@@ -262,6 +272,8 @@ def resume_run(directory: Path, transcriber: AsrAdapter | None = None,
                 job["state"] = "analyzing"
                 write_manifest(directory, job)
             selection = selector.plan(directory, cues, job["duration"], progress=notify)
+        elif job.get('recognition_only'):
+            selection = []
         else:
             selection = media.select_clips(cues, job["duration"], [tuple(r) for r in job["ranges"]], job["highlight_count"])
         if "selection" in job and selection != job["selection"]:
@@ -269,7 +281,7 @@ def resume_run(directory: Path, transcriber: AsrAdapter | None = None,
         if job["state"] != "completed":
             job.update(state="exporting", selection=selection)
             write_manifest(directory, job)
-        if not selection:
+        if not selection and not job.get('recognition_only'):
             notify("没有达到评分阈值的高光，保留完整字幕，不生成切片")
         for index, clip in enumerate(selection, start=1):
             target = directory / f"clip-{index:03d}.mp4"

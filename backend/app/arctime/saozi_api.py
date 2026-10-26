@@ -25,10 +25,12 @@ def saozi_router(manager: JobManager) -> APIRouter:
     @router.post("/jobs/upload", status_code=202)
     async def upload(request: Request, language: str = "auto", saozi: bool = True,
                      ranges: str = "[]", highlights: int | None = None, subtitle_template_id: str | None = None,
+                     recognition_only: bool = False,
                      engine: Literal['whisper.cpp', 'whisperx'] = 'whisper.cpp'):
         try:
             payload = JobInput(url="https://local.invalid", saozi=saozi, language=language, engine=engine,
-                               ranges=json.loads(ranges), highlights=highlights, subtitle_template_id=subtitle_template_id)
+                               ranges=json.loads(ranges), highlights=highlights, subtitle_template_id=subtitle_template_id,
+                               recognition_only=recognition_only)
         except (ValidationError, json.JSONDecodeError):
             raise HTTPException(422, "请检查视频语种及切片选项：选择有效时间段、高光数量或臊子其中一种") from None
         declared = request.headers.get("content-length")

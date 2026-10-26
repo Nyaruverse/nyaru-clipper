@@ -6,6 +6,51 @@ from pathlib import Path
 import pytest
 
 
+@pytest.mark.parametrize('end_id,accepted', [(10, False), (2, True), (5, True)])
+def test_highlight_analysis_rejects_whole_video_partition(tmp_path, monkeypatch, end_id, accepted):
+    import json
+    from uuid import uuid4
+    from pydantic import SecretStr
+    from sqlmodel import Session
+    from app.arctime import topic_segments
+    from app.arctime.subtitle_document import Cue, SubtitleDocument
+    from app.arctime.subtitle_style import SubtitleStyle
+    from app.arctime.topic_models import TopicAnalyzeOptions, TopicError
+    from app.services.task_execution import Executor
+    from app.services.task_operations import bind_task, enqueue_operation, set_admissions
+    from test_unified_operations import database
+
+    engine = database(tmp_path)
+    document = SubtitleDocument(source_fingerprint='0' * 64, revision=0, style=SubtitleStyle(),
+        cues=[Cue(id=f'cue-{i+1:06d}', start_seconds=i*30., end_seconds=(i+1)*30., text=f'内容{i}') for i in range(10)],
+        width=320, height=180, duration=300., fps=10.)
+    with Session(engine) as session:
+        task_id = bind_task(session, uuid4(), 'selective-highlights', 'g', origin='native').task_id
+        enqueue_operation(session, task_id, 'analyze_topics', {'input': {}, 'config': {}})
+        set_admissions(session, paused=False)
+        session.commit()
+    seen, results, errors = [], [], []
+
+    def response(model, key, prompt, content, requester):
+        seen.append(json.loads(content))
+        return json.dumps({'segments': [{'start_id': 1, 'end_id': end_id, 'title': '候选', 'summary': '精彩互动'}]})
+
+    monkeypatch.setattr(topic_segments, 'request_json', response)
+
+    def run(execution):
+        try:
+            results.append(topic_segments.analyze_document(execution, document, TopicAnalyzeOptions(max_segments=5),
+                'deepseek-chat', SecretStr('fixture-only'), None))
+        except TopicError as error:
+            errors.append(str(error))
+            raise
+
+    Executor(engine, tmp_path / 'tasks', tmp_path / 'guard').iteration(run)
+    assert bool(results) == accepted
+    assert bool(errors) != accepted
+    assert seen[0]['highlight_budget_seconds'] == 120.
+
+
 def test_topic_models_validate_boundaries_and_order() -> None:
     # Given the public analysis/export request boundary.
     assert importlib.util.find_spec("app.arctime.topic_models") is not None

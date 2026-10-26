@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import timezone
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from pydantic import JsonValue
 from sqlmodel import Session, select
@@ -28,6 +29,9 @@ def job_view(host: NativeHost, task_id: str, *, include_segments: bool) -> dict[
         request = body.get('request', {})
         failure = primary.failure_code if primary else None
         task = session.get(Task, task_id)
+        title = task.title if task else None
+        source_url = urlsplit(task.source_url if task else '')
+        source_label = '本地视频' if source_url.hostname == 'local.invalid' else source_url.hostname or ''
         if primary is None and task is not None:
             started = task.created_at.replace(tzinfo=timezone.utc).timestamp()
     unavailable = False
@@ -81,7 +85,8 @@ def job_view(host: NativeHost, task_id: str, *, include_segments: bool) -> dict[
                 result['bilingual_files'].append(item['bilingual_subtitles'])
                 result['bilingual_suffix'] = suffix
                 result['translation']['state'] = 'partial'
-    result.update(started_at=started, live=selection.live if selection is not None else bool(request.get('live')),
+    result.update(title=title, source_label=source_label,
+        started_at=started, live=selection.live if selection is not None else bool(request.get('live')),
         mode=selection.processing_mode if selection is not None else 'saozi' if request.get('saozi') else
         'highlights' if request.get('highlights') else 'ranges', can_stop=task_id in host.live_events,
         can_resume=primary is not None and state in {'failed', 'interrupted', 'cancelled'} and not unavailable
