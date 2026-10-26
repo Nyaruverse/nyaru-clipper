@@ -27,6 +27,7 @@ class JobInput(BaseModel):
     ranges: list[tuple[str, str]] = Field(default_factory=list, max_length=100)
     highlights: int | None = Field(default=None, ge=1, le=100)
     saozi: bool = False
+    recognition_only: bool = False
     live: bool = False
     language: str = Field(default="auto", pattern=r"^[a-z]{2,8}$")
     subtitle_template_id: str | None = Field(default=None, pattern=r'^(?:[0-9a-f]{32}|nyaru|default|white)$')
@@ -43,7 +44,7 @@ class JobInput(BaseModel):
         parsed = urlsplit(self.url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("请输入不含账号密码的 HTTP(S) 视频链接")
-        if sum((bool(self.ranges), self.highlights is not None, self.saozi)) != 1:
+        if sum((bool(self.ranges), self.highlights is not None, self.saozi, self.recognition_only)) != 1:
             raise ValueError("请选择指定时间段、高光或臊子模式")
         if self.live and (not self.saozi or parsed.hostname != "live.bilibili.com"
                           or parsed.port is not None or parsed.query or parsed.fragment

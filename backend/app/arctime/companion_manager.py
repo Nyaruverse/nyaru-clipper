@@ -291,6 +291,7 @@ class JobManager(companion_llm.LLMConfig):
                 directory = workflow.create_run(request.url, self.root, ranges, request.highlights, adapter, run_id=job_id,
                                                 progress=lambda message: self.update("downloading", message),
                                                 saozi=request.saozi, local_source=local_source, llm_model=selected,
+                                                recognition_only=request.recognition_only,
                                                 owned_upload=owned_upload)
                 snapshot = self.read_json(directory / 'job.json')
                 if style_template is not None:

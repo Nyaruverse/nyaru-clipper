@@ -51,6 +51,44 @@ def test_chunks_rebase_timestamps_and_reuse_cache(tmp_path, engine, monkeypatch)
     assert len(calls) == 4
 
 
+def test_auto_language_uses_engine_result_and_survives_chunk_cache(tmp_path, engine, monkeypatch):
+    from dataclasses import replace
+    from pathlib import Path
+    engine = replace(engine, language='auto')
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    calls = fake_tools(monkeypatch)
+    original = local_asr.subprocess.run
+
+    def recognize(command, **kwargs):
+        result = original(command, **kwargs)
+        if command[0] == 'whisper-cli':
+            prefix = Path(command[command.index('-of') + 1])
+            prefix.with_suffix('.json').write_text(json.dumps({'result': {'language': 'ja'}}))
+        return result
+
+    monkeypatch.setattr(local_asr.subprocess, 'run', recognize)
+    cues = engine.transcribe(video, tmp_path, 310)
+    detected = json.loads((tmp_path / 'asr-language.json').read_bytes())
+    assert detected == {'source_sha256': local_asr.media.fingerprint(video), 'language': 'ja'}
+    assert all('-oj' in command for command in calls if command[0] == 'whisper-cli')
+    (tmp_path / 'asr-language.json').unlink()
+    assert engine.transcribe(video, tmp_path, 310) == cues
+    assert json.loads((tmp_path / 'asr-language.json').read_bytes()) == detected
+    assert len(calls) == 4
+
+
+def test_auto_language_never_guesses_from_subtitle_text(tmp_path, engine, monkeypatch):
+    from dataclasses import replace
+    engine = replace(engine, language='auto')
+    video = tmp_path / 'source.mp4'
+    video.write_bytes(b'source')
+    fake_tools(monkeypatch)
+    with pytest.raises((ValueError, OSError), match='language|json'):
+        engine.transcribe(video, tmp_path, 10)
+    assert not (tmp_path / 'asr/chunk-0001.json').exists()
+
+
 def test_changed_source_does_not_reuse_cached_text(tmp_path, engine, monkeypatch):
     video = tmp_path / "source.mp4"
     video.write_bytes(b"source")

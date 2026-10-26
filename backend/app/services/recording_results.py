@@ -51,6 +51,7 @@ class _Checkpoint(BaseModel):
 class _Transcript(BaseModel):
     model_config = ConfigDict(frozen=True)
     segments: tuple[ArtifactCue, ...]
+    detected_language: str | None = Field(default=None, pattern=r'^[a-z]{2,3}$')
 
 
 class _Translation(BaseModel):
@@ -100,9 +101,11 @@ def publish_companion_result(execution: Execution, directory: Path) -> ResolvedA
     if provenance:
         provenance_id = execution.publish('recognition-provenance', {f'provenance_{index:04d}': path for index, path in enumerate(provenance)})
         supporting = tuple(_members(execution, provenance_id).values())
+    transcript = _Transcript.model_validate_json(_checked(directory, 'transcript.json', job.artifacts['transcript.json']).read_bytes())
     context = WorkstationArtifacts(source_instance_id=instance, legacy_id=legacy_id, root=execution.root,
         duration=job.duration, video=source['source_video'], transcript=source['transcript_json'],
-        subtitles=source['subtitle_srt'], source_language=job.asr.language, clips=tuple(clips), supporting=supporting)
+        subtitles=source['subtitle_srt'], source_language=transcript.detected_language or job.asr.language,
+        clips=tuple(clips), supporting=supporting)
     context = _save_context(execution, context)
     path = directory / 'translation.json'
     if path.is_file():

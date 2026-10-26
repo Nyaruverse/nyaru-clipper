@@ -60,6 +60,28 @@ def test_complete_local_run_resume_does_not_retranscribe(tmp_path, fake_media):
     assert asr.calls == 1
 
 
+def test_recognition_only_preserves_source_and_resolved_language_without_exporting(tmp_path, fake_media):
+    from app.arctime.companion_models import JobInput
+    asr = FakeASR()
+    original = asr.transcribe
+
+    def recognize(video, directory, duration):
+        workflow.media.write_json(directory / 'asr-language.json', {
+            'source_sha256': workflow.fingerprint(video), 'language': 'ja'})
+        return original(video, directory, duration)
+
+    asr.transcribe = recognize
+    request = JobInput(url='https://example.com/v.mp4', recognition_only=True)
+    directory = workflow.create_run(request.url, tmp_path, [], None, asr, recognition_only=request.recognition_only)
+    result = workflow.resume_run(directory, asr)
+    assert result['state'] == 'completed' and result['selection'] == [] and result['completed_clips'] == []
+    assert result['detected_language'] == 'ja'
+    assert json.loads((directory / 'transcript.json').read_bytes())['detected_language'] == 'ja'
+    assert workflow.resume_run(directory, asr) == result and asr.calls == 1
+    with pytest.raises(ValueError):
+        JobInput(url=request.url, recognition_only=True, ranges=[('1', '4')])
+
+
 def test_failed_local_recognition_can_retry(tmp_path, fake_media):
     asr = FakeASR()
     directory = new_run(tmp_path, asr)

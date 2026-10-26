@@ -969,6 +969,11 @@ export interface components {
                 string
             ][];
             /**
+             * Recognition Only
+             * @default false
+             */
+            recognition_only: boolean;
+            /**
              * Saozi
              * @default false
              */
@@ -1699,12 +1704,23 @@ export interface components {
              * @enum {string}
              */
             mode: "separate" | "combined";
+            /** Ranges */
+            ranges?: components["schemas"]["TopicExportRange"][];
             /**
              * Variant
              * @default bilingual
              * @enum {string}
              */
             variant: "original" | "zh" | "bilingual";
+        };
+        /** TopicExportRange */
+        TopicExportRange: {
+            /** End Seconds */
+            end_seconds: number;
+            /** Index */
+            index: number;
+            /** Start Seconds */
+            start_seconds: number;
         };
         /** TranslateOperation */
         TranslateOperation: {
