@@ -57,10 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                 }
                 return arguments[index + 1]
             }
+            let defaultData = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Nyaru Clipper", isDirectory: true)
+            let registeredRuntime = defaultData.appendingPathComponent("unified/runtime.json")
             let runtime = try option("--unified-runtime")
+                ?? (FileManager.default.fileExists(atPath: registeredRuntime.path) ? registeredRuntime.path : nil)
             let guardRecipe = try option("--migration-guard")
             let data = runtime.map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
-                ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Nyaru Clipper", isDirectory: true)
+                ?? defaultData
             try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             ready = data.appendingPathComponent("startup-\(UUID().uuidString).json")
             let logURL = data.appendingPathComponent("app.log")

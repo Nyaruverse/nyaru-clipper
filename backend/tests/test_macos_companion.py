@@ -9,6 +9,29 @@ from app.arctime import media
 from app.arctime.macos import prepare_model
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS Foundation and swiftc")
+def test_native_registered_runtime_default_and_explicit_override(tmp_path: Path) -> None:
+    source = (Path(__file__).resolve().parents[2] / "desktop/macos/App.swift").read_text()
+    start = source.index('            let runtime = try option("--unified-runtime")')
+    end = source.index('            let guardRecipe', start)
+    harness = tmp_path / "runtime-selection.swift"
+    harness.write_text(
+        'import Foundation\nlet arguments = CommandLine.arguments\n'
+        'let registeredRuntime = URL(fileURLWithPath: arguments[1]).appendingPathComponent("unified/runtime.json")\n'
+        'func option(_ name: String) throws -> String? { arguments.count > 2 ? arguments[2] : nil }\n'
+        + source[start:end] + '\nprint(runtime ?? "legacy")\n'
+    )
+    executable = tmp_path / "runtime-selection"
+    subprocess.run(["/usr/bin/swiftc", str(harness), "-o", str(executable)], check=True, timeout=60)
+    def selected(*extra: str) -> str:
+        return subprocess.check_output([str(executable), str(tmp_path), *extra], text=True).strip()
+    assert selected() == "legacy"
+    manifest = tmp_path / "unified/runtime.json"
+    manifest.parent.mkdir(); manifest.write_text('{}')
+    assert selected() == str(manifest)
+    assert selected('/explicit/fixture/runtime.json') == '/explicit/fixture/runtime.json'
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS AppKit and swiftc")
 def test_native_quit_marks_only_discard_as_destructive(tmp_path: Path) -> None:
     source = (Path(__file__).resolve().parents[2] / "desktop/macos/App.swift").read_text()
