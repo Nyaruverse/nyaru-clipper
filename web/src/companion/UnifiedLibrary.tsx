@@ -20,7 +20,7 @@ function Metadata({item}: {item: Item}) {
   useEffect(() => {if (!dirty) queries.setQueryData(key, savedDraft(item));}, [item.version]);
   const mutation = useMutation({mutationFn: async (patch: {title?: string; tags?: string[]; archived?: boolean}) =>
     result(await client.PATCH('/api/v2/library/{task_id}', {params: {path: {task_id: item.task_id}}, body: {expected_version: version, ...patch}}), conflict),
-    onSuccess: saved => {queries.setQueryData(key, savedDraft(saved));void queries.invalidateQueries({queryKey: ['companion', 'library']});}});
+    onSuccess: saved => {queries.setQueryData(key, savedDraft(saved));void queries.invalidateQueries({queryKey: ['companion', 'library']});void queries.invalidateQueries({queryKey: ['companion', 'job', item.task_id]});}});
   return <details className="companion-metadata"><summary>任务标题与标签</summary>
     <label className="ny-field">任务标题<input className="ny-input" value={title} disabled={mutation.isPending} maxLength={120} onChange={e => edit({title: e.target.value, dirty: true})}/></label>
     <label className="ny-field">任务标签<input className="ny-input" value={tags} disabled={mutation.isPending} placeholder="多个标签用逗号分隔" onChange={e => edit({tags: e.target.value, dirty: true})}/></label>

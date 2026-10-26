@@ -1,4 +1,18 @@
-# Nyaru Studio prototype v1
+# Nyaru Studio
+
+## Approved Watch Workbench (2026-10-26)
+
+The user's selected reference is `nyaru-highlight-designs.html`, variant **看片工作台**, reviewed in this chat. This supersedes the daily-workspace layout below; template design and the separate Workstation design retain their existing scope.
+
+- Video and real highlight candidates are peer regions in a two-column workspace (roughly 3:2). The player remains mounted during tool and settings navigation. A task context, saved-document status and compact queue entry replace large status cards.
+- The highlight pane owns candidate scrolling; its selection count, selected duration, order and generation action remain reachable. Analysis inputs and optional signal details use progressive disclosure. Auxiliary task/template/subtitle tools can be closed and reclaim their column.
+- Candidate preview seeks its actual source range and supports explicit loop/stop. Trim edits are validated locally and at the export boundary, scoped to task and analysis identity. Browser-local highlight drafts survive panel unmounts and task round trips within the session; new analysis results reconcile selection safely.
+- Generation has an explicit confirmation with ordered segments, independent subtitle language and range summary. Only the existing real queue creates output files. No mocked data, fake progress or network call runs merely from navigation.
+- Reuse the Companion palette, typography, radii, 4px spacing and 44px accessible targets below. Selection uses a tonal wash and checkbox/order number, never an accent stripe. At <=1000px use a compact video plus bounded candidate region; at <=640px reflow without horizontal overflow and retain accessible playback/selection actions.
+- Honest states: show full/partial coverage only when provided; distinguish unknown coverage, no candidates, unavailable scores, queued/running, stale documents and failures. Preserve the existing saved-document staleness and incomplete-translation protections, even when these are stricter than the prototype.
+- Acceptance: real UI at 390/960/1440/1920 widths under both system appearances (Companion remains light), keyboard selection/order/confirmation, restored drafts, real queue/trimmed export evidence, and adjacent live/subtitle/template regressions. No new dependencies or formal installation are part of this change.
+
+## Historical Studio prototype v1
 
 ## 1. Atmosphere & identity
 An approved light macOS creative workspace. Video leads, mint identifies actions and selected content. Daily use and template design share a stable toolbar, preview and inspector. This is a standalone interactive prototype, not production integration. The earlier generated concept defines direction, not an exact pixel target: the subsequently approved two-mode control and separate settings page supersede its six-button toolbar.

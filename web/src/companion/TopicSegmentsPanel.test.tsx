@@ -1,10 +1,11 @@
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
-import {afterEach, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {TopicSegmentsPanel} from './TopicSegmentsPanel';
 
 const segments = [0, 1].map(index => ({index, start_seconds: index * 30, end_seconds: (index + 1) * 30,
   title: `话题${index + 1}`, summary: '字幕里的内容', score: index * 30 + 40, hot_words: []}));
+beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 function setup(revision = 2, state = 'completed') {
   const fetcher = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
@@ -26,7 +27,9 @@ it('exports selected topics in click order even when displayed by score', async 
   fireEvent.change(screen.getByLabelText('话题排序'), {target: {value: 'score'}});
   fireEvent.click(screen.getByLabelText('选择话题2'));
   fireEvent.click(screen.getByLabelText('选择话题1'));
+  await waitFor(() => expect(screen.getByRole('button', {name: '生成选中视频'})).toBeEnabled());
   fireEvent.click(screen.getByRole('button', {name: '生成选中视频'}));
+  fireEvent.click(await screen.findByRole('button', {name: '加入生成队列'}));
   await waitFor(() => expect(fetcher.mock.calls.some(([path, options]) => String(path).endsWith('/topic-clips') && options?.method === 'POST')).toBe(true));
   const call = fetcher.mock.calls.find(([path, options]) => String(path).endsWith('/topic-clips') && options?.method === 'POST');
   expect(JSON.parse(String(call?.[1]?.body)).indices).toEqual([1, 0]);
@@ -41,6 +44,6 @@ it('rejects export of a topic analysis from an older editing revision', async ()
 });
 it('does not claim subtitles changed before the first analysis', async () => {
   setup(3, 'not_started');
-  await screen.findByText(/尚未生成/);
+  await screen.findByText(/尚未分析/);
   expect(screen.queryByText(/字幕已修改/)).not.toBeInTheDocument();
 });

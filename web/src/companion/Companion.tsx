@@ -12,7 +12,7 @@ import { TemplatePreview } from "./TemplatePreview";
 import { parseStudioDefaults } from "./studioModel";
 import { LlmSettings } from "./LlmSettings";
 import { SubtitleEditor } from "./SubtitleEditor";
-import { TopicSegmentsPanel } from './TopicSegmentsPanel';
+import { TopicSegmentsPanel, type TopicPreview, type TopicOutput } from './TopicSegmentsPanel';
 import { CueEditor } from "./CueEditor";
 import { useSubtitleDocument } from "./useSubtitleDocument";
 import { useNativeQuitBridge } from "./useNativeQuitBridge";
@@ -69,7 +69,8 @@ export function Companion() {
   const [source, setSource] = useState<Source>("replay");
   const [room, setRoom] = useState("");
   const [liveTemplate,setLiveTemplate] = useState<string | null>(null);
-  const processingMode = source === "live" ? "saozi" : mode;
+  const [recordingFirst, setRecordingFirst] = useState(true);
+
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [ranges, setRanges] = useState<[string, string][]>([["00:00", "00:30"]]);
   const [highlights, setHighlights] = useState(3);
@@ -85,6 +86,8 @@ export function Companion() {
   const video = useRef<HTMLVideoElement>(null);
   const config = useQuery({ queryKey: ["companion", "config"], queryFn: () => api<CompanionConfig>("/config"), refetchInterval: 15000 });
   const unified = config.data?.unified_operations === true;
+  const processingMode = source === "live" ? "saozi" : unified && recordingFirst ? "recognition" : mode;
+  const watchMode = unified && studioMode === 'daily' && (tool === null || tool === 'topics');
   const engineMissing = config.data?.engine_missing?.[source === 'live' ? 'whisper.cpp' : engine];
   const processingReady = engineMissing ? engineMissing.length === 0 : config.data?.ready;
   const operations = useUnifiedOperations(unified);
@@ -120,8 +123,13 @@ export function Companion() {
   const [linked,setLinked] = useState(false);
   const [currentTime,setCurrentTime] = useState(0);
   const [loopCue,setLoopCue] = useState(false);
+  const [output,setOutput] = useState<TopicOutput | null>(null);
+  const [topicPreview,setTopicPreview] = useState<TopicPreview | null>(null);
+  const [loopTopic,setLoopTopic] = useState(true);
+  const [topicRangeTarget,setTopicRangeTarget] = useState<HTMLDivElement | null>(null);
   const selectedCue = documentDraft?.cues.find(cue => cueSelection.includes(cue.id));
-  const loop = loopCue && selectedCue ? {start:selectedCue.start_seconds,end:selectedCue.end_seconds} : null;
+  const loop = tool === 'subtitle' && loopCue && selectedCue ? {start:selectedCue.start_seconds,end:selectedCue.end_seconds}
+    : watchMode && loopTopic && topicPreview ? {start:topicPreview.start_seconds,end:topicPreview.end_seconds} : null;
   useEffect(() => { setLoopCue(false); },[selectedId]);
   useEffect(() => {
     const key = JSON.stringify([selectedId, documentDraft?.source_fingerprint]);
@@ -148,6 +156,7 @@ export function Companion() {
     if (!payload.file) return api<{id:string}>("/jobs", payload);
     const params = new URLSearchParams({language:payload.language,saozi:String(!!payload.saozi),ranges:JSON.stringify(payload.ranges)});
     if (payload.engine) params.set('engine', payload.engine);
+    if (payload.recognition_only) params.set('recognition_only', 'true');
     if (payload.subtitle_template_id) params.set("subtitle_template_id",payload.subtitle_template_id);
     if (payload.highlights !== null) params.set("highlights", String(payload.highlights));
     const response = await fetch(`/companion-api/jobs/upload?${params}`, {method:"POST",body:payload.file});
@@ -155,7 +164,7 @@ export function Companion() {
     if (!response.ok) throw new Error(result.detail ?? "录像导入失败，请检查磁盘空间");
     return result;
   },
-    onSuccess: result => { setSelectedId(result.id); setPreview("source.mp4"); void queryClient.invalidateQueries({ queryKey: ["companion", "jobs"] }); },
+    onSuccess: result => { setSelectedId(result.id); setPreview("source.mp4"); if (unified) {setStudioMode('daily');setTool('topics');} void queryClient.invalidateQueries({ queryKey: ["companion", "jobs"] }); },
     onError: err => setError(err.message) });
   const resume = useMutation({ mutationFn: async (id: string) => {
     const response = await fetch(`/companion-api/jobs/${id}/resume`, { method: "POST" });
@@ -167,14 +176,15 @@ export function Companion() {
     onSuccess:()=>{void queryClient.invalidateQueries({queryKey:["companion"]});},onError:err=>setError(err.message)});
 
   useRetainedTask(config.data, history.data, selectedId, setSelectedId);
-  useEffect(() => { setPreview("source.mp4"); setSeek(null); }, [selectedId]);
+  useEffect(() => { setPreview("source.mp4"); setSeek(null); setTopicPreview(null); setOutput(null); }, [selectedId]);
   useEffect(() => { if (job?.live && !job.has_source && preview === "source.mp4" && job.clips.length) setPreview(job.clips[0].video); }, [job,preview]);
   useEffect(() => {
     if (seek !== null && video.current && video.current.readyState >= 1) { video.current.currentTime = seek; setSeek(null); }
   }, [seek, preview]);
 
-  const llmConfigured = config.data?.llm_configured ?? (!!config.data?.translation_configured && (!config.data.translation_model || config.data.translation_model === "deepseek-flash"));
-  const taskModel = job?.translation?.model ?? job?.saozi_model;
+  const llmConfigured = config.data?.llm_configured ?? (!!config.data?.translation_configured && !config.data.translation_config_error && (!config.data.translation_model || config.data.translation_model === "deepseek-flash"));
+  const savedModel = job?.translation?.model ?? job?.saozi_model;
+  const taskModel = savedModel === "existing-result" || savedModel === "saved-document" ? undefined : savedModel;
   const translationConfigured = taskModel ? taskModel.startsWith("chatgpt:")
     ? taskModel.length > "chatgpt:".length && !!config.data?.chatgpt?.connected && !!config.data.chatgpt.sharing
     : taskModel === "deepseek-flash" && !!config.data?.translation_configured && !config.data.translation_config_error
@@ -190,6 +200,7 @@ export function Companion() {
       if (source === "file" && !localFile) throw new Error("请选择本地视频文件");
       create.mutate({url:source === "live" ? room.trim() : url.trim(),ranges:processingMode === "ranges" ? ranges : [],
         highlights:processingMode === "highlights" ? highlights : null,language,
+        ...(processingMode === "recognition" ? {recognition_only:true} : {}),
         ...(unified ? {engine: source === 'live' ? 'whisper.cpp' : engine} : {}),
         ...(processingMode === "saozi" ? {saozi:true,live:source === "live"} : {}),
         ...(liveTemplateId ? {subtitle_template_id:liveTemplateId} : {}),
@@ -206,6 +217,7 @@ export function Companion() {
   const subtitleFile = showBilingual ? bilingualFile(job, clip?.subtitles ?? "subtitles.srt", 'vtt') : (clip?.subtitles ?? "subtitles.srt").replace(/\.srt$/, '.vtt');
   const visibleSegments = documentDraft ? documentDraft.cues.map(cue => ({...cue,text:showBilingual && cue.translation ? `${cue.text}\n${cue.translation}` : cue.text})) : (showBilingual ? job?.bilingual_segments : job?.segments) ?? [];
   const seekSource = (at: number) => {
+    setOutput(null);
     if (job?.has_source) { setPreview('source.mp4'); setSeek(at); }
     else { const target = job?.clips.find(item => item.start <= at && at < item.end); if (target) {setPreview(target.video);setSeek(at-target.start);} }
   };
@@ -223,14 +235,14 @@ export function Companion() {
     }
   }}>
     <div ref={toolbar} className="companion-commandbar">
-      <StudioToolbar mode={studioMode} onMode={changeMode} settings={settingsOpen} onSettings={()=>openSettings()} onBack={leaveSettings} tool={tool}
+      <StudioToolbar mode={studioMode} workbench={unified} onMode={changeMode} settings={settingsOpen} onSettings={()=>openSettings()} onBack={leaveSettings} tool={tool}
         onCreate={()=>{applyLatestDefaults();setTool(current=>current==='create'?null:'create');}} onHistory={()=>setTool(current=>current==='history'?null:'history')}
         onPrimary={()=>{if(studioMode==='design'){setTool('subtitle');requestAnimationFrame(()=>drawer.current?.querySelector<HTMLButtonElement>('[data-save-template]')?.click());}else setTool(current=>current==='export'?null:'export');}} />
     </div>
     <StudioSettings open={settingsOpen} category={settingsCategory} onCategory={setSettingsCategory} defaults={defaults.data} error={defaults.error} settings={settings.data} config={config.data} onDirty={setSettingsDirty}
       ai={<><LlmSettings config={config.data} busy={!!busy}/>{taskModel&&<p className="companion-footnote">当前任务模型：{taskModel}</p>}</>} templates={<SubtitleEditor embedded settings={settings.data} error={settings.error} style={settingsStyle ?? settings.data?.style ?? defaultStyle} onStyle={setSettingsStyle} project={settingsProject} onProject={setSettingsProject} busy={!!busy} fonts={fonts.data}/>}/>
-    <main hidden={settingsOpen} className={`companion-layout has-drawer studio-${studioMode}`}>
-      <aside ref={drawer} id="companion-drawer" className="companion-drawer" aria-label="工具选项" >
+    <main hidden={settingsOpen} className={`companion-layout has-drawer studio-${studioMode} ${watchMode ? 'is-watch-workbench' : ''}`}>
+      <aside hidden={watchMode} ref={drawer} id="companion-drawer" className="companion-drawer" aria-label="工具选项" >
         <div className="companion-drawer-heading"><h2>{tool ? TOOLS.find(item => item.id === tool)?.label : "本次任务"}</h2><button type="button" className="ny-button ny-button--quiet" aria-label="收起工具面板" onClick={closeDrawer}><X size={16} /></button></div>
         <div className="studio-inspector-tools"><button className="ny-button" onClick={()=>setTool('subtitle')}>字幕样式</button><button data-slice-trigger className="ny-button" onClick={()=>setTool('slice')}>切片方式</button>{unified && studioMode === 'daily' && <button className="ny-button" onClick={()=>setTool('topics')}>高光分析</button>}<button className="ny-button" onClick={()=>openSettings('AI与翻译')}>AI 设置</button></div>
         <div className="companion-drawer-content">
@@ -264,16 +276,17 @@ export function Companion() {
                 <button className="ny-button" type="button" onClick={()=>openSettings('字幕与模板')}>导入 ASS 或管理字幕模板</button>
               </>}
               <label className="ny-field">视频语种<select className="ny-input" value={language} onChange={event => setLanguage(event.target.value)}><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select></label>
-              <button className="ny-button" type="button" onClick={() => setTool("slice")}><Scissors size={16} />{processingMode === "ranges" ? `指定时间段 · ${ranges.length} 段` : processingMode === "saozi" ? "臊子" : `高光自动切片 · 最多 ${highlights} 段`}</button>
+              <button className="ny-button" type="button" onClick={() => setTool("slice")}><Scissors size={16} />{processingMode === "recognition" ? "先识别，再审阅高光" : processingMode === "ranges" ? `指定时间段 · ${ranges.length} 段` : processingMode === "saozi" ? "臊子" : `高光自动切片 · 最多 ${highlights} 段`}</button>
               </div>
               <div className="companion-task-fields" data-tool-pane="slice" hidden={tool !== "slice"}>
               <fieldset className="companion-mode" disabled={source === "live"}><legend>切片方式</legend>
-                <label className={processingMode === "ranges" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "ranges"} onChange={() => setMode("ranges")} />指定时间段</label>
-                <label className={processingMode === "highlights" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "highlights"} onChange={() => setMode("highlights")} />高光自动切片</label>
-                <label className={processingMode === "saozi" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "saozi"} onChange={() => setMode("saozi")} />臊子</label>
+                {unified && <label className={processingMode === "recognition" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "recognition"} onChange={() => setRecordingFirst(true)}/>先识别，再审阅高光</label>}
+                <label className={processingMode === "ranges" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "ranges"} onChange={() => {setRecordingFirst(false);setMode("ranges");}} />指定时间段</label>
+                <label className={processingMode === "highlights" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "highlights"} onChange={() => {setRecordingFirst(false);setMode("highlights");}} />高光自动切片</label>
+                <label className={processingMode === "saozi" ? "is-selected" : ""}><input type="radio" name="mode" checked={processingMode === "saozi"} onChange={() => {setRecordingFirst(false);setMode("saozi");}} />臊子</label>
               </fieldset>
               {source === "live" && <p className="companion-muted">实时录播使用臊子连续处理；下载视频和本地视频可选择其他切片方式。</p>}
-              {processingMode === "ranges" ? <div className="companion-ranges">
+              {processingMode === "recognition" ? <p className="companion-muted">保留完整视频并识别字幕；审阅高光后再确认片段范围和生成视频。</p> : processingMode === "ranges" ? <div className="companion-ranges">
                 <p className="companion-muted">支持秒数或时:分:秒，时间不能超过视频时长。</p>
                 {ranges.map((range, index) => <div className="companion-range" key={index}>
                   <span className="companion-muted">{String(index + 1).padStart(2, "0")}</span>
@@ -292,11 +305,6 @@ export function Companion() {
           </form>
           <p className="companion-footnote">识别和切片在本机完成 · 下载需要网络</p>
         </section>
-        {tool === 'topics' && studioMode === 'daily' && <section className="companion-panel">
-          {unified && job?.state === 'completed' && selectedId && documentDraft
-            ? <TopicSegmentsPanel key={selectedId} jobId={selectedId} documentRevision={documentDraft.revision} prepare={editing.flush} onSeek={seekSource} />
-            : <p className="companion-muted">请选择统一任务库中已完成识别的任务，再分析高光。</p>}
-        </section>}
         <section className="companion-panel" hidden={tool !== "subtitle"}>
           {studioMode === 'daily' && job?.state === 'completed' && <div className="cue-session-status">
             <p role="status">{editing.saving ? '正在保存字幕编辑稿…' : editing.dirty ? '有未保存修改，稍候自动保存' : documentDraft ? `字幕编辑稿已保存 · 第 ${documentDraft.revision} 版` : '载入字幕编辑稿…'}</p>
@@ -321,7 +329,7 @@ export function Companion() {
           <p className="companion-muted">{job?.clips.length ?? 0} 个切片</p>
           {job?.segments.length ? <div className="companion-downloads"><a className="ny-button" href={fileUrl(job.id, "subtitles.srt", true)}><ArrowDownToLine size={16} />完整字幕 SRT</a><a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a></div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
           {job && hasBilingual && <a className="ny-button" href={fileUrl(job.id, bilingualFile(job, 'subtitles.srt'), true)}>完整双语字幕 SRT</a>}
-          {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
+          {job?.state === "completed" && !job.clips.length && <p className="companion-muted">{unified ? "尚未生成高光视频，已保留完整字幕；请在看片工作台确认候选和范围后生成。" : "没有达到阈值的高光，已保留完整字幕。"}</p>}
           {job?.clips.map((item, index) => <div className="companion-result" key={item.video}><div><strong>{item.title ? "臊子 · " + item.title : "切片 " + String(index + 1).padStart(2, "0")}</strong><p>{time(item.start)} — {time(item.end)} <span>· {(item.end - item.start).toFixed(1)} 秒{item.score !== null ? ` · 高光评分 ${item.score.toFixed(2)}` : ""}</span></p>{job.mode === "saozi" && <p className="companion-muted">{item.reasons.join("；")}</p>}</div><div><a className="ny-button" aria-label={`下载切片 ${index + 1} 视频`} href={fileUrl(job.id, item.video, true)}><ArrowDownToLine size={16} />MP4</a><a className="ny-button" aria-label={`下载切片 ${index + 1} 字幕`} href={fileUrl(job.id, item.subtitles, true)}>SRT</a>{(item.bilingual_subtitles || (hasBilingual && !job.bilingual_files)) && <a className="ny-button" aria-label={`下载切片 ${index + 1} 双语字幕`} href={fileUrl(job.id, item.bilingual_subtitles ?? bilingualFile(job, item.subtitles), true)}>双语 SRT</a>}</div></div>)}
           {job&&<label className="ny-field">本次任务 ArcTime 工程模板<select className="ny-input" value={project??''} disabled={!!busy} onChange={event=>setProject(event.target.value||null)}><option value="">不附带工程模板</option>{project&&!settings.data?.arctime_templates?.some(item=>item.id===project)&&<option value={project}>任务快照绑定工程</option>}{settings.data?.arctime_templates?.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
           {job && (job.segments.length > 0 || (exports.data?.outputs?.length ?? 0) > 0) && <SubtitleExports preferredFormat={exportFormat} id={job.id} video={preview} bilingual={!!showBilingual} style={style} project={project} document={documentDraft} busy={!!busy || !settings.data?.style || editing.dirty || !!editing.error} burnAvailable={!!settings.data?.burn_available} nativeAvailable={!!settings.data?.native_handoff_available} status={exports.data} error={exports.error} />}
@@ -330,8 +338,9 @@ export function Companion() {
         </div>
       </aside>
       <div className="companion-workspace">
+        {watchMode && <header className="watch-task-context"><div><p>看片工作台</p><h1>{job?.title || (job ? `视频任务 ${job.id.slice(0,8)}` : '从这段视频中找到高光')}</h1>{job?.source_label && <span>{job.source_label}</span>}<span>{job ? `任务 ${job.id.slice(0,8)} · ${job.duration ? time(job.duration) : statusLabel(job)}` : '新建任务或选择已有视频'}{documentDraft?.revision != null && ` · 编辑稿 v${documentDraft.revision}`}</span></div><button className="ny-button" disabled={!documentDraft} onClick={() => setTool('subtitle')}>字幕校正</button></header>}
         {unified && studioMode === 'daily' && tool === 'history' && <UnifiedQueue onSelect={id => {setSelectedId(id);setError(null);}}/>}
-        {unified && operations.data?.paused && tool !== 'history' && <button className="ny-button" onClick={() => setTool('history')}>队列已暂停 · 查看任务队列</button>}
+        {unified && operations.data?.paused && tool !== 'history' && <button className={`ny-button ${watchMode ? 'watch-queue-status' : ''}`} onClick={() => setTool('history')}>队列已暂停 · 查看任务队列</button>}
         {studioMode === 'design' && <TemplatePreview style={designStyle}/>}
         <section hidden={studioMode === 'design'} className={`companion-panel companion-progress ${job?.state === 'completed' ? 'is-completed' : ''}`} aria-label="处理进度">
           <div className="companion-section-heading"><div className="companion-panel-title"><h2>处理进度</h2></div>{job && <span className={`ny-stamp ny-stamp--${job.state === "completed" ? "success" : ["failed", "interrupted"].includes(job.state) ? "failed" : "running"}`}>{statusLabel(job)}</span>}</div>
@@ -356,19 +365,27 @@ export function Companion() {
           </>}
           {exports.data?.active && <p role="status">{exports.data.active.message}</p>}
         </section>
-        <section hidden={studioMode === 'design'} className="companion-panel companion-preview" aria-label="视频预览">
-          <div className="companion-section-heading"><div className="companion-panel-title"><h1>预览与时间轴</h1></div><span className="companion-muted">{job?.duration ? `原视频 ${time(job.duration)}` : ""}</span></div>
-          {job && (job.has_source || job.clips.length > 0) ? <>
-            <div className="studio-preview-options"><div className="companion-preview-tabs">{job.has_source && <button className="ny-button" aria-pressed={!clip} onClick={() => setPreview("source.mp4")}>完整视频</button>}{job.clips.map((item, index) => <button className="ny-button" key={item.video} aria-label={`预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}>切片 {index + 1}</button>)}</div>
-            {(hasPreviewBilingual || documentDraft?.cues.some(cue => cue.translation)) && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
-            </div><SubtitlePreview video={video} source={`${job.id}/${preview}`} segments={job.segments} bilingual={showBilingual ? job.bilingual_segments : []} offset={clip?.start ?? 0} style={style} document={documentDraft} jobId={job.id} selected={cueSelection} language={cueLanguage} editing={tool === 'subtitle' && !busy} showBilingual={subtitleMode === 'bilingual'} onMove={moveCues} onTime={setCurrentTime} loop={loop}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
+        <div className="watch-content" hidden={studioMode === 'design'}><div className="watch-video-column">
+        <section className="companion-panel companion-preview" data-generated-output={!!output} aria-label="视频预览">
+          <div className="companion-section-heading"><div className="companion-panel-title"><h1>{output ? `高光成片 · ${output.title}` : "预览与时间轴"}</h1></div><span className="companion-muted">{output ? "已烧录字幕 · 成片时间" : job?.duration ? `原视频 ${time(job.duration)}` : ""}</span></div>
+          {job && (job.has_source || job.clips.length > 0 || output) ? <>
+            <div className="studio-preview-options"><div className="companion-preview-tabs">{job.has_source && <button className="ny-button" aria-pressed={!output && !clip} onClick={() => {setOutput(null);setSeek(null);setPreview("source.mp4");}}>完整视频</button>}{job.clips.map((item, index) => <button className="ny-button" key={item.video} aria-label={`预览切片 ${index + 1}`} aria-pressed={!output && preview === item.video} onClick={() => {setOutput(null);setSeek(null);setPreview(item.video);}}>切片 {index + 1}</button>)}</div>
+            {!output && (hasPreviewBilingual || documentDraft?.cues.some(cue => cue.translation)) && <label className="ny-field">预览字幕<select className="ny-input" value={subtitleMode} onChange={event => setSubtitleMode(event.target.value)}><option value="bilingual">中日双语</option><option value="original">原文字幕</option></select></label>}
+            </div>{output ? <><p role="status" className="watch-output-title">高光成片 · {output.title} · 已烧录字幕</p><div className="subtitle-video-wrapper"><video key={output.url} ref={video} src={output.url} controls preload="metadata" aria-label="高光成片预览"/></div></> : <SubtitlePreview video={video} source={`${job.id}/${preview}`} segments={job.segments} bilingual={showBilingual ? job.bilingual_segments : []} offset={clip?.start ?? 0} style={style} document={documentDraft} jobId={job.id} selected={cueSelection} language={cueLanguage} editing={tool === 'subtitle' && !busy} showBilingual={subtitleMode === 'bilingual'} onMove={moveCues} onTime={setCurrentTime} loop={loop} stopAt={watchMode && !loopTopic ? topicPreview?.end_seconds : undefined}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
               {(clip || job.segments.length > 0) && <track key={subtitleFile} kind="subtitles" src={fileUrl(job.id, subtitleFile)} srcLang={showBilingual ? "zh" : job.language === "auto" ? "und" : job.language} label={showBilingual ? "中日双语" : "识别字幕"} default />}
-            </video></SubtitlePreview>
-            <div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
-            <div className="companion-timeline" aria-label="切片时间轴">{job.clips.map((item, index) => <button key={item.video} aria-label={`在时间轴预览切片 ${index + 1}`} aria-pressed={preview === item.video} onClick={() => setPreview(item.video)}><span className="companion-timeline-fill" style={{ left: `${item.start / (job.duration ?? 1) * 100}%`, width: `${(item.end - item.start) / (job.duration ?? 1) * 100}%` }} /><span>切片 {index + 1} · {time(item.start)} — {time(item.end)}</span></button>)}</div>
+            </video></SubtitlePreview>}
+            {!output && <><div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
+            <div className="companion-timeline" aria-label="切片时间轴">{job.clips.map((item, index) => <button key={item.video} aria-label={`在时间轴预览切片 ${index + 1}`} aria-pressed={!output && preview === item.video} onClick={() => {setOutput(null);setSeek(null);setPreview(item.video);}}><span className="companion-timeline-fill" style={{ left: `${item.start / (job.duration ?? 1) * 100}%`, width: `${(item.end - item.start) / (job.duration ?? 1) * 100}%` }} /><span>切片 {index + 1} · {time(item.start)} — {time(item.end)}</span></button>)}</div></>}
           </> : <div className="companion-empty-preview"><Film size={42} strokeWidth={1} /><strong>你的下一段精彩，从这里开始</strong><p>下载完成后可以预览视频<br />字幕和切片会随处理进度出现</p></div>}
-          {job && visibleSegments.length > 0 && <details className="companion-transcript" open><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击选择并跳转</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} onClick={() => { seekSource(segment.start_seconds); if (documentDraft) {setCueSelection([segment.id]);setTool('subtitle');} }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
+          {watchMode && !output && topicPreview && <div className="watch-preview-range"><span>{time(topicPreview.start_seconds)} — {time(topicPreview.end_seconds)}</span><label><input type="checkbox" checked={loopTopic} onChange={event => setLoopTopic(event.target.checked)}/>循环当前高光</label></div>}
+          <div className="watch-range-target" ref={setTopicRangeTarget} hidden={!watchMode || !!output}/>
+          {!output && job && visibleSegments.length > 0 && <details className="companion-transcript" open={!watchMode}><summary>{showBilingual ? "完整双语字幕" : "完整字幕"} <span>{visibleSegments.length} 条 · 点击选择并跳转</span></summary><div>{visibleSegments.map((segment, index) => <button key={`${segment.id}/${index}`} onClick={() => { seekSource(segment.start_seconds); if (documentDraft) {setCueSelection([segment.id]);setTool('subtitle');} }}><time>{time(segment.start_seconds)}</time><span style={{ whiteSpace: "pre-line" }}>{segment.text}</span></button>)}</div></details>}
         </section>
+        </div><div className="watch-candidate-column" hidden={!watchMode}>
+          {unified && job?.state === 'completed' && selectedId && documentDraft
+            ? <TopicSegmentsPanel key={selectedId} jobId={selectedId} documentRevision={documentDraft.revision} prepare={editing.flush} onSeek={seekSource} duration={job.duration ?? documentDraft.duration} document={documentDraft} sourceLanguage={job.language} onPreview={setTopicPreview} onOutput={result => {setSeek(null);setOutput(result);}} onQueue={() => setTool('history')} rangeTarget={topicRangeTarget}/>
+            : <section className="topic-workbench topic-waiting"><h2>高光候选</h2><p>{job ? '视频处理完成后，即可分析和审阅高光。' : '先选择视频，完成识别后开始高光分析。'}</p><button className="ny-button ny-button--primary" onClick={() => setTool(job ? 'history' : 'create')}>{job ? '查看任务进度' : '新建任务'}</button></section>}
+        </div></div>
       </div>
     </main>
   </div>;
