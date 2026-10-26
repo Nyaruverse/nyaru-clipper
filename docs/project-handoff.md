@@ -1,12 +1,143 @@
+# Current handoff — 27 October 2026 (Asia/Shanghai)
+
+Document updated on 27 October; the live-state snapshot was taken at **23:57 on 26 October (Asia/Shanghai)**.
+
+**The formal App is 0.1.21 build 33, started into Watch Workbench; the queue is paused.** This section supersedes current/installed/candidate-only wording in older sections. Historical versions and Git tables apply only to their original observation dates.
+
+## Current state and entry points
+
+- Installed App: `/Users/drm/Applications/Nyaru Clipper.app`.
+- Registered runtime: `/Users/drm/Library/Application Support/Nyaru Clipper/unified/runtime.json`. Reuse the existing model, credentials and settings; do not initialize a replacement data domain.
+- Read-only live checks confirmed the App version, running backend and API: four real test tasks remain, the final task and all four operations succeeded, and the queue is paused. The API port changes on launch; do not hardcode a previous test port.
+- The user selected **Watch Workbench with highlight review as the core workflow**. Translation readiness, detected language persistence, the unrelated default 30-second preclip, separate/combined output playback, compact layouts, title refresh and null-revision copy were fixed.
+- See [the fixes and real-video receipt](watch-workbench-real-fixes-2026-10-26.md). The [earlier 0.1.20 installation receipt](watch-workbench-install-2026-10-26.md) remains historical.
+
+## Confirmed real-video validation
+
+Final task: `7a69c98888d15620b3aa11e9fba5dbc9`, titled `真实高光完整复测 · build30 · 自动日语`. The title's build30 is the original test label; **the installed build is 33**.
+
+The same 328.300-second real recording completed native import, automatic Japanese recognition with 50 cues, native-button admission of actual DeepSeek translation for 50/50 cues, four highlight candidates covering 40.15%, reversed `[2,0]` reviewed ranges and bilingual export. The two clips are 42.100 and 63.300 seconds; the combined output is **105.421333 seconds**. All three downloaded files fully decoded. Web playback naturally reached the end. The user directly confirmed native visible playback; native capture limitations are not presented as an automatic pixel pass.
+
+The full processing run used build30. Builds31–33 changed CSS/build metadata only, with identical backend Python and frontend JS content hashes; final build33 layout and Web playback were checked separately. Earlier receipts record 365 frontend tests, 139 related backend tests and 32 native/translation integration checks, plus 62 focused boundary checks after calibration. This handoff refresh did not repeat those tests, recognition, translation or export.
+
+Primary evidence directory: `/Users/drm/.codex/worktrees/highlight-subtitle-macos/nyaru-clipper/.omo/evidence/watch-workbench-fixes-20261026/`. Start with `final-install-runtime.json`, `final-media-validation.json`, `final-web-playback-later.json`, `native-human-acceptance.json`, `data-preservation.json` and `review.md`. The current startup/API snapshot is `/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261026-workbench/before.json`.
+
+## Source checkouts and version control
+
+On 27 October the user authorized the complete commit and push. Source, regression tests, generated contracts, packaging and bilingual handoffs are grouped into commits; the primary checkout publishes documentation only. Shared frontend/contracts are synchronized, with existing Windows-specific Web backend differences preserved.
+
+| Checkout | Local branch | Publication target | Implementation milestone (before documentation commit) |
+|---|---|---|---|
+| Primary | `codex/code-improvement-2026-10-21` | `origin/codex/code-improvement-2026-10-21` | Documentation only; prior HEAD `da11831cdf976560f642370790847bba647f7ff9` |
+| macOS | `codex/highlight-subtitle-macos-2026-10-25` | `origin/codex/local-companion-macos` | `5ffd9a826261e9fb0b405486cde6aae843fcdc79` |
+| Web | `codex/highlight-subtitle-web-2026-10-25` | `origin/codex/local-companion-web` | `59688e2b45014c02f79b04c1f36213899824dfc0` |
+
+Publication uses explicit refs and an atomic fast-forward push to these three existing remote branches. No merge, force push or update to master/collaborator branches is included. Exact final documentation heads and remote comparison are recorded in `/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261027/receipt.json`; milestone IDs above deliberately exclude the later documentation commits.
+
+Fresh publication checks: each frontend passed **365 tests in 45 files**, TypeScript and production build; macOS backend/native checks passed **171**, with one actual-desktop case deselected, and Web backend checks passed **139**. Initial concurrent backend runs conflicted on the shared execution lock; sequential full reruns passed. The Web review test now clears persisted localStorage between cases and includes the same reload/null-revision regressions. Real recognition, provider calls, export and native UI were not repeated for publication; their acceptance remains the dated evidence above.
+
+Untracked media/template outputs, `.DS_Store`, temporary pnpm workspace configuration, test caches, runtime state and private evidence stay outside Git and are preserved. Continue from the appropriate platform checkout; do not reset, clean or overwrite the original worktrees.
+
+## Protection, rollback and remaining work
+
+- The installation receipt verified preservation of 21 original active files, two prior task contexts, source media and original settings. Continue protecting original media, sealed roots, reader/epoch pins, tasks and failed records. This Git publication does not replace the installed App or mutate production data.
+- Backup: `/Users/drm/Library/Application Support/Nyaru Clipper Backups/workbench-fixes-20261026-1723/`. It retains the original 0.1.20 App, real-tested build30 and pre-update unified snapshot. Quit normally and preserve the current runtime before switching Apps; never overwrite newer data with the older snapshot.
+- Review drafts survive same-origin reload, **not a native App restart**. Exported videos and frozen ranges remain durable. Historical auto-language jobs without actual language metadata must be re-recognized, not guessed or rewritten.
+- One interim analysis failure on `f98b6a7d...` remains as evidence; do not confuse it with the successful final run or delete it to hide the failure. All four final-task operations succeeded.
+- Remaining work is bounded to known gaps: restart-persistent drafts if needed, human caption/candidate review, and separate long-VOD/live, Windows/GPU, dark-system, recovery and notarization validation. The short-video result grants no acceptance for those scenarios.
+
+## Historical handoff text
+
+The body below is unchanged; its uses of “current” refer only to the associated historical date.
+
+# 2026-10-26: Watch Workbench installed
+
+Formal App is now **0.1.20 build 28**. Original active data/configuration were backed up and verified unchanged; normal reopen selects the registered formal runtime. [Installation, preservation and rollback](watch-workbench-install-2026-10-26.md). Older candidate-only statements below are historical.
+
+---
+
 # Nyaru-Clipper project handoff
 
-## Version-control update: 23 October 2026 (Asia/Shanghai)
+## Current handoff: 25 October 2026 (Asia/Shanghai)
+
+The unified architecture has been merged and pushed to the Web and macOS development branches. Remote and local commit identities have subsequently been rewritten. This section supersedes older publication state and commit IDs below; those dated records remain historical evidence. This refresh only changes the two handoff files. It does not commit, push, merge, install, launch an App, resume monitoring or switch data domains.
+
+### Current remote branches and original worktrees
+
+Read-only `git ls-remote --heads --tags origin` on 25 October returned:
+
+| Remote branch | Current HEAD |
+| --- | --- |
+| `codex/code-improvement-2026-10-21` | `da11831cdf976560f642370790847bba647f7ff9` |
+| `codex/unified-architecture-2026-10-22` | `0468740a717a7fdcf66e74b7295e4e0501625515` |
+| `codex/local-companion-web` | `3e0582b47577b1fa7f26466fef7b78f7088c1fd7` |
+| `codex/local-companion-macos` | `73aa14b6def9e7e9b970a42621844e7c62f702f2` |
+| `feat/arctime-pro-plugin` | `ef9ea33d3d08f2ee1472b660179a52d8f40d7813` |
+| `feat/companion-topic-subtitle-updates` | `69d3fa0dea30a73ef0f0ef27591bc1abda9080f1` |
+| `master` | `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6` |
+
+Master and the four tag object IDs still match the previous baseline. The topic/subtitle branch has advanced since the 24 October cleanup receipt (`39911f1a24775d2e8fd4cb3a98a8165fa70880e4`); its new commits were not audited or changed in this refresh. Do not extend the earlier clean-history result to every current remote commit.
+
+All five original worktrees retain their original code versions after identity rewriting:
+
+| Worktree | Local HEAD | Dirty paths before this refresh |
+| --- | --- | --- |
+| `/Users/drm/project/nyaru-clipper` | `da11831cdf976560f642370790847bba647f7ff9` | 13 |
+| `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` | `8f495b8073f64a257da2bc5e68fa74b1e0db1a94` | 53 |
+| `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` | `f47e868aeab61b272597810cff21ef2e83220578` | 56 |
+| `/Users/drm/.codex/worktrees/streamer-highlight-framework/nyaru-clipper` | `ee441022f8f41613c5e48e6fdd5ead2b69361b0c` | 12 |
+| `/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper` | `0468740a717a7fdcf66e74b7295e4e0501625515` | 0 |
+
+The original Web/macOS local branches are respectively **19/17 commits behind** their matching remote-tracking branches. The published integration is therefore not the current code baseline of those dirty worktrees. Local helper branches `codex/merge-unified-web-2026-10-23` and `codex/merge-unified-macos-2026-10-23` point to the published merge heads. The streamer branch is not currently advertised on the remote. This refresh leaves the primary checkout with these two modified handoffs in addition to its 13 existing untracked paths; nothing is staged.
+
+### Merge result and historical validation
+
+The rewritten unified implementation commit is `fc1e0405faafe9858569cfbb81acb3b179a69ca5`. The 23 October Web merge retains the Windows PowerShell launcher, CUDA whisper.cpp path, Windows locking/JSON retry/executable discovery and credential-availability boundaries. The macOS merge retains the native window/save/quit bridge, frozen backend, tools/models, build requirements, licenses and platform docs.
+
+The [merge receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/unified-merge-20261023/receipt.json) records Web backend **1558 passed / 3 skipped**, macOS focused backend **10 passed**, both frontends **332 passed / 40 files**, both TypeScript/Vite builds, Swift typecheck and all three requirements profiles passing. These are 23 October observations: three Windows-native cases were skipped on macOS, and no new Windows hardware qualification, formal App installation or data cutover followed. Identity rewriting preserved commit trees; this documentation refresh does not rerun those tests.
+
+### Commit identity and future submissions
+
+- Remote cleanup on 24 October used `git-filter-repo 2.47.0 --sensitive-data-removal`: 57 author and 57 committer fields replaced, 62 commit IDs changed across 214 commits, six branches pushed atomically with exact leases. The fresh mirror then had no matching old identity in reachable objects; trees, topology, dates, messages and other contributors were preserved. [Remote cleanup receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/identity-cleanup-20261024/receipt.json).
+- Local cleanup verified 211 commits, changed 59 commit IDs and updated 15 refs. All five worktrees' files/modes, indexes and staged/unstaged changes were preserved; reachable commit metadata had zero old-identity matches and strict `git fsck` passed. [Local cleanup receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/local-identity-cleanup-20261024/receipt.json).
+- Repository and global defaults are `user.name=damin93381`, `user.email=damin7512476@gmail.com`, `user.useConfigOnly=true`. Both scopes and effective author/committer identities in all five worktrees were rechecked on 25 October. This is the chosen public identity; the email is public commit metadata.
+- The 24 October machine audit checked 7,144 candidate locations / 7,141 valid Git locations, found zero matching old-name/email configuration entries and changed no repository configurations. Other identities remain in 298 locations, including `blogging`, `bot`, `qwen` and test repositories. Global settings can still be overridden by repository/worktree config, conditional includes, environment variables, explicit authors and author-preserving operations. Three invalid temporary Git markers and excluded backups remain outside that audit's verified coverage. [Private configuration audit](/Users/drm/.cache/git-identity-audit-20261024-UVTrVn/audit.json).
+
+Private rollback copies and local reflogs/unreachable objects still contain the old history intentionally. Do not upload them, blindly restore old refs, merge an old clone's history, or mirror-push it back into the cleaned remote. This was an identity rewrite, not a purge of every local recovery copy.
+
+### GitHub cache and Support boundary
+
+On 25 October the previously identified old commit was still accessible through the GitHub API. Current branch/tag cleanup does not establish server-side cache erasure. The private [Support draft](/Users/drm/project/nyaru-clipper/.omo/evidence/identity-cleanup-20261024/github-support-request.md) and virtual-assistant guidance were prepared; no ticket number, submitted-ticket receipt or successful cache-removal response is available in this handoff. Whether the user completed submission is **unknown**. No Support message was sent by this refresh.
+
+If the user chooses to continue, the remaining request is removal of cached/unreachable commits, with the repository and current branches/tags retained. GitHub determines policy eligibility; personal-name exposure is not a password/token leak. Use the [official removal guide](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository). Keep identifying old commit links and original identities in private Support evidence rather than adding them to public documentation.
+
+### Continuation and protected state
+
+1. Before any source integration, recheck remote HEADs and all relevant worktrees. Preserve dirty files and indexes; start from the desired current cleaned remote in isolation. Do not run a blind pull/reset/clean, bulk-stage changes or advance the dirty Web/macOS branches just to make local HEADs match the table.
+2. The next product-validation gates remain fresh-domain App02 R0/R1 takeover/rollback/reopen, then authorized M24 OS-restart/boot protection. CUDA, WSL ROCm, Windows AMF, external-provider and real-live-capture gaps remain; P6/formal installation/cutover have not been performed by this work.
+3. Preserve installed App/data, original media, sealed test roots, unknown task directories, reader/epoch pins and private evidence. Their runtime/content state was not re-audited on 25 October. Earlier package hashes and acceptance results below retain their own dates.
+
+Read-only checks from `/Users/drm/project/nyaru-clipper`:
+
+```bash
+git worktree list --porcelain
+git status --short
+git ls-remote --heads --tags origin
+git config --global --get-regexp '^user\.'
+git config --local --get-regexp '^user\.'
+git var GIT_AUTHOR_IDENT
+git var GIT_COMMITTER_IDENT
+```
+
+`git ls-remote` does not update local `origin/*` refs. Check effective identities separately in the worktree used for a new commit. [This refresh's protection receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261025-git-identity.json). No commit/push is implied by this handoff update.
+
+## Historical version-control update: 23 October 2026 (Asia/Shanghai)
 
 Unified implementation, recovery tools, direct tests and App02 fixes are committed as `f8484d5560e971fb4a736e6296d876333cb5b7c6` (`feat: unify task execution, migration and recovery`) on `codex/unified-architecture-2026-10-22`. Primary-checkout documentation belongs to `codex/code-improvement-2026-10-21`; these are the two explicit push targets for this publication. Master and other development branches remain unchanged. Statements below about uncommitted or unpushed work retain their original observation dates; use the [Git publication receipt](/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261023.json) and remote branch IDs for the publication result.
 
 Fresh checks in the unified candidate before committing: backend **1551 passed**, frontend **332 passed across 40 files**, TypeScript/Vite build and all three requirements export checks passed. Program sources match the App02 build-input manifest; only indexes/handoffs changed after packaging. Four existing end-of-file blank-line notices remain. This publication only changes version-control state: no repackaging, installation, formal-data cutover or additional platform qualification. Retain sealed domains, old epoch/reader pins, original media and private evidence.
 
-## Current entry point: 23 October 2026 (Asia/Shanghai)
+## Historical candidate entry point: 23 October 2026 (Asia/Shanghai)
 
 ### Handoff refresh: 23 October 2026,13:36 Asia/Shanghai
 

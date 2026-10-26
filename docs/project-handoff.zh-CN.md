@@ -1,12 +1,143 @@
+# 当前交接 — 2026-10-27（Asia/Shanghai）
+
+文档更新于 10 月 27 日；本轮现场状态核对时间为 **10 月 26 日 23:57（Asia/Shanghai）**。
+
+**正式版本为 0.1.21 build 33，已启动进入看片工作台；队列保持暂停。** 本节取代下方历史段落中的“当前／已安装／未安装”描述；历史版本号和 Git 表格只对应其原记录日期。
+
+## 当前状态与接手入口
+
+- 正式 App：`/Users/drm/Applications/Nyaru Clipper.app`。
+- 正式运行时：`/Users/drm/Library/Application Support/Nyaru Clipper/unified/runtime.json`。继续沿用原模型、凭据和设置，不重新初始化数据域。
+- 已现场只读核对 App 版本、运行中的后端和 API：4 个真实测试任务保留，最终任务及其 4 个操作均成功，队列暂停。API 端口随启动变化，不把先前测试端口当成固定配置。
+- 用户选择的产品方向是**看片工作台，以高光审阅为核心**。已修复翻译入口、自动语言保存、无关的默认 30 秒切片、单段／组合成片预览、小窗口布局、标题刷新与空版本提示。
+- [修复与真实复测收据](watch-workbench-real-fixes-2026-10-26.zh-CN.md)包含实现、媒体、数据保留和验收边界。较早的 [0.1.20 安装记录](watch-workbench-install-2026-10-26.zh-CN.md)保留为历史。
+
+## 已确认的真实复测
+
+最终任务：`7a69c98888d15620b3aa11e9fba5dbc9`，标题为 `真实高光完整复测 · build30 · 自动日语`。标题中的 build30 是当时的测试标记，**当前安装仍为 build33**。
+
+同一段 328.300 秒真实录播完成：原生导入 → 自动识别为日语／50 条字幕 → 原生按钮调用真实 DeepSeek 翻译 50/50 条 → 4 个高光候选（覆盖 40.15%）→ 倒序 `[2,0]`、调整范围 → 双语导出。两个单段为 42.100 和 63.300 秒，组合为 **105.421333 秒**；三个下载文件均完整解码通过。Web 整段自然播放到结尾，原生画面与正常播放由用户现场确认；原生抓图限制不冒充自动像素验收。
+
+完整链路在 build30 运行，build31–33 只有样式和构建号调整；后端 Python 与前端 JS 内容摘要一致，build33 布局和 Web 播放另行核验。此前前端 365 项、后端相关 139 项、原生／翻译集成 32 项通过；边界调整另有 62 项针对性检查。本次交接刷新没有重新运行这些测试、ASR、翻译或导出。
+
+证据主目录：`/Users/drm/.codex/worktrees/highlight-subtitle-macos/nyaru-clipper/.omo/evidence/watch-workbench-fixes-20261026/`。优先阅读 `final-install-runtime.json`、`final-media-validation.json`、`final-web-playback-later.json`、`native-human-acceptance.json`、`data-preservation.json` 和 `review.md`。本次启动／API 只读核对见 `/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261026-workbench/before.json`。
+
+## 源码位置与版本控制
+
+10 月 27 日用户已授权完整提交和推送。源码、回归测试、生成契约、打包与中英交接文档按职责分组提交；主目录只发布文档。共享前端与契约已同步，Web 后端原有 Windows 差异保留。
+
+| 工作树 | 本地分支 | 发布目标 | 实现里程碑（文档提交之前） |
+|---|---|---|---|
+| 主目录 | `codex/code-improvement-2026-10-21` | `origin/codex/code-improvement-2026-10-21` | 仅文档；此前 HEAD `da11831cdf976560f642370790847bba647f7ff9` |
+| macOS | `codex/highlight-subtitle-macos-2026-10-25` | `origin/codex/local-companion-macos` | `5ffd9a826261e9fb0b405486cde6aae843fcdc79` |
+| Web | `codex/highlight-subtitle-web-2026-10-25` | `origin/codex/local-companion-web` | `59688e2b45014c02f79b04c1f36213899824dfc0` |
+
+本次 Git 发布使用明确 ref，原子快进推送到以上三个既有远端分支；不包含合并、强推或 master／协作者分支更新。最终文档提交 HEAD 与远端比对结果记录在 `/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261027/receipt.json`；上表刻意记录文档提交之前的实现里程碑。
+
+发布前重新检查：两套前端各 **365 项测试／45 个文件**、TypeScript 和生产构建通过；macOS 后端／原生检查 **171 项通过，1 项 actual-desktop 用例未选入**，Web 后端 **139 项通过**。最初并行运行两套后端测试争用了共享执行锁，顺序完整重跑后通过。Web 审阅测试补齐逐例清理 localStorage 以及同源重载／空版本号回归。本次发布未重复真实识别、供应商调用、导出或原生界面验收，仍以此前带日期证据为准。
+
+未跟踪的媒体／模板输出、`.DS_Store`、临时 pnpm workspace 配置、测试缓存、运行数据与私有证据不进入 Git，均留在原处。后续从对应平台工作树继续，不要 reset、clean 或覆盖原工作树。
+
+## 保护、回退与剩余事项
+
+- 安装收据已验证 21 个原有活动文件、2 个旧任务上下文、原片及原设置保留。原始媒体、旧封存域、reader／epoch pin、现有任务和失败记录继续保护；本次 Git 发布不替换正式 App、不改写正式数据。
+- 回退备份：`/Users/drm/Library/Application Support/Nyaru Clipper Backups/workbench-fixes-20261026-1723/`。保留原 0.1.20 App、真实复测 build30 和安装前 `unified/` 快照。回退先正常退出并保留最新运行时，只切 App；不要用旧快照覆盖后续新数据。
+- 审阅草稿支持同源刷新，**不跨原生 App 重启保留**；已导出视频及冻结范围仍在服务端。旧 auto 任务没有实际语言结果时不追溯猜写，应重新识别。
+- 中间任务 `f98b6a7d...` 的一次分析失败已保留，不能当作最终复测失败或删除掩盖；最终任务四项操作均成功。
+- 待办限已知缺口：按需处理跨重启草稿持久化；人工逐句校对字幕并判断候选质量；另行验证长 VOD／真实直播、Windows／GPU、系统深色模式、故障恢复及公证。现有短片通过不扩展为这些场景的验收。
+
+## 历史交接原文
+
+以下正文保留原样；其中“当前”均仅指相应历史日期。
+
+# 2026-10-26：看片工作台已正式安装
+
+正式 App 现为 **0.1.20 build 28**。原活动数据／配置已备份并核对未改写，正常重开使用已登记的正式运行时。详见[安装、保留与回退记录](watch-workbench-install-2026-10-26.zh-CN.md)。下方“候选未安装”等记录属于历史状态。
+
+---
+
 # Nyaru-Clipper 项目交接
 
-## 版本控制更新：2026-10-23（Asia/Shanghai）
+## 当前交接：2026-10-25（Asia/Shanghai）
+
+统一架构已合并并推送到 Web 与 macOS 开发分支，此后已完成远端及本地提交身份改写。本节取代下方较早的发布状态与提交编号；带日期的旧记录继续作为历史证据保留。本次只修改两份交接文档，不提交、推送、合并、安装、启动 App、恢复监控或切换数据域。
+
+### 当前远端分支与原工作树
+
+2026-10-25 只读执行 `git ls-remote --heads --tags origin`，结果如下：
+
+| 远端分支 | 当前 HEAD |
+| --- | --- |
+| `codex/code-improvement-2026-10-21` | `da11831cdf976560f642370790847bba647f7ff9` |
+| `codex/unified-architecture-2026-10-22` | `0468740a717a7fdcf66e74b7295e4e0501625515` |
+| `codex/local-companion-web` | `3e0582b47577b1fa7f26466fef7b78f7088c1fd7` |
+| `codex/local-companion-macos` | `73aa14b6def9e7e9b970a42621844e7c62f702f2` |
+| `feat/arctime-pro-plugin` | `ef9ea33d3d08f2ee1472b660179a52d8f40d7813` |
+| `feat/companion-topic-subtitle-updates` | `69d3fa0dea30a73ef0f0ef27591bc1abda9080f1` |
+| `master` | `0bcd8d503ac33f89c8e1cd526de5d7a44f6668b6` |
+
+master 与四个标签对象编号仍符合此前基线。topic/subtitle 分支已从 10 月 24 日清理收据中的 `39911f1a24775d2e8fd4cb3a98a8165fa70880e4` 继续前进，本次未审计或修改新增提交；不能把此前历史清理通过的结论推广到当前所有远端提交。
+
+五个原工作树在身份改写后仍保留原来的代码版本：
+
+| 工作树 | 本地 HEAD | 本次刷新前未提交路径数 |
+| --- | --- | --- |
+| `/Users/drm/project/nyaru-clipper` | `da11831cdf976560f642370790847bba647f7ff9` | 13 |
+| `/Users/drm/.codex/worktrees/local-companion-web/nyaru-clipper` | `8f495b8073f64a257da2bc5e68fa74b1e0db1a94` | 53 |
+| `/Users/drm/.codex/worktrees/local-companion-macos/nyaru-clipper` | `f47e868aeab61b272597810cff21ef2e83220578` | 56 |
+| `/Users/drm/.codex/worktrees/streamer-highlight-framework/nyaru-clipper` | `ee441022f8f41613c5e48e6fdd5ead2b69361b0c` | 12 |
+| `/Users/drm/.codex/worktrees/unified-architecture/nyaru-clipper` | `0468740a717a7fdcf66e74b7295e4e0501625515` | 0 |
+
+原 Web／macOS 本地分支分别落后对应远端跟踪分支 **19／17 个提交**，因此已发布的合并结果并不是这两个脏工作树当前的源码基线。本地辅助分支 `codex/merge-unified-web-2026-10-23`、`codex/merge-unified-macos-2026-10-23` 指向已发布的合并 HEAD；远端当前没有公布 streamer 分支。本次刷新后主目录在原有 13 个未跟踪路径外增加两份交接文档修改，暂存区为空。
+
+### 合并结果与历史验证
+
+改写后的统一架构实现提交为 `fc1e0405faafe9858569cfbb81acb3b179a69ca5`。10 月 23 日的 Web 合并保留 Windows PowerShell 启动器、CUDA whisper.cpp 路径、Windows 锁／JSON 重试／可执行程序发现及凭据可用性边界；macOS 合并保留原生窗口／系统保存／退出桥接、冻结后端、工具／模型、构建依赖、许可与平台文档。
+
+[合并收据](/Users/drm/project/nyaru-clipper/.omo/evidence/unified-merge-20261023/receipt.json)记录 Web 后端 **1558 passed／3 skipped**、macOS 后端定向 **10 passed**、两侧前端各 **332 passed／40 文件**，两侧 TypeScript／Vite 构建、Swift 类型检查及三份 requirements profile 检查通过。这些是 10 月 23 日的观察：三项 Windows 原生用例在 macOS 跳过，没有新增 Windows 真机资格、正式 App 安装或数据切换。身份改写保留提交文件树，本次文档刷新不重跑上述测试。
+
+### 提交身份与后续新提交
+
+- 10 月 24 日远端清理使用 `git-filter-repo 2.47.0 --sensitive-data-removal`：替换 57 个 author 与 57 个 committer 字段，214 个提交中 62 个编号改变，以精确 lease 原子推送六个分支。当时重新克隆的镜像中，可达对象没有旧身份匹配；文件树、合并关系、日期、提交说明及其他贡献者身份保留。[远端清理收据](/Users/drm/project/nyaru-clipper/.omo/evidence/identity-cleanup-20261024/receipt.json)。
+- 本地清理核验 211 个提交、改变 59 个提交编号、更新 15 个引用；五个工作树的文件／权限、索引、暂存及未暂存修改均保留，可达提交元数据旧身份匹配为零，严格 `git fsck` 通过。[本地清理收据](/Users/drm/project/nyaru-clipper/.omo/evidence/local-identity-cleanup-20261024/receipt.json)。
+- 仓库级及全局默认配置为 `user.name=damin93381`、`user.email=damin7512476@gmail.com`、`user.useConfigOnly=true`。10 月 25 日再次核对两个配置作用域及五个工作树实际 author／committer，均符合。该身份为用户选择的公开身份，邮箱会写入公开提交元数据。
+- 10 月 24 日本机审计覆盖 7,144 个候选位置／7,141 个有效 Git 位置，未发现匹配旧真名／旧邮箱的配置项，没有改动其他仓库配置。298 个位置仍有其他身份，包括 `blogging`、`bot`、`qwen` 与测试仓库。仓库／工作树配置、条件包含、环境变量、显式作者及保留原作者的操作仍可覆盖全局默认值；三个失效临时 Git 标记及排除的备份不在该审计的已核验范围。[私有配置审计](/Users/drm/.cache/git-identity-audit-20261024-UVTrVn/audit.json)。
+
+私有回滚副本与本地 reflog／不可达对象仍有意保留旧历史。不要上传它们、盲目恢复旧引用、合并旧克隆的历史或镜像推送回已清理远端。本次完成的是身份改写，不是删除本地全部恢复副本。
+
+### GitHub 缓存与 Support 边界
+
+10 月 25 日，通过 GitHub API 仍能访问此前定位的旧提交。当前分支／标签历史清理不等于服务器缓存已删除。已准备私有[Support 文案](/Users/drm/project/nyaru-clipper/.omo/evidence/identity-cleanup-20261024/github-support-request.md)，并协助操作虚拟助手向导；本交接没有工单编号、正式提交回执或缓存清理成功回复，用户是否完成正式提交为 **unknown／待验证**。本次刷新未向 Support 发送消息。
+
+如用户选择继续，剩余请求是清除旧缓存／不可达提交，同时保留仓库与当前分支／标签。是否符合清理政策由 GitHub 判断；真名暴露不是密码／令牌泄漏。参照[官方清理手册](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)。旧提交链接与原身份只放在私有支持证据中，不再加入公开文档。
+
+### 接手顺序与保护边界
+
+1. 后续源码整合前重新核对远端 HEAD 和相关工作树，保留未提交文件及索引，从所需的当前已清理远端版本隔离开展工作。不要盲目 pull／reset／clean、批量暂存，也不要为对齐表格而直接推进脏 Web／macOS 分支。
+2. 产品后续验证仍为新的独立数据域 App02 R0／R1 接管／回退／重开，再补获准的 M24 系统重启／开机保护。CUDA、WSL ROCm、Windows AMF、外部供应商及真实直播缺口保留；本轮工作没有执行 P6／正式安装／数据切换。
+3. 正式 App／数据、原始媒体、封存测试根、未知任务目录、reader／epoch pin 与私有证据继续保护，10 月 25 日没有重新审计它们的运行或内容状态。下方旧包摘要与功能验收保留各自观察日期。
+
+在 `/Users/drm/project/nyaru-clipper` 中可执行的只读核对：
+
+```bash
+git worktree list --porcelain
+git status --short
+git ls-remote --heads --tags origin
+git config --global --get-regexp '^user\.'
+git config --local --get-regexp '^user\.'
+git var GIT_AUTHOR_IDENT
+git var GIT_COMMITTER_IDENT
+```
+
+`git ls-remote` 不会更新本地 `origin/*` 引用；新提交前应在实际使用的工作树中单独核对有效身份。[本次刷新保护收据](/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261025-git-identity.json)。更新交接不代表已提交或推送。
+
+## 历史版本控制更新：2026-10-23（Asia/Shanghai）
 
 统一架构实现、恢复工具、直接测试与 App02 修复已提交为 `f8484d5560e971fb4a736e6296d876333cb5b7c6`（`feat: unify task execution, migration and recovery`），位于 `codex/unified-architecture-2026-10-22`。主目录文档归入 `codex/code-improvement-2026-10-21`；这两条分支是本轮明确推送目标，master 与其他开发分支不变。下文“尚未提交／未推送”的描述保留为原观察时点的历史，发布结果以[本轮 Git 收据](/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261023.json)及远端分支编号为准。
 
 提交前在统一候选工作树重新执行：后端全量 **1551 passed**，前端 **332 passed／40 文件**，TypeScript／Vite 构建及三份 requirements 导出检查通过。App02 构建输入中的程序源码与此次提交内容一致，构建后仅索引／交接文档有变化；四处既有文件末尾空行提示保留。本轮只发布版本控制内容，不重新打包或安装，不切换正式数据，不补授平台资格。封存域、旧 epoch／reader pin、原始媒体和私有证据继续保留。
 
-## 当前接手入口：2026-10-23（Asia/Shanghai）
+## 历史候选接手入口：2026-10-23（Asia/Shanghai）
 
 ### 交接刷新核对：2026-10-23 13:36（Asia/Shanghai）
 
