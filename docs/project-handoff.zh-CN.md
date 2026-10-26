@@ -1,6 +1,72 @@
+# 当前交接 — 2026-10-27（Asia/Shanghai）
+
+文档更新于 10 月 27 日；本轮现场状态核对时间为 **10 月 26 日 23:57（Asia/Shanghai）**。
+
+**正式版本为 0.1.21 build 33，已启动进入看片工作台；队列保持暂停。** 本节取代下方历史段落中的“当前／已安装／未安装”描述；历史版本号和 Git 表格只对应其原记录日期。
+
+## 当前状态与接手入口
+
+- 正式 App：`/Users/drm/Applications/Nyaru Clipper.app`。
+- 正式运行时：`/Users/drm/Library/Application Support/Nyaru Clipper/unified/runtime.json`。继续沿用原模型、凭据和设置，不重新初始化数据域。
+- 已现场只读核对 App 版本、运行中的后端和 API：4 个真实测试任务保留，最终任务及其 4 个操作均成功，队列暂停。API 端口随启动变化，不把先前测试端口当成固定配置。
+- 用户选择的产品方向是**看片工作台，以高光审阅为核心**。已修复翻译入口、自动语言保存、无关的默认 30 秒切片、单段／组合成片预览、小窗口布局、标题刷新与空版本提示。
+- [修复与真实复测收据](watch-workbench-real-fixes-2026-10-26.zh-CN.md)包含实现、媒体、数据保留和验收边界。较早的 [0.1.20 安装记录](watch-workbench-install-2026-10-26.zh-CN.md)保留为历史。
+
+## 已确认的真实复测
+
+最终任务：`7a69c98888d15620b3aa11e9fba5dbc9`，标题为 `真实高光完整复测 · build30 · 自动日语`。标题中的 build30 是当时的测试标记，**当前安装仍为 build33**。
+
+同一段 328.300 秒真实录播完成：原生导入 → 自动识别为日语／50 条字幕 → 原生按钮调用真实 DeepSeek 翻译 50/50 条 → 4 个高光候选（覆盖 40.15%）→ 倒序 `[2,0]`、调整范围 → 双语导出。两个单段为 42.100 和 63.300 秒，组合为 **105.421333 秒**；三个下载文件均完整解码通过。Web 整段自然播放到结尾，原生画面与正常播放由用户现场确认；原生抓图限制不冒充自动像素验收。
+
+完整链路在 build30 运行，build31–33 只有样式和构建号调整；后端 Python 与前端 JS 内容摘要一致，build33 布局和 Web 播放另行核验。此前前端 365 项、后端相关 139 项、原生／翻译集成 32 项通过；边界调整另有 62 项针对性检查。本次交接刷新没有重新运行这些测试、ASR、翻译或导出。
+
+证据主目录：`/Users/drm/.codex/worktrees/highlight-subtitle-macos/nyaru-clipper/.omo/evidence/watch-workbench-fixes-20261026/`。优先阅读 `final-install-runtime.json`、`final-media-validation.json`、`final-web-playback-later.json`、`native-human-acceptance.json`、`data-preservation.json` 和 `review.md`。本次启动／API 只读核对见 `/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261026-workbench/before.json`。
+
+## 源码位置与版本控制
+
+10 月 27 日用户已授权完整提交和推送。源码、回归测试、生成契约、打包与中英交接文档按职责分组提交；主目录只发布文档。共享前端与契约已同步，Web 后端原有 Windows 差异保留。
+
+| 工作树 | 本地分支 | 发布目标 | 实现里程碑（文档提交之前） |
+|---|---|---|---|
+| 主目录 | `codex/code-improvement-2026-10-21` | `origin/codex/code-improvement-2026-10-21` | 仅文档；此前 HEAD `da11831cdf976560f642370790847bba647f7ff9` |
+| macOS | `codex/highlight-subtitle-macos-2026-10-25` | `origin/codex/local-companion-macos` | `5ffd9a826261e9fb0b405486cde6aae843fcdc79` |
+| Web | `codex/highlight-subtitle-web-2026-10-25` | `origin/codex/local-companion-web` | `59688e2b45014c02f79b04c1f36213899824dfc0` |
+
+本次 Git 发布使用明确 ref，原子快进推送到以上三个既有远端分支；不包含合并、强推或 master／协作者分支更新。最终文档提交 HEAD 与远端比对结果记录在 `/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261027/receipt.json`；上表刻意记录文档提交之前的实现里程碑。
+
+发布前重新检查：两套前端各 **365 项测试／45 个文件**、TypeScript 和生产构建通过；macOS 后端／原生检查 **171 项通过，1 项 actual-desktop 用例未选入**，Web 后端 **139 项通过**。最初并行运行两套后端测试争用了共享执行锁，顺序完整重跑后通过。Web 审阅测试补齐逐例清理 localStorage 以及同源重载／空版本号回归。本次发布未重复真实识别、供应商调用、导出或原生界面验收，仍以此前带日期证据为准。
+
+未跟踪的媒体／模板输出、`.DS_Store`、临时 pnpm workspace 配置、测试缓存、运行数据与私有证据不进入 Git，均留在原处。后续从对应平台工作树继续，不要 reset、clean 或覆盖原工作树。
+
+## 保护、回退与剩余事项
+
+- 安装收据已验证 21 个原有活动文件、2 个旧任务上下文、原片及原设置保留。原始媒体、旧封存域、reader／epoch pin、现有任务和失败记录继续保护；本次 Git 发布不替换正式 App、不改写正式数据。
+- 回退备份：`/Users/drm/Library/Application Support/Nyaru Clipper Backups/workbench-fixes-20261026-1723/`。保留原 0.1.20 App、真实复测 build30 和安装前 `unified/` 快照。回退先正常退出并保留最新运行时，只切 App；不要用旧快照覆盖后续新数据。
+- 审阅草稿支持同源刷新，**不跨原生 App 重启保留**；已导出视频及冻结范围仍在服务端。旧 auto 任务没有实际语言结果时不追溯猜写，应重新识别。
+- 中间任务 `f98b6a7d...` 的一次分析失败已保留，不能当作最终复测失败或删除掩盖；最终任务四项操作均成功。
+- 待办限已知缺口：按需处理跨重启草稿持久化；人工逐句校对字幕并判断候选质量；另行验证长 VOD／真实直播、Windows／GPU、系统深色模式、故障恢复及公证。现有短片通过不扩展为这些场景的验收。
+
+## 历史交接原文
+
+以下正文保留原样；其中“当前”均仅指相应历史日期。
+
+# 2026-10-26：看片工作台已正式安装
+
+正式 App 现为 **0.1.20 build 28**。原活动数据／配置已备份并核对未改写，正常重开使用已登记的正式运行时。详见[安装、保留与回退记录](watch-workbench-install-2026-10-26.zh-CN.md)。下方“候选未安装”等记录属于历史状态。
+
+---
+
 # Nyaru-Clipper 项目交接
 
 最新整合：[2026-10-26 高光算法与字幕编辑定向整合](highlight-subtitle-integration-2026-10-26.zh-CN.md)。统一队列高光分析／导出、字体搜索收藏与三层描边；正式 App 和数据未替换。
+
+## 当前交接：2026-10-26（Asia/Shanghai）
+
+高光算法与字幕编辑已定向整合，并快进发布至两条自有远程分支：Web `9137d8cc983b3b1e06a9f92614efdb65a84f9704`，macOS `54b2a4f63a965b3ab107d821ab690a3e5bd7ee84`。合作者分支保持 `69d3fa0dea30a73ef0f0ef27591bc1abda9080f1`，master 未改；这是已完成的发布记录。原脏工作树继续保留，候选工作树承载本轮源码。
+
+用户要求打开编译 App，查看后反馈“可以了”，本次候选的人工检验已接受。当前 App 为 `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-macos-20261026-04/Nyaru Clipper.app`，以显式隔离运行时 `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-native-20261025-01/runtime.json` 启动；本次更新现场复核进程仍在运行，按用户要求保留窗口。发布收据中的“已退出”是此前时点的快照。
+
+详细入口、重开命令、自动验证与限制见[本轮整合交接](highlight-subtitle-integration-2026-10-26.zh-CN.md)。正式 App／数据没有安装替换或迁移；用户本次检验不扩展为真实长直播／外部 AI 质量验收或其他平台资格。旧 App02、封存域和 reader pin 继续按下方历史边界保护。下一步如要验证切片质量，使用实际素材与另行授权的供应商调用；正式安装／数据切换仍待明确指令。
 
 ## 统一架构合并记录：2026-10-23（Asia/Shanghai）
 

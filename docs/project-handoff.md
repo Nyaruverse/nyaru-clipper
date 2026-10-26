@@ -1,6 +1,72 @@
+# Current handoff — 27 October 2026 (Asia/Shanghai)
+
+Document updated on 27 October; the live-state snapshot was taken at **23:57 on 26 October (Asia/Shanghai)**.
+
+**The formal App is 0.1.21 build 33, started into Watch Workbench; the queue is paused.** This section supersedes current/installed/candidate-only wording in older sections. Historical versions and Git tables apply only to their original observation dates.
+
+## Current state and entry points
+
+- Installed App: `/Users/drm/Applications/Nyaru Clipper.app`.
+- Registered runtime: `/Users/drm/Library/Application Support/Nyaru Clipper/unified/runtime.json`. Reuse the existing model, credentials and settings; do not initialize a replacement data domain.
+- Read-only live checks confirmed the App version, running backend and API: four real test tasks remain, the final task and all four operations succeeded, and the queue is paused. The API port changes on launch; do not hardcode a previous test port.
+- The user selected **Watch Workbench with highlight review as the core workflow**. Translation readiness, detected language persistence, the unrelated default 30-second preclip, separate/combined output playback, compact layouts, title refresh and null-revision copy were fixed.
+- See [the fixes and real-video receipt](watch-workbench-real-fixes-2026-10-26.md). The [earlier 0.1.20 installation receipt](watch-workbench-install-2026-10-26.md) remains historical.
+
+## Confirmed real-video validation
+
+Final task: `7a69c98888d15620b3aa11e9fba5dbc9`, titled `真实高光完整复测 · build30 · 自动日语`. The title's build30 is the original test label; **the installed build is 33**.
+
+The same 328.300-second real recording completed native import, automatic Japanese recognition with 50 cues, native-button admission of actual DeepSeek translation for 50/50 cues, four highlight candidates covering 40.15%, reversed `[2,0]` reviewed ranges and bilingual export. The two clips are 42.100 and 63.300 seconds; the combined output is **105.421333 seconds**. All three downloaded files fully decoded. Web playback naturally reached the end. The user directly confirmed native visible playback; native capture limitations are not presented as an automatic pixel pass.
+
+The full processing run used build30. Builds31–33 changed CSS/build metadata only, with identical backend Python and frontend JS content hashes; final build33 layout and Web playback were checked separately. Earlier receipts record 365 frontend tests, 139 related backend tests and 32 native/translation integration checks, plus 62 focused boundary checks after calibration. This handoff refresh did not repeat those tests, recognition, translation or export.
+
+Primary evidence directory: `/Users/drm/.codex/worktrees/highlight-subtitle-macos/nyaru-clipper/.omo/evidence/watch-workbench-fixes-20261026/`. Start with `final-install-runtime.json`, `final-media-validation.json`, `final-web-playback-later.json`, `native-human-acceptance.json`, `data-preservation.json` and `review.md`. The current startup/API snapshot is `/Users/drm/project/nyaru-clipper/.omo/evidence/handoff-refresh-20261026-workbench/before.json`.
+
+## Source checkouts and version control
+
+On 27 October the user authorized the complete commit and push. Source, regression tests, generated contracts, packaging and bilingual handoffs are grouped into commits; the primary checkout publishes documentation only. Shared frontend/contracts are synchronized, with existing Windows-specific Web backend differences preserved.
+
+| Checkout | Local branch | Publication target | Implementation milestone (before documentation commit) |
+|---|---|---|---|
+| Primary | `codex/code-improvement-2026-10-21` | `origin/codex/code-improvement-2026-10-21` | Documentation only; prior HEAD `da11831cdf976560f642370790847bba647f7ff9` |
+| macOS | `codex/highlight-subtitle-macos-2026-10-25` | `origin/codex/local-companion-macos` | `5ffd9a826261e9fb0b405486cde6aae843fcdc79` |
+| Web | `codex/highlight-subtitle-web-2026-10-25` | `origin/codex/local-companion-web` | `59688e2b45014c02f79b04c1f36213899824dfc0` |
+
+Publication uses explicit refs and an atomic fast-forward push to these three existing remote branches. No merge, force push or update to master/collaborator branches is included. Exact final documentation heads and remote comparison are recorded in `/Users/drm/project/nyaru-clipper/.omo/evidence/git-publication-20261027/receipt.json`; milestone IDs above deliberately exclude the later documentation commits.
+
+Fresh publication checks: each frontend passed **365 tests in 45 files**, TypeScript and production build; macOS backend/native checks passed **171**, with one actual-desktop case deselected, and Web backend checks passed **139**. Initial concurrent backend runs conflicted on the shared execution lock; sequential full reruns passed. The Web review test now clears persisted localStorage between cases and includes the same reload/null-revision regressions. Real recognition, provider calls, export and native UI were not repeated for publication; their acceptance remains the dated evidence above.
+
+Untracked media/template outputs, `.DS_Store`, temporary pnpm workspace configuration, test caches, runtime state and private evidence stay outside Git and are preserved. Continue from the appropriate platform checkout; do not reset, clean or overwrite the original worktrees.
+
+## Protection, rollback and remaining work
+
+- The installation receipt verified preservation of 21 original active files, two prior task contexts, source media and original settings. Continue protecting original media, sealed roots, reader/epoch pins, tasks and failed records. This Git publication does not replace the installed App or mutate production data.
+- Backup: `/Users/drm/Library/Application Support/Nyaru Clipper Backups/workbench-fixes-20261026-1723/`. It retains the original 0.1.20 App, real-tested build30 and pre-update unified snapshot. Quit normally and preserve the current runtime before switching Apps; never overwrite newer data with the older snapshot.
+- Review drafts survive same-origin reload, **not a native App restart**. Exported videos and frozen ranges remain durable. Historical auto-language jobs without actual language metadata must be re-recognized, not guessed or rewritten.
+- One interim analysis failure on `f98b6a7d...` remains as evidence; do not confuse it with the successful final run or delete it to hide the failure. All four final-task operations succeeded.
+- Remaining work is bounded to known gaps: restart-persistent drafts if needed, human caption/candidate review, and separate long-VOD/live, Windows/GPU, dark-system, recovery and notarization validation. The short-video result grants no acceptance for those scenarios.
+
+## Historical handoff text
+
+The body below is unchanged; its uses of “current” refer only to the associated historical date.
+
+# 2026-10-26: Watch Workbench installed
+
+Formal App is now **0.1.20 build 28**. Original active data/configuration were backed up and verified unchanged; normal reopen selects the registered formal runtime. [Installation, preservation and rollback](watch-workbench-install-2026-10-26.md). Older candidate-only statements below are historical.
+
+---
+
 # Nyaru-Clipper project handoff
 
 Latest integration: [2026-10-26 selective highlight and subtitle integration](highlight-subtitle-integration-2026-10-26.md). Unified topic analysis/export, font search/favorites and three outline layers; formal App and data were not replaced.
+
+## Current handoff: 26 October 2026 (Asia/Shanghai)
+
+The selective highlight/subtitle integration was published by fast-forward to both owned remote branches: Web `9137d8cc983b3b1e06a9f92614efdb65a84f9704`, macOS `54b2a4f63a965b3ab107d821ab690a3e5bd7ee84`. The collaborator branch remains at `69d3fa0dea30a73ef0f0ef27591bc1abda9080f1`; master was unchanged. This is the completed publication record. Original dirty worktrees remain preserved; candidate worktrees hold this implementation.
+
+The user requested the compiled App, inspected it and replied “可以了”; this candidate's manual inspection is accepted. The current App is `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-macos-20261026-04/Nyaru Clipper.app`, launched with the explicit isolated runtime `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-native-20261025-01/runtime.json`. A process check during this update confirms it is still running; the window is retained for the user. The earlier publication receipt's “quit” state is a historical snapshot.
+
+See the [integration handoff](highlight-subtitle-integration-2026-10-26.md) for exact entry points, reopening command, automated evidence and limits. No formal App/data replacement or migration occurred. This inspection does not qualify real long-VOD/external-AI quality or other platforms. Preserve old App02, sealed domains and reader pins under their historical restrictions below. Actual-material quality testing with separately authorized provider calls is a possible next step; formal installation/data cutover still requires explicit instruction.
 
 ## Unified architecture merge: 23 October 2026 (Asia/Shanghai)
 
