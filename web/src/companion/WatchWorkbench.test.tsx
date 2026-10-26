@@ -1,10 +1,11 @@
 import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
 import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
-import {afterEach, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {TopicSegmentsPanel} from './TopicSegmentsPanel';
 
 const segments = [0, 1].map(index => ({index, start_seconds: index * 30, end_seconds: (index + 1) * 30,
   title: `片段${index + 1}`, summary: '原始字幕中的话题', score: index ? 80 : 60}));
+beforeEach(() => localStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
 function setup(extra: Record<string, unknown> = {}) {
   const client = new QueryClient({defaultOptions: {queries: {retry: false}, mutations: {retry: false}}});
@@ -16,7 +17,7 @@ function setup(extra: Record<string, unknown> = {}) {
     return new Response(JSON.stringify(url.endsWith('/danmaku') ? {count: 0} : {state: 'not_started', items: []}));
   }));
   const props = {jobId: 'task', documentRevision: 2, duration: 60, prepare: async () => null, onSeek: vi.fn(), onPreview: vi.fn()};
-  const mount = (jobId = props.jobId) => render(<QueryClientProvider client={client}><TopicSegmentsPanel {...props} jobId={jobId}/></QueryClientProvider>);
+  const mount = (jobId = props.jobId, queryClient = client) => render(<QueryClientProvider client={queryClient}><TopicSegmentsPanel {...props} jobId={jobId}/></QueryClientProvider>);
   return {mount, posts, props, client};
 }
 
@@ -101,4 +102,25 @@ it('explains an empty completed analysis without offering generation', async () 
   // Then the operator sees a specific empty result and a disabled export.
   expect(await screen.findByText('没有找到高光候选')).toBeVisible();
   expect(screen.getByRole('button', {name: '生成选中视频'})).toBeDisabled();
+});
+
+it('restores reviewed ranges after a same-origin reload and resets them only for a replacement analysis', async () => {
+  const analysis = {operation_id: 'original'};
+  const {mount} = setup(analysis);const first = mount();
+  fireEvent.click(await screen.findByLabelText('选择片段2'));
+  fireEvent.click(screen.getByRole('button', {name: '预览片段2'}));
+  fireEvent.change(await screen.findByLabelText('高光入点'), {target: {value: '00:35'}});
+  fireEvent.click(screen.getByRole('button', {name: '应用片段范围'}));
+  first.unmount();
+  const reloaded = new QueryClient({defaultOptions: {queries: {retry: false}}});mount('task', reloaded);
+  expect(await screen.findByLabelText('选择片段2')).toBeChecked();
+  expect(screen.getByLabelText('高光入点')).toHaveValue('00:35.0');
+  analysis.operation_id = 'replacement';await reloaded.invalidateQueries({queryKey: ['companion', 'topics', 'task']});
+  await waitFor(() => expect(screen.getByLabelText('选择片段2')).not.toBeChecked());
+  expect(screen.queryByLabelText('高光入点')).not.toBeInTheDocument();
+});
+it('does not display a null revision as an editing version or stale document', async () => {
+  const {mount} = setup({document_revision: null});mount();await screen.findByText('片段1');
+  expect(screen.queryByText(/vnull/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/字幕已修改/)).not.toBeInTheDocument();
 });
