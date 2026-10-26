@@ -35,6 +35,8 @@ export interface Clip {
 }
 export interface Segment { id: string; start_seconds: number; end_seconds: number; text: string }
 export interface Job {
+  readonly title?: string | null;
+  readonly source_label?: string | null;
   id: string;
   state: string;
   subtitle_export_busy?: boolean;
@@ -63,7 +65,7 @@ export interface Job {
   bilingual_files?: string[];
   translation: { state: string; error: string | null; done: number; total: number; message: string | null; model?: string };
 }
-export interface JobInput { url: string; ranges: [string, string][]; highlights: number | null; language: string; saozi?: boolean; live?: boolean; subtitle_template_id?: string; engine?: 'whisper.cpp' | 'whisperx' }
+export interface JobInput { recognition_only?: boolean; url: string; ranges: [string, string][]; highlights: number | null; language: string; saozi?: boolean; live?: boolean; subtitle_template_id?: string; engine?: 'whisper.cpp' | 'whisperx' }
 
 export async function api<T>(path: string, body?: object): Promise<T> {
   const response = await fetch(`/companion-api${path}`, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);

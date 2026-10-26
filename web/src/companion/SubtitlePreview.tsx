@@ -4,9 +4,9 @@ import { DocumentOverlay } from './DocumentOverlay';
 import type { Language, SubtitleDocument } from './subtitleDocument';
 interface Props { video: RefObject<HTMLVideoElement>; segments: CueSegment[]; bilingual: CueSegment[]; offset: number; style: SubtitleStyle; children: ReactNode; source: string;
   document?: SubtitleDocument | null; jobId?: string; selected?: readonly string[]; language?: Language; editing?: boolean; showBilingual?: boolean;
-  onMove?: (dx: number, dy: number) => void; onTime?: (time: number) => void; loop?: { start: number; end: number } | null;
+  onMove?: (dx: number, dy: number) => void; onTime?: (time: number) => void; loop?: { start: number; end: number } | null; stopAt?: number;
 }
-export function SubtitlePreview({video,segments,bilingual,offset,style,children,source,document: documentDraft,jobId,selected=[],language='original',editing=false,showBilingual=false,onMove,onTime,loop}: Props) {
+export function SubtitlePreview({video,segments,bilingual,offset,style,children,source,document: documentDraft,jobId,selected=[],language='original',editing=false,showBilingual=false,onMove,onTime,loop,stopAt}: Props) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [time,setTime] = useState(0);
   const [box,setBox] = useState({width:0,height:0,left:0,top:0});
@@ -23,6 +23,7 @@ export function SubtitlePreview({video,segments,bilingual,offset,style,children,
     if (!element) return;
     const update = () => {
       if (loop && !element.paused && (element.currentTime + offset >= loop.end || element.currentTime + offset < loop.start)) element.currentTime = Math.max(0,loop.start - offset);
+      if (!loop && stopAt !== undefined && !element.paused && element.currentTime + offset >= stopAt) {element.pause();element.currentTime = Math.max(0, stopAt - offset);}
       setTime(element.currentTime);
       onTime?.(element.currentTime + offset);
       const width = element.clientWidth, height = element.clientHeight;
@@ -37,7 +38,7 @@ export function SubtitlePreview({video,segments,bilingual,offset,style,children,
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
     observer?.observe(element); update();
     return () => { events.forEach(event => element.removeEventListener(event,update)); element.textTracks?.removeEventListener?.('addtrack',update); observer?.disconnect(); };
-  },[video,source,styled,offset,onTime,loop?.start,loop?.end]);
+  },[video,source,styled,offset,onTime,loop?.start,loop?.end,stopAt]);
   const cue = activeCue({segments,bilingual,time,offset});
   const layout = cue ? layoutCue(cue,style,box.height ? 1080 * box.width / box.height : 1920) : null;
   const scale = box.height / 1080;
