@@ -2,7 +2,28 @@
 
 来源为合作者分支 `feat/companion-topic-subtitle-updates` 的固定提交 `69d3fa0dea30a73ef0f0ef27591bc1abda9080f1`。仅移植高光与字幕相关能力，适配现有统一执行核心；不将合作者整条分支合并覆盖进来。源码中保留来源标注。
 
-Web 基线为 `3e0582b47577b1fa7f26466fef7b78f7088c1fd7`，macOS 基线为 `73aa14b6def9e7e9b970a42621844e7c62f702f2`。实现分别位于 `codex/highlight-subtitle-web-2026-10-25` 和 `codex/highlight-subtitle-macos-2026-10-25`，供原有 `codex/local-companion-web`、`codex/local-companion-macos` 快进吸收。平台差异继续保留；原有脏工作树不切换、不重置。
+Web 基线为 `3e0582b47577b1fa7f26466fef7b78f7088c1fd7`，macOS 基线为 `73aa14b6def9e7e9b970a42621844e7c62f702f2`。实现分别位于 `codex/highlight-subtitle-web-2026-10-25` 和 `codex/highlight-subtitle-macos-2026-10-25`，已经快进发布至 `codex/local-companion-web`、`codex/local-companion-macos`。平台差异继续保留；原有脏工作树不切换、不重置。
+
+## 人工检验与当前入口：2026-10-26
+
+用户要求打开编译后的 App 并检验，随后反馈“可以了”。本次接受范围为用户查看的候选；真实长视频与供应商质量的验证状态仍见下方限制。
+
+| 对象 | 当前记录 |
+| --- | --- |
+| 已发布 Web 分支 | `codex/local-companion-web` → `9137d8cc983b3b1e06a9f92614efdb65a84f9704` |
+| 已发布 macOS 分支 | `codex/local-companion-macos` → `54b2a4f63a965b3ab107d821ab690a3e5bd7ee84` |
+| 本机候选 App | `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-macos-20261026-04/Nyaru Clipper.app`；程序构建自 `ded33b8d13fe2a0ceeb46c9071ad3b4ccc61ef13`，随后提交仅更新文档 |
+| 隔离测试运行时 | `/Users/drm/.cache/nyaru-clipper/highlight-subtitle-native-20261025-01/runtime.json`；包含 40 秒合成媒体及已保存字幕测试稿 |
+| 当前运行状态 | 交接更新时已复核 App 仍运行；窗口留给用户。未安装至正式位置，未切换正式数据 |
+| 证据 | Web 候选下 `.omo/evidence/highlight-subtitle-20261025/publication-receipt.json`、`native-qa.json`、`native-user-inspection.txt`；人工接受来自本对话用户反馈 |
+
+若已退出候选，可用以下显式入口重开；不要双击候选以免落入默认数据入口：
+
+```bash
+"/Users/drm/.cache/nyaru-clipper/highlight-subtitle-macos-20261026-04/Nyaru Clipper.app/Contents/MacOS/Nyaru Clipper" --unified-runtime "/Users/drm/.cache/nyaru-clipper/highlight-subtitle-native-20261025-01/runtime.json"
+```
+
+此前构建显示版本仍为 0.1.19／build 27，按上述包路径及 `native-qa.json` 摘要识别。运行状态与本地服务端口会变化，接手时重新检查；不要复用旧封存测试域或改绑旧恢复 reader。
 
 ## 使用方法
 
