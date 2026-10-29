@@ -17,12 +17,24 @@ import re
 import time
 from pathlib import Path
 
-from app.arctime import audio_factors, clip_vocab, clip_words, media
+from app.arctime import audio_factors, clip_vocab, clip_words, cover_render, media, song_zones
 
 STORE_NAME = "danmaku.json"
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_ENTRIES = 400_000
 PEAK_WINDOW_SECONDS = 10.0
+# 评分/派生结果口径版本：改动公式、金句排序或封面规格后递增，旧任务读取时自动重算（不重新调用模型）
+SCORE_VERSION = 5
+# 单维度相对 95 分位最多取到 2 倍，不再在 1.0 处截断，保留高分段差异
+SOFT_CAP = 2.0
+# 软压缩常数：quality = 100 * raw / (raw + QUALITY_K)，越大越压向低分
+QUALITY_K = 16.0
+# 本场排名系数区间：最低 -15%，最高 +15%
+RANK_SWING = .30
+# 时长惩罚：3 分 30 秒以内不罚，越长越偏离主题且不利于传播，600 秒时 -30%
+LENGTH_PENALTY_START = 210.0
+LENGTH_PENALTY_END = 600.0
+LENGTH_PENALTY_MAX = .30
 
 _ASS_TIME = re.compile(r"^(\d+):(\d{1,2}):(\d{1,2})(?:[.,](\d{1,3}))?$")
 _ASS_TAG = re.compile(r"\{[^}]*\}")
@@ -79,7 +91,8 @@ def parse_ass(content: str) -> list[list]:
 
 
 def parse_xml(content: str) -> list[list]:
-    """解析 B 站 XML 弹幕：p 属性第 1 段为时间（秒），第 7 段为发送者哈希。"""
+    """解析 B 站 XML 弹幕：p 属性第 1 段为时间（秒），第 2 段为模式，第 4 段为颜色，
+    第 7 段为发送者哈希。模式与颜色追加在末尾，供弹幕渲染使用（老数据只有前四项）。"""
     entries: list[list] = []
     for attributes, raw in _XML_ITEM.findall(content):
         parts = attributes.split(",")
@@ -88,9 +101,17 @@ def parse_xml(content: str) -> list[list]:
         except (ValueError, IndexError):
             continue
         user = parts[6].strip() if len(parts) > 6 else ""
+        try:
+            mode = int(parts[1])
+        except (ValueError, IndexError):
+            mode = 1
+        try:
+            color = int(parts[3])
+        except (ValueError, IndexError):
+            color = 16777215
         text = _clean_text(html.unescape(_XML_TAG.sub("", raw)))
         if _keep(text):
-            entries.append([round(start, 3), text, user, None])
+            entries.append([round(start, 3), text, user, None, mode, color])
     return entries
 
 
@@ -107,13 +128,31 @@ def parse(content: str) -> tuple[str, list[list]]:
     return "unknown", []
 
 
+# 预览会按播放进度反复读取同一份弹幕，按「路径 + mtime + 大小」做进程内缓存，
+# 避免每次请求都重新解析几十 MB 的 JSON；文件被 save_store 改写后 mtime 变化会自动失效。
+_STORE_CACHE: dict[str, tuple[float, int, dict]] = {}
+_STORE_CACHE_LIMIT = 8
+
+
 def read_store(directory: Path) -> dict | None:
     path = directory / STORE_NAME
     try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 48 * 1024 * 1024:
+        if path.is_symlink() or not path.is_file():
             return None
+        stat = path.stat()
+        if stat.st_size > 48 * 1024 * 1024:
+            return None
+        key = str(path.resolve())
+        cached = _STORE_CACHE.get(key)
+        if cached is not None and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+            return cached[2]
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) and isinstance(value.get("entries"), list) else None
+        if not (isinstance(value, dict) and isinstance(value.get("entries"), list)):
+            return None
+        if len(_STORE_CACHE) >= _STORE_CACHE_LIMIT:
+            _STORE_CACHE.pop(next(iter(_STORE_CACHE)))
+        _STORE_CACHE[key] = (stat.st_mtime, stat.st_size, value)
+        return value
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -177,6 +216,8 @@ def _segment_stats(entries: list[list], start: float, end: float) -> dict:
     return {
         "count": len(window),
         "rate": len(window) / duration,
+        # 峰值窗口内的弹幕密度（条/秒），用于区分「有爆点」与「全程平稳」
+        "peak_rate": peak / min(PEAK_WINDOW_SECONDS, duration),
         "users": len(users),
         "repeat": repeat,
         "peak": peak,
@@ -269,6 +310,41 @@ def _loudness_multiplier(value: float | None, ref: float, low: float, high: floa
     return low + (high - low) * ratio
 
 
+def _rank_multipliers(values: list[float]) -> list[float]:
+    """本场排名系数：最好 +15%，最差 -15%；同分取平均名次，单切片不加成。
+
+    软压缩后的分数区间较窄，靠排名把相近的切片再拉开，避免出现一批并列分。
+    """
+    if len(values) < 2:
+        return [1.0] * len(values)
+    order = sorted(range(len(values)), key=lambda index: values[index])
+    factors = [1.0] * len(values)
+    position = 0
+    while position < len(order):
+        end = position
+        while end + 1 < len(order) and values[order[end + 1]] == values[order[position]]:
+            end += 1
+        share = (position + end) / 2 / (len(values) - 1)
+        factor = 1 - RANK_SWING / 2 + RANK_SWING * share
+        for slot in range(position, end + 1):
+            factors[order[slot]] = factor
+        position = end + 1
+    return factors
+
+
+def _length_factor(duration: float) -> float:
+    """时长惩罚系数：≤3 分 30 秒为 1.0，之后线性加重，600 秒及更长固定 0.70。
+
+    精华内容基本都在 3 分钟以内，越长越容易偏离主题、完播率越低，
+    因此对长段做乘性降权，而不是简单截断。
+    """
+    if duration <= LENGTH_PENALTY_START:
+        return 1.0
+    span = max(1.0, LENGTH_PENALTY_END - LENGTH_PENALTY_START)
+    excess = min(1.0, (float(duration) - LENGTH_PENALTY_START) / span)
+    return 1.0 - LENGTH_PENALTY_MAX * excess
+
+
 def score_store(store: dict, entries: list[list], *, directory: Path | None = None,
                 words: clip_words.Lexicon | None = None, build_audio: bool = False,
                 vocab_root: Path | None = None,
@@ -295,6 +371,7 @@ def score_store(store: dict, entries: list[list], *, directory: Path | None = No
         end = float(segment.get("end_seconds") or 0)
         stats = _segment_stats(entries, start, end)
         duration = max(end - start, 0.001)
+        stats["duration"] = duration
         stats["speech"] = float(segment.get("cue_count") or 0) / duration
         stats["shape"], stats["shape_score"] = _dm_shape(stats)
         rows.append(stats)
@@ -303,29 +380,38 @@ def score_store(store: dict, entries: list[list], *, directory: Path | None = No
     user_ref = _quantile([row["users"] for row in rows], 0.95) or 1.0
     repeat_ref = _quantile([row["repeat"] for row in rows], 0.95) or 1.0
     speech_ref = _quantile([row["speech"] for row in rows], 0.95) or 1.0
+    peak_ref = _quantile([row["peak_rate"] for row in rows], 0.95) or 1.0
     loud_ref = _quantile([extra["loudness_db"] for extra in extras or []
                           if extra.get("loudness_db") is not None], 0.95)
     laugh_ref = _quantile([extra["laugh_rate"] for extra in extras or []
                            if extra.get("laugh_rate") is not None], 0.95)
-    # ASS 弹幕没有发送者信息，参与人数维度无法计算，权重并入密度，保持 0–100 量级一致
+
+    def ratio(value: float, ref: float) -> float:
+        """相对本场 95 分位，最高取到 SOFT_CAP 倍；不封顶到 1.0，保留高分段差异。"""
+        return min(SOFT_CAP, max(0.0, float(value) / ref))
+
+    # ASS 弹幕没有发送者信息，参与人数维度无法计算，权重并入密度
     has_users = any(item[2] for item in entries)
-    # 第一轮：不含动态热词的基础分
-    scores: list[int] = []
+    # 第一轮：不含动态热词的基础分（允许超过 100，最终统一压缩）
+    scores: list[float] = []
     for index, row in enumerate(rows):
         extra = extras[index] if extras else {}
-        density = min(1.0, row["rate"] / rate_ref)
-        audience = min(1.0, row["users"] / user_ref)
-        echo = min(1.0, row["repeat"] / repeat_ref)
-        speech = min(1.0, row["speech"] / speech_ref)
-        base = 100 * ((0.45 * density + 0.25 * audience + 0.15 * echo + 0.15 * speech)
-                      if has_users else (0.70 * density + 0.15 * echo + 0.15 * speech))
+        density = ratio(row["rate"], rate_ref)
+        audience = ratio(row["users"], user_ref)
+        echo = ratio(row["repeat"], repeat_ref)
+        speech = ratio(row["speech"], speech_ref)
+        peak = ratio(row["peak_rate"], peak_ref)
+        base = 100 * ((0.38 * density + 0.22 * audience + 0.13 * echo
+                       + 0.13 * speech + 0.14 * peak)
+                      if has_users else (0.58 * density + 0.15 * echo
+                                         + 0.13 * speech + 0.14 * peak))
         multiplier = (_loudness_multiplier(extra.get("loudness_db"), loud_ref, .95, 1.15)
                       * _ratio_multiplier(extra.get("laugh_rate"), laugh_ref, .95, 1.15)
                       * _shape_multiplier(row["shape_score"]))
         # 命中合规风险词：内容可能不宜公开传播，直接压低分数并标记
         if extra.get("risk_terms"):
             multiplier *= .60
-        scores.append(max(0, min(100, round(base * multiplier))))
+        scores.append(max(0.0, base * multiplier))
 
     # 第二轮：从第一轮高分切片提取本场热词与金句，并叠加主播画像
     vocabulary: list[str] = []
@@ -338,8 +424,9 @@ def score_store(store: dict, entries: list[list], *, directory: Path | None = No
         picked = clip_vocab.high_segments(segments, scores)
         high = [segments[index] for index in picked]
         extracted = clip_vocab.extract_hot_terms(high, entries)
+        # 金句排序由峰值高度与文本完整度决定，不再跟随切片分数
         quotes = clip_vocab.extract_quotes(
-            [(segments[index], rows[index]["peak_time"], scores[index]) for index in picked], zh_cues)
+            [(segments[index], rows[index]["peak_time"], rows[index]["peak"]) for index in picked], zh_cues)
         terms = clip_vocab.session_terms(profile, extracted)
         matched = clip_vocab.score_segments(segments, ja_cues, zh_cues, terms, entries)
         # 展示用热词只保留短语级长度，超长整句仍参与字幕匹配但不铺进标签
@@ -355,13 +442,22 @@ def score_store(store: dict, entries: list[list], *, directory: Path | None = No
                 pass
     meme_ref = _quantile([row["meme_rate"] for row in matched], .95) if matched else 0.0
 
+    # 热词加成也作用在原始分上（压缩前），高分段边际收益自然递减
+    raws = list(scores)
+    if matched is not None and meme_ref > 0:
+        for index, match in enumerate(matched):
+            raws[index] *= 1 + .15 * min(1.0, match["meme_rate"] / meme_ref)
+    # 软压缩 + 本场排名 + 时长惩罚：compress 后不硬顶 100，再由排名把相近切片拉开
+    ranks = _rank_multipliers(raws)
+    for index in range(len(raws)):
+        quality = 100 * raws[index] / (raws[index] + QUALITY_K)
+        scores[index] = max(0.0, min(100.0,
+                                   quality * ranks[index] * _length_factor(rows[index]["duration"])))
+
     for index, (segment, row) in enumerate(zip(segments, rows)):
         extra = extras[index] if extras else {}
-        score = scores[index]
         if matched is not None:
             match = matched[index]
-            if meme_ref > 0:
-                score = round(score * (1 + .15 * min(1.0, match["meme_rate"] / meme_ref)))
             segment["meme_hits"] = match["meme_hits"]
             segment["meme_rate"] = match["meme_rate"]
             segment["hot_words"] = match["hot_words"]
@@ -374,18 +470,32 @@ def score_store(store: dict, entries: list[list], *, directory: Path | None = No
         segment["dm_shape"] = row["shape"]
         segment["dm_shape_score"] = round(row["shape_score"], 2)
         segment["risk"] = bool(extra.get("risk_terms"))
-        segment["score"] = max(0, min(100, score))
-        segment["grade"] = "高" if segment["score"] >= 70 else "中" if segment["score"] >= 40 else "低"
+        segment["score"] = int(round(max(0.0, min(100.0, scores[index]))))
+        segment["grade"] = ("推荐" if segment["score"] >= 95 else "高" if segment["score"] >= 85
+                            else "中" if segment["score"] >= 75 else "低")
     store["scored_at"] = time.time()
+    store["score_version"] = SCORE_VERSION
     return True
 
 
 def apply(directory: Path, store: dict, *, words: clip_words.Lexicon | None = None,
           build_audio: bool = False, vocab_root: Path | None = None) -> dict:
-    """给内容切片补齐音频/风险因子，提取热词金句并（有弹幕时）打分。"""
+    """给内容切片补齐音频/风险因子，提取热词金句、（有弹幕时）打分并合成封面。"""
     data = read_store(directory)
     entries = data.get("entries") or [] if data else []
-    if score_store(store, entries, directory=directory, words=words, build_audio=build_audio,
-                   vocab_root=vocab_root, danmaku_meta=data):
+    if build_audio:
+        # 先确保音频因子可用：唱歌区间检测与响度/兴奋度评分都依赖它
+        audio_factors.ensure(directory)
+    segments = store.get("segments")
+    refined = False
+    if segments:
+        # 把切片边界吸附到歌声之外，避免歌尾/歌词混入；无音频时自动跳过
+        refined = song_zones.refine(directory, segments)
+    changed = score_store(store, entries, directory=directory, words=words, build_audio=build_audio,
+                          vocab_root=vocab_root, danmaku_meta=data) or refined
+    if segments:
+        # 封面依赖 cover_text（截帧时刻优先弹幕峰值，无弹幕用切片中点）；纯本地合成，失败不影响其它结果
+        changed = cover_render.apply_covers(directory, segments) or changed
+    if changed:
         media.write_json(directory / "topic_segments.json", store)
     return store

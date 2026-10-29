@@ -22,6 +22,11 @@ export interface CompanionConfig {
 export interface ChatGPTModel { readonly slug: string; readonly display_name: string }
 
 export type BurnVariant = "bilingual" | "zh" | "original";
+/** 切片弹幕烧录参数：字号按 1080p 基准，area_height 为弹幕区域占画面高度百分比 */
+export interface DanmakuBurnConfig { enabled: boolean; font_size: number; area_height: number }
+/** 预览弹幕时间窗：[时间(秒), 文本, 颜色(十进制 RGB) | null] */
+export type DanmakuEntry = [number, string, number | null];
+export interface DanmakuWindow { start: number; end: number; entries: DanmakuEntry[] }
 export interface BurnEntry { state: string; file: string | null; error: string | null; sha256?: string; progress?: number; segments_done?: number; segments_total?: number }
 export interface OutlineLayer { color: string; width: number }
 export interface LegacyTextStyle {
@@ -35,8 +40,8 @@ export interface LegacyTextStyle {
   pos_y: number;
   align: "left" | "center" | "right";
 }
-export interface LegacyStyleConfig { original: LegacyTextStyle; translated: LegacyTextStyle }
-export interface LegacyStyleStore { current: LegacyStyleConfig; templates: Record<string, LegacyStyleConfig>; shapes: Shape[] }
+export interface LegacyStyleConfig { original: LegacyTextStyle; translated: LegacyTextStyle; show_original?: boolean; show_translated?: boolean }
+export interface LegacyStyleStore { current: LegacyStyleConfig; templates: Record<string, LegacyStyleConfig>; shapes: Shape[]; shapes_templates: Record<string, Shape[]> }
 export type SubtitleMode = "bilingual" | "zh" | "original";
 
 export interface Clip {
@@ -138,6 +143,10 @@ export const running = (job?: Job) => !!job && (! ["completed", "failed", "inter
 export const cancellable = (job?: Job) => !!job && ["preparing", "downloading", "downloaded", "transcribing", "subtitles_ready", "exporting", "translating", "cancelling"].includes(job.state);
 export const statusLabel = (job: Job) => ({ completed: "已完成", failed: "失败", interrupted: "已中断", cancelled: "已终止", cancelling: "正在终止", preparing: "检查环境", uploading: "导入中", recording: "实时录制", analyzing: "段落分析", downloading: "下载中", downloaded: "下载完成", transcribing: "识别中", subtitles_ready: "字幕已生成", exporting: "导出中" }[job.state] ?? "处理中");
 export const fileUrl = (id: string, name: string, download = false) => `/companion-api/jobs/${id}/files/${encodeURIComponent(name)}${download ? "?download=true" : ""}`;
+/** 封面 URL：附带 cover_source 指纹。重新生成内容切片后封面仍是同名 cover-XX.jpg，
+ *  指纹变化让 img src 随之改变，避免浏览器/React 复用第一次生成的缓存图 */
+export const coverUrl = (id: string, segment: { cover?: string | null; cover_source?: string | null }) =>
+  segment.cover ? `${fileUrl(id, segment.cover)}?v=${encodeURIComponent(segment.cover_source ?? "")}` : "";
 
 /** 切片本地时间轴字幕：取与 [start,end) 相交的段并减去 start 偏移 */
 export function clipSegments(segments: Segment[], start: number, end: number): Segment[] {
@@ -161,6 +170,8 @@ export interface TopicSegment {
   index: number; start_id: number; end_id: number;
   start_seconds: number; end_seconds: number; cue_count: number;
   title: string; summary: string; preview: string; analyzed: boolean;
+  /** 投稿用长标题与封面大字（分析时生成；老任务为空），cover 为封面文件名，cover_source 为封面内容指纹 */
+  post_title?: string; cover_text?: string; cover?: string | null; cover_source?: string | null;
   /** 弹幕互动评分（未导入弹幕时为空） */
   dm_count?: number | null; dm_rate?: number | null; dm_users?: number | null;
   dm_peak?: number | null; dm_peak_time?: number | null; dm_repeat?: number | null;
@@ -223,4 +234,155 @@ export interface TopicClipStore {
   items?: TopicClipItem[];
   combined?: { file: string; state: string; error: string | null } | null;
   created_at?: number;
+}
+
+// ---- B 站自动投稿（biliup）----
+
+export interface PublishDefaults {
+  tid: number;
+  tid_v2: number | null;
+  tags: string;
+  desc: string;
+  dynamic: string;
+  submit: "app" | "web" | "b-cut-android";
+  line: string;
+}
+export interface PublishItem {
+  id: string;
+  job_id: string;
+  index: number;
+  title: string;
+  file: string;
+  cover: string | null;
+  state: "scheduled" | "uploading" | "success" | "failed" | string;
+  /** dtime = 已交给 B站自带定时发布；now = 上传后立即发布 */
+  delivery?: "dtime" | "now" | string;
+  scheduled_at: number;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  bvid: string | null;
+  error: string | null;
+}
+export interface PublishStore {
+  items: PublishItem[];
+  updated_at: number | null;
+  biliup_ready: boolean;
+  credential_ready: boolean;
+}
+export interface JobPublishStore {
+  items: PublishItem[];
+  biliup_ready: boolean;
+  credential_ready: boolean;
+}
+export interface PublishZone { id: number; name: string; children: { id: number; name: string }[] }
+export interface PublishZones { items: PublishZone[]; updated_at: number | null; stale: boolean }
+
+// ---- 录播与自动化流水线 ----
+
+export interface RecorderRoom {
+  room_id: string;
+  name: string;
+  enabled: boolean;
+  auto_run: boolean;
+  url: string;
+  live_status: number | null;
+  title: string;
+  uname: string;
+  recording: boolean;
+  stopping?: boolean;
+  started_at: number | null;
+  current_dir: string | null;
+  created_at: number;
+}
+export interface RecordingDanmakuXml { count: number; sc: number; dropped: number; users: number; file: string }
+export interface RecordingItem {
+  room_id: string;
+  name: string;
+  title: string;
+  started_at: number;
+  ended_at: number;
+  duration: number;
+  sessions: number;
+  danmaku_count: number;
+  sc_count: number;
+  danmaku_xml?: RecordingDanmakuXml;
+  state: string;
+  merged: boolean;
+  video?: string;
+  error?: string | null;
+  merge_error?: string;
+  automation?: string;
+  directory: string;
+}
+export interface RecorderStore {
+  rooms: RecorderRoom[];
+  recordings: RecordingItem[];
+  active: string | null;
+  poll_interval: number;
+  record_path: string;
+  default_record_path: string;
+}
+
+export interface AutomationConfig {
+  language: string;
+  translate: boolean;
+  max_segments: number;
+  use_top_n: boolean;
+  top_n: number;
+  use_min_score: boolean;
+  min_score: number;
+  per_minutes: number;
+  per_count: number;
+  generate_clips: boolean;
+  auto_publish: boolean;
+  publish_count: number | null;
+  variant: BurnVariant;
+  style_template: string;
+  shapes_template: string;
+  danmaku_enabled: boolean;
+  danmaku_font_size: number;
+  danmaku_area_height: number;
+}
+export interface AutomationTemplate {
+  id: string;
+  name: string;
+  config: AutomationConfig;
+  created_at: number;
+  updated_at: number;
+}
+export type AutomationStageState = "pending" | "running" | "done" | "skipped" | "failed";
+export interface AutomationStage {
+  key: string;
+  label: string;
+  state: AutomationStageState;
+  message: string | null;
+  error: string | null;
+}
+export interface AutomationTask {
+  id: string;
+  job_id: string;
+  kind: "recording" | "upload" | "url";
+  title: string;
+  source_name: string;
+  url: string | null;
+  config: AutomationConfig;
+  template_name: string;
+  state: "queued" | "running" | "completed" | "failed" | string;
+  stages: AutomationStage[];
+  selected: number[];
+  error: string | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  /** 上传本地视频时附加的弹幕文件（进入导入阶段后转为任务目录的 danmaku.json） */
+  danmaku_path?: string | null;
+  danmaku_name?: string | null;
+  danmaku_count?: number | null;
+}
+export interface AutomationStore {
+  templates: AutomationTemplate[];
+  tasks: AutomationTask[];
+  default_config: AutomationConfig;
+  api_key_ready: boolean;
 }

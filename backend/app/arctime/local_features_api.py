@@ -11,24 +11,45 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import uuid
+import zipfile
 from pathlib import Path
 from typing import Literal
+from urllib.parse import unquote
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
-from app.arctime import (bilibili_auth, clip_words, danmaku, danmaku_fetch, glossary, media, topic_segments,
-                         topic_video, translation, workflow)
+from app.arctime import (automation, bilibili_auth, clip_words, danmaku, danmaku_fetch, danmaku_render,
+                         glossary, media, publish, recorder, topic_segments, topic_video, translation,
+                         workflow)
 from app.arctime import subtitle_style_legacy as legacy_style
+
+
+class DanmakuInput(BaseModel):
+    """切片弹幕烧录参数：字号按 1080p 画布基准，高度为弹幕区域占画面高度的百分比。"""
+
+    enabled: bool = True
+    font_size: int = Field(default=40, ge=12, le=96)
+    area_height: int = Field(default=60, ge=10, le=100)
+
+    def style(self) -> danmaku_render.DanmakuStyle | None:
+        if not self.enabled:
+            return None
+        return danmaku_render.DanmakuStyle(font_size=self.font_size, area_height=self.area_height)
 
 
 class TopicClipsInput(BaseModel):
     indices: list[int] = Field(min_length=1, max_length=100)
     mode: Literal["separate", "combined"] = "separate"
     variant: Literal["bilingual", "zh", "original"] = "bilingual"
+    danmaku: DanmakuInput | None = None
 
 
 class BurnInput(BaseModel):
@@ -37,6 +58,7 @@ class BurnInput(BaseModel):
     # 填写起止秒数时，只合成原视频的这一段（clip 仍传原视频文件名）
     start: float | None = Field(default=None, ge=0)
     end: float | None = Field(default=None, gt=0)
+    danmaku: DanmakuInput | None = None
 
 
 class TranslationEditInput(BaseModel):
@@ -51,6 +73,34 @@ class DanmakuFetchInput(BaseModel):
     url: str | None = Field(default=None, max_length=8192)
 
 
+class RoomInput(BaseModel):
+    room: str = Field(min_length=1, max_length=200)
+    name: str = Field(default="", max_length=60)
+    auto_run: bool = True
+
+
+class RoomUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=60)
+    enabled: bool | None = None
+    auto_run: bool | None = None
+
+
+class RecorderSettingsInput(BaseModel):
+    record_path: str | None = Field(default=None, max_length=500)
+
+
+class AutomationTaskInput(BaseModel):
+    url: str = Field(min_length=1, max_length=8192)
+    title: str = Field(default="", max_length=120)
+    template_id: str | None = None
+    config: automation.AutomationConfig | None = None
+
+
+class AutomationTemplateInput(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    config: automation.AutomationConfig | None = None
+
+
 # ---- 管理器辅助（附加到 JobManager 实例，避免改动上游类定义）----
 
 def _ensure_manager_extras(manager) -> None:
@@ -60,6 +110,10 @@ def _ensure_manager_extras(manager) -> None:
         manager.burning = set()
     if not hasattr(manager, "_storage_cache"):
         manager._storage_cache = None
+    if not hasattr(manager, "recorder"):
+        manager.recorder = recorder.RecorderService(manager)
+    if not hasattr(manager, "automation_thread"):
+        manager.automation_thread = None
 
 
 def _clip_words(manager) -> clip_words.Lexicon:
@@ -117,7 +171,14 @@ def read_topic_clips(manager, directory: Path) -> dict:
     return value
 
 
-def submit_topic_clips(manager, job_id: str, indices: list[int], mode: str, variant: str) -> dict:
+def _safe_filename(text: str, fallback: str) -> str:
+    """把投稿标题净化为合法文件名：去掉 Windows 非法字符，控制长度。"""
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", text).strip(" .")
+    return cleaned[:60] or fallback
+
+
+def submit_topic_clips(manager, job_id: str, indices: list[int], mode: str, variant: str,
+                       danmaku_style: danmaku_render.DanmakuStyle | None = None) -> dict:
     _ensure_manager_extras(manager)
     directory = manager.directory(job_id)
     job = manager.read_json(directory / "job.json")
@@ -163,12 +224,14 @@ def submit_topic_clips(manager, job_id: str, indices: list[int], mode: str, vari
             "error": None, "items": [], "combined": None, "created_at": time.time(),
         }
         media.write_json(directory / "topic_clips.json", state_record)
-    manager.executor.submit(run_topic_clips, manager, job_id, normalized, mode, variant, legacy_files)
+    manager.executor.submit(run_topic_clips, manager, job_id, normalized, mode, variant, legacy_files,
+                            danmaku_style)
     return state_record
 
 
 def run_topic_clips(manager, job_id: str, indices: list[int], mode: str, variant: str,
-                    legacy_files: dict | None = None) -> None:
+                    legacy_files: dict | None = None,
+                    danmaku_style: danmaku_render.DanmakuStyle | None = None) -> None:
     directory = manager.directory(job_id)
 
     def write(**changes) -> None:
@@ -186,7 +249,8 @@ def run_topic_clips(manager, job_id: str, indices: list[int], mode: str, variant
             write(done=done, message=message)
 
         result = topic_video.generate(directory, segments, indices, mode, variant,
-                                      load_style_store(manager), progress)
+                                      load_style_store(manager), progress,
+                                      danmaku_style=danmaku_style)
         # 合并历史段产物：本次未涉及的段保留；组合模式下各段继承最近一次独立产物
         merged: dict[int, dict] = {item["index"]: item for item in result.get("items", [])}
         for legacy_index, legacy_file in (legacy_files or {}).items():
@@ -306,8 +370,14 @@ def _range_bounds(clip_name: str) -> tuple[float, float] | None:
     return int(match.group(1)) / 1000, int(match.group(2)) / 1000
 
 
+def _danmaku_signature(style: danmaku_render.DanmakuStyle | None) -> str | None:
+    """弹幕设置指纹：分段续跑时若弹幕参数变化，已编码的分段必须作废重编。"""
+    return None if style is None else f"{style.font_size}x{style.area_height}"
+
+
 def submit_burn(manager, job_id: str, clip_name: str, variant: str,
-                start: float | None = None, end: float | None = None) -> dict:
+                start: float | None = None, end: float | None = None,
+                danmaku_style: danmaku_render.DanmakuStyle | None = None) -> dict:
     _ensure_manager_extras(manager)
     directory = manager.directory(job_id)
     job = manager.read_json(directory / "job.json")
@@ -340,8 +410,10 @@ def submit_burn(manager, job_id: str, clip_name: str, variant: str,
             raise HTTPException(409, "该切片正在合成中，请稍候")
         burns = read_burns(directory)
         previous = burns["clips"].setdefault(clip_name, {}).get(variant) or {}
-        entry: dict = {"state": "burning", "file": file, "error": None}
-        if previous.get("state") != "completed" and int(previous.get("segments_done") or 0) > 0:
+        signature = _danmaku_signature(danmaku_style)
+        entry: dict = {"state": "burning", "file": file, "error": None, "danmaku": signature}
+        if (previous.get("state") != "completed" and int(previous.get("segments_done") or 0) > 0
+                and previous.get("danmaku") == signature):
             # 上次中断且已完成至少一段：保留进度，实现断点续跑
             entry["progress"] = previous.get("progress", 0.0)
             entry["segments_done"] = previous.get("segments_done")
@@ -355,19 +427,35 @@ def submit_burn(manager, job_id: str, clip_name: str, variant: str,
         burns["clips"][clip_name][variant] = entry
         media.write_json(directory / "burn.json", burns)
         manager.burning.add(key)
-    manager.executor.submit(run_burn, manager, job_id, clip_name, variant)
+    manager.executor.submit(run_burn, manager, job_id, clip_name, variant, danmaku_style)
     return {"file": file, "state": "burning"}
 
 
 def _encode_burn_segment(directory: Path, stem: str, source_name: str, variant: str, style, shape_pngs: list[Path],
                          cues, translated: list[str] | None, seg_index: int, seg_start: float,
                          seg_len: float, part: Path, encoder_args: list[str], on_progress,
-                         source_offset: float = 0.0) -> None:
-    """编码单个分段：局部时间轴 ASS + 图形 overlay，输出自包含的 part mp4（首帧为关键帧，便于 -c copy 拼接）。"""
+                         source_offset: float = 0.0, danmaku_entries: list | None = None,
+                         danmaku_style: danmaku_render.DanmakuStyle | None = None,
+                         danmaku_offset: float = 0.0) -> None:
+    """编码单个分段：局部时间轴 ASS + 图形 overlay，输出自包含的 part mp4（首帧为关键帧，便于 -c copy 拼接）。
+
+    danmaku_offset 为本段在原始视频时间轴上的起点，用于截取对应的弹幕时间窗。
+    """
     seg_cues, seg_translated = _segment_cues(cues, translated, seg_start, seg_len)
     # ASS 放在任务目录下（而非分段子目录），subtitles 滤镜按 cwd 相对文件名解析才能找到它
     seg_ass = workflow._path(directory, f".{stem}.burn.{variant}.part{seg_index:04d}.ass")
     workflow._publish_text(seg_ass, legacy_style.render_ass(seg_cues, seg_translated, style, variant))
+    dm_ass = None
+    if danmaku_entries and danmaku_style is not None:
+        content = danmaku_render.build_ass(danmaku_entries,
+                                           start=danmaku_offset + seg_start,
+                                           end=danmaku_offset + seg_start + seg_len,
+                                           style=danmaku_style)
+        if content:
+            dm_ass = workflow._path(directory, f".{stem}.burn.{variant}.part{seg_index:04d}.dm.ass")
+            workflow._publish_text(dm_ass, content)
+    # 弹幕层放在字幕层之前，保证弹幕在字幕下方
+    filters = ([f"subtitles={dm_ass.name}"] if dm_ass is not None else []) + [f"subtitles={seg_ass.name}"]
     # ffmpeg 以 cwd=任务目录 运行，输出需带上分段子目录的相对路径
     part_arg = f"{part.parent.name}/{part.name}"
     cmd = [media.tool_path("ffmpeg"), "-hide_banner", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats",
@@ -381,9 +469,9 @@ def _encode_burn_segment(directory: Path, stem: str, source_name: str, variant: 
         for shape_index in range(len(shape_pngs)):
             chain += f"[{previous}][{shape_index + 1}:v]overlay=0:0[s{shape_index}];"
             previous = f"s{shape_index}"
-        cmd += ["-filter_complex", f"{chain}[{previous}]subtitles={seg_ass.name}"]
+        cmd += ["-filter_complex", f"{chain}[{previous}]" + ",".join(filters)]
     else:
-        cmd += ["-vf", f"subtitles={seg_ass.name}"]
+        cmd += ["-vf", ",".join(filters)]
     # 音频必须重编码：-c:a copy 在输入 seek 下各段音频帧数不齐（259/517/419），拼接处会丢音/多音；
     # 且不能加 -avoid_negative_ts make_zero——它会把每段首帧 PTS 顶到 seg_start，导致拼接总时长虚高
     cmd += [*encoder_args, "-c:a", "aac", "-b:a", "192k", "-shortest", part_arg]
@@ -424,9 +512,12 @@ def _encode_burn_segment(directory: Path, stem: str, source_name: str, variant: 
     finally:
         err_path.unlink(missing_ok=True)
         seg_ass.unlink(missing_ok=True)
+        if dm_ass is not None:
+            dm_ass.unlink(missing_ok=True)
 
 
-def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
+def run_burn(manager, job_id: str, clip_name: str, variant: str,
+             danmaku_style: danmaku_render.DanmakuStyle | None = None) -> None:
     directory = manager.directory(job_id)
     stem = Path(clip_name).stem
     file = f"{stem}.burn.{variant}.mp4"
@@ -443,6 +534,7 @@ def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
             entry["error"] = error
             entry["file"] = file if state == "completed" else None
             entry["encoder"] = video_encoder_name(encoder_args)
+            entry["danmaku"] = _danmaku_signature(danmaku_style)
             if done is not None:
                 entry["segments_done"] = done
             if total is not None:
@@ -497,6 +589,10 @@ def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
                 raise ValueError("译文数量与字幕不匹配，无法合成；请重新生成双语字幕")
         style_store = load_style_store(manager)
         style = style_store.current
+        dm_entries: list = []
+        if danmaku_style is not None:
+            dm_store = danmaku.read_store(directory) or {}
+            dm_entries = [item for item in (dm_store.get("entries") or []) if isinstance(item, list)]
         output = workflow._path(directory, file)
         duration = max(1.0, end - start)
         total = max(1, math.ceil(duration / BURN_SEGMENT_SECONDS))
@@ -519,6 +615,8 @@ def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
             done = 0  # 分段数变化，旧分段不可复用
         if done > 0 and previous.get("encoder") != video_encoder_name(encoder_args):
             done = 0  # 编码器变了（如 NVENC 失败后降级），分段混用会让 -c copy 拼接失败，只能重头来
+        if done > 0 and previous.get("danmaku") != _danmaku_signature(danmaku_style):
+            done = 0  # 弹幕设置变了，旧分段里没有/不是当前的弹幕样式，必须重编
         part_files = [parts_dir / f"part{i:04d}.mp4" for i in range(total)]
         while done > 0 and not part_files[done - 1].is_file():
             done -= 1
@@ -532,7 +630,8 @@ def run_burn(manager, job_id: str, clip_name: str, variant: str) -> None:
                                  seg_index, seg_start, seg_len, part_files[seg_index], encoder_args,
                                  lambda idx, ratio: record("burning", done=idx, total=total,
                                                            progress=(idx + ratio) / total),
-                                 source_offset=source_offset)
+                                 source_offset=source_offset, danmaku_entries=dm_entries,
+                                 danmaku_style=danmaku_style, danmaku_offset=start)
             record("burning", done=seg_index + 1, total=total, progress=(seg_index + 1) / total)
         # 所有分段完成后 -c copy 直接拼接（不重新编码，很快），再删掉中间分段
         list_path = workflow._path(directory, f".{stem}.burn.{variant}.concat.txt")
@@ -823,6 +922,9 @@ def local_features_router(manager) -> APIRouter:
             return {"state": "not_started"}
         if identity is None or stored.get("identity") != identity or stored.get("state") != "completed":
             return {**stored, "state": "stale"}
+        # 评分口径升级：旧任务按新公式就地重算，避免为此重新调用切片模型
+        if stored.get("score_version") != danmaku.SCORE_VERSION and danmaku.read_store(directory):
+            stored = danmaku.apply(directory, stored, words=_clip_words(manager), vocab_root=None)
         return stored
 
     @router.post("/jobs/{job_id}/topic-segments")
@@ -876,6 +978,28 @@ def local_features_router(manager) -> APIRouter:
         if not (directory / "job.json").is_file():
             raise HTTPException(404, "任务不存在")
         return danmaku.summary(directory)
+
+    @router.get("/jobs/{job_id}/danmaku/window")
+    def get_danmaku_window(job_id: str, start: float, end: float):
+        """预览用：取 [start, end) 时间窗内的弹幕，返回 [时间, 文本, 颜色] 紧凑数组。"""
+        directory = manager.directory(job_id)
+        if not (directory / "job.json").is_file():
+            raise HTTPException(404, "任务不存在")
+        if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end):
+            raise HTTPException(400, "时间窗无效")
+        span = min(float(end - start), 120.0)
+        limit = start + span
+        store = danmaku.read_store(directory) or {}
+        entries = []
+        for item in store.get("entries") or []:
+            if not isinstance(item, list) or len(item) < 2:
+                continue
+            at = item[0]
+            if not isinstance(at, (int, float)) or not start <= at < limit:
+                continue
+            color = item[5] if len(item) > 5 else None
+            entries.append([at, item[1], color if isinstance(color, int) else None])
+        return {"start": start, "end": limit, "entries": entries[:4000]}
 
     @router.post("/jobs/{job_id}/danmaku")
     async def upload_danmaku(job_id: str, request: Request):
@@ -981,7 +1105,104 @@ def local_features_router(manager) -> APIRouter:
 
     @router.post("/jobs/{job_id}/topic-clips", status_code=202)
     def create_topic_clips(job_id: str, payload: TopicClipsInput):
-        return submit_topic_clips(manager, job_id, payload.indices, payload.mode, payload.variant)
+        return submit_topic_clips(manager, job_id, payload.indices, payload.mode, payload.variant,
+                                  payload.danmaku.style() if payload.danmaku else None)
+
+    @router.get("/jobs/{job_id}/topic-clips/{index}/bundle")
+    def topic_clip_bundle(job_id: str, index: int):
+        """打包下载切片：zip 内含「投稿标题/投稿标题.mp4 + 投稿标题.jpg」，解压即得同名文件夹。"""
+        directory = manager.directory(job_id)
+        record = read_topic_clips(manager, directory)
+        item = next((row for row in record.get("items", [])
+                     if isinstance(row, dict) and row.get("index") == index), None)
+        if not item or item.get("state") != "completed" or not item.get("file"):
+            raise HTTPException(404, "切片视频不存在，请先生成切片视频")
+        video = manager.artifact(job_id, str(item["file"]))
+        if not video.is_file():
+            raise HTTPException(404, "切片视频文件已丢失，请重新生成")
+        stored = topic_segments.read_store(directory) or {}
+        segment = next((row for row in stored.get("segments", [])
+                        if isinstance(row, dict) and row.get("index") == index), {})
+        base = _safe_filename(str(segment.get("post_title") or ""), Path(item["file"]).stem)
+        entries: list[tuple[Path, str]] = [(video, f"{base}/{base}.mp4")]
+        cover_name = str(segment.get("cover") or "")
+        if cover_name:
+            cover = manager.artifact(job_id, cover_name)
+            if cover.is_file():
+                entries.append((cover, f"{base}/{base}.jpg"))
+        tmp = tempfile.NamedTemporaryFile(prefix="nyaru-bundle-", suffix=".zip", delete=False)
+        try:
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as bundle:
+                for path, arcname in entries:
+                    bundle.write(path, arcname)
+        finally:
+            tmp.close()
+        return FileResponse(tmp.name, media_type="application/zip", filename=f"{base}.zip",
+                            background=BackgroundTask(os.unlink, tmp.name))
+
+    # ---- B 站自动投稿（biliup）----
+
+    @router.get("/publish")
+    def get_publish_status():
+        return publish.status(manager)
+
+    @router.get("/publish/defaults")
+    def get_publish_defaults():
+        return publish.read_defaults(manager).model_dump(mode="json")
+
+    @router.get("/publish/zones")
+    def get_publish_zones():
+        """B站投稿分区列表（在线获取并缓存，失败时用兜底列表）。"""
+        return publish.zones(manager)
+
+    @router.delete("/publish/{item_id}")
+    def delete_publish_item(item_id: str):
+        """删除投稿队列里的条目；正在上传的条目拒绝删除。"""
+        try:
+            return publish.remove_item(manager, item_id)
+        except KeyError:
+            raise HTTPException(404, "投稿条目不存在，可能已被删除") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.put("/publish/defaults")
+    def put_publish_defaults(payload: publish.PublishDefaults):
+        return publish.save_defaults(manager, payload).model_dump(mode="json")
+
+    @router.post("/publish/credential/qrcode")
+    def create_publish_qrcode():
+        """扫码生成投稿凭据（TV 登录，含 access_token）。"""
+        try:
+            return bilibili_auth.tv_qr_code()
+        except bilibili_auth.LoginError as exc:
+            raise HTTPException(502, str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"获取投稿二维码失败：{exc}") from None
+
+    @router.get("/publish/credential/qrcode/{key}")
+    def poll_publish_qrcode(key: str):
+        try:
+            return bilibili_auth.tv_poll(key)
+        except bilibili_auth.LoginError as exc:
+            raise HTTPException(409, str(exc)) from None
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"查询扫码状态失败：{exc}") from None
+
+    @router.get("/jobs/{job_id}/publish")
+    def get_job_publish(job_id: str):
+        manager.directory(job_id)
+        publish.ensure_worker(manager)
+        items = [item for item in publish.read_store(manager)["items"]
+                 if item.get("job_id") == job_id]
+        return {"items": items, "biliup_ready": publish.locate_biliup() is not None,
+                "credential_ready": publish.credential_ready()}
+
+    @router.post("/jobs/{job_id}/publish", status_code=202)
+    def create_job_publish(job_id: str, payload: publish.PublishInput):
+        try:
+            return publish.submit(manager, job_id, payload)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
 
     # ---- 术语表 ----
 
@@ -1072,7 +1293,8 @@ def local_features_router(manager) -> APIRouter:
 
     @router.post("/jobs/{job_id}/burn", status_code=202)
     def create_burn(job_id: str, payload: BurnInput):
-        return submit_burn(manager, job_id, payload.clip, payload.variant, payload.start, payload.end)
+        return submit_burn(manager, job_id, payload.clip, payload.variant, payload.start, payload.end,
+                           payload.danmaku.style() if payload.danmaku else None)
 
     # ---- 图形绘制（存于 legacy style.json 的 shapes 字段）----
 
@@ -1118,5 +1340,232 @@ def local_features_router(manager) -> APIRouter:
         except OSError as exc:
             raise HTTPException(500, f"译文保存失败：{exc}")
         return {"ok": True}
+
+    # ---- 录播（直播间 + 自动录制）----
+
+    @router.get("/recorder")
+    def get_recorder():
+        return manager.recorder.status()
+
+    @router.get("/recorder/recordings")
+    def get_recordings():
+        return {"items": manager.recorder.recordings()}
+
+    @router.post("/recorder/rooms", status_code=201)
+    def add_recorder_room(payload: RoomInput):
+        try:
+            room = manager.recorder.add_room(payload.room, payload.name)
+            if not payload.auto_run:
+                room = manager.recorder.update_room(room["room_id"], auto_run=False)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        return room
+
+    @router.put("/recorder/rooms/{room_id}")
+    def update_recorder_room(room_id: str, payload: RoomUpdate):
+        try:
+            return manager.recorder.update_room(room_id, name=payload.name,
+                                                enabled=payload.enabled, auto_run=payload.auto_run)
+        except KeyError:
+            raise HTTPException(404, "直播间不存在") from None
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.delete("/recorder/rooms/{room_id}")
+    def delete_recorder_room(room_id: str):
+        try:
+            manager.recorder.remove_room(room_id)
+        except KeyError:
+            raise HTTPException(404, "直播间不存在") from None
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {"ok": True}
+
+    @router.put("/recorder/settings")
+    def save_recorder_settings(payload: RecorderSettingsInput):
+        try:
+            return manager.recorder.save_settings(payload.record_path)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/recorder/open-folder")
+    def open_recorder_folder():
+        try:
+            manager.recorder.open_folder()
+        except OSError as exc:
+            raise HTTPException(409, f"无法打开录播文件夹：{exc}") from None
+        return {"opened": True}
+
+    @router.post("/recorder/rooms/{room_id}/start")
+    def start_recorder_room(room_id: str):
+        try:
+            return manager.recorder.start_recording(room_id)
+        except KeyError:
+            raise HTTPException(404, "直播间不存在") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.post("/recorder/rooms/{room_id}/stop")
+    def stop_recorder_room(room_id: str):
+        try:
+            return manager.recorder.stop_recording(room_id)
+        except KeyError:
+            raise HTTPException(404, "直播间不存在") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    # ---- 自动化流水线 ----
+
+    @router.get("/automation")
+    def get_automation():
+        return {"templates": automation.read_templates(manager),
+                "tasks": automation.read_tasks(manager),
+                "default_config": automation.DEFAULT_CONFIG.model_dump(mode="json"),
+                "api_key_ready": manager.api_key is not None}
+
+    @router.get("/automation/preview-sample")
+    def automation_preview_sample():
+        """样式预览用的 10 秒 1080p 样例视频（ffmpeg 测试画面），生成一次后缓存复用。"""
+        path = manager.root / "preview-sample.mp4"
+        if not path.is_file():
+            tmp = manager.root / ".preview-sample.tmp.mp4"
+            result = subprocess.run(
+                [media.tool_path("ffmpeg"), "-hide_banner", "-y",
+                 "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=10",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                 "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(tmp)],
+                capture_output=True, timeout=180, check=False)
+            if result.returncode != 0 or not tmp.is_file():
+                tmp.unlink(missing_ok=True)
+                raise HTTPException(500, "预览视频生成失败，请确认 ffmpeg 可用")
+            os.replace(tmp, path)
+        return FileResponse(path, media_type="video/mp4")
+
+    @router.post("/automation/tasks", status_code=202)
+    def create_automation_task(payload: AutomationTaskInput):
+        try:
+            return automation.enqueue(manager, kind="url", url=payload.url,
+                                      title=payload.title or payload.url,
+                                      template_id=payload.template_id, config=payload.config)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/automation/tasks/upload", status_code=202)
+    async def upload_automation_task(request: Request, config: str = "", title: str = ""):
+        name = unquote(request.headers.get("x-filename") or "") or "upload.mp4"
+        suffix = Path(name).suffix.lower() or ".mp4"
+        if suffix not in {".mp4", ".mkv", ".flv", ".ts", ".mov", ".webm", ".m4v", ".avi"}:
+            raise HTTPException(422, "仅支持常见视频文件格式")
+        options = None
+        if config:
+            try:
+                options = automation.AutomationConfig.model_validate_json(config)
+            except ValueError:
+                raise HTTPException(422, "自动化参数无效，请检查后重试") from None
+        incoming = manager.root / ".automation-incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        temp = incoming / f"{uuid.uuid4().hex[:10]}{suffix}"
+        size = 0
+        with temp.open("wb") as handle:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 32 * 1024 * 1024 * 1024:
+                    handle.close()
+                    temp.unlink(missing_ok=True)
+                    raise HTTPException(413, "视频文件超过 32GB，请先在本地压缩")
+                handle.write(chunk)
+        if not size:
+            temp.unlink(missing_ok=True)
+            raise HTTPException(422, "没有收到视频文件")
+        try:
+            return automation.enqueue(manager, kind="upload", title=title or Path(name).stem,
+                                      source_path=temp, source_name=name, config=options,
+                                      auto_start=False)
+        except ValueError as exc:
+            temp.unlink(missing_ok=True)
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/automation/tasks/{task_id}/danmaku", status_code=201)
+    async def upload_automation_danmaku(task_id: str, request: Request):
+        task = next((item for item in automation.read_tasks(manager) if item.get("id") == task_id), None)
+        if task is None:
+            raise HTTPException(404, "自动化任务不存在")
+        if task.get("state") in {"running", "completed"}:
+            raise HTTPException(409, "任务已开始，请等待结束后在任务详情里补充弹幕")
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > danmaku.MAX_FILE_BYTES:
+            raise HTTPException(413, "弹幕文件过大（上限 64 MB）")
+        body = await request.body()
+        if not body:
+            raise HTTPException(422, "请选择弹幕文件")
+        if len(body) > danmaku.MAX_FILE_BYTES:
+            raise HTTPException(413, "弹幕文件过大（上限 64 MB）")
+        content = body.decode("utf-8-sig", errors="replace")
+        source, entries = danmaku.parse(content)
+        if not entries:
+            raise HTTPException(422, "未解析到弹幕，请确认导出的是 XML 或 JSON 弹幕文件")
+        incoming = manager.root / ".automation-incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        path = incoming / f"{task_id}.danmaku"
+        try:
+            path.write_text(content, encoding="utf-8")
+        except OSError:
+            raise HTTPException(500, "弹幕文件保存失败，请检查数据目录权限") from None
+        name = unquote(request.headers.get("x-filename") or "") or f"{task_id}.xml"
+        updated = automation.attach_danmaku(manager, task_id, path, name, len(entries))
+        return {"task": updated, "count": len(entries), "source": source}
+
+    @router.post("/automation/tasks/{task_id}/start")
+    def start_automation_task(task_id: str):
+        try:
+            return automation.start_task(manager, task_id)
+        except KeyError:
+            raise HTTPException(404, "自动化任务不存在") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.post("/automation/tasks/{task_id}/retry")
+    def retry_automation_task(task_id: str):
+        try:
+            return automation.retry_task(manager, task_id)
+        except KeyError:
+            raise HTTPException(404, "自动化任务不存在") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.delete("/automation/tasks/{task_id}")
+    def delete_automation_task(task_id: str):
+        try:
+            automation.delete_task(manager, task_id)
+        except KeyError:
+            raise HTTPException(404, "自动化任务不存在") from None
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {"ok": True}
+
+    @router.post("/automation/templates", status_code=201)
+    def create_automation_template(payload: AutomationTemplateInput):
+        return {"templates": automation.save_template(
+            manager, automation.TemplateInput(name=payload.name, config=payload.config))}
+
+    @router.put("/automation/templates/{template_id}")
+    def update_automation_template(template_id: str, payload: AutomationTemplateInput):
+        try:
+            return {"templates": automation.save_template(
+                manager, automation.TemplateInput(name=payload.name, config=payload.config), template_id)}
+        except KeyError:
+            raise HTTPException(404, "自动化模板不存在") from None
+
+    @router.delete("/automation/templates/{template_id}")
+    def delete_automation_template(template_id: str):
+        try:
+            return {"templates": automation.delete_template(manager, template_id)}
+        except KeyError:
+            raise HTTPException(404, "自动化模板不存在") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    manager.recorder.start()
+    automation.ensure_worker(manager)
 
     return router

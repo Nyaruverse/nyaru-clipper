@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownToLine, BookA, Captions, Check, Film, ListTree, Plus, Scissors, Shapes, SlidersHorizontal, X } from "lucide-react";
+import { ArrowDownToLine, BookA, Captions, Check, Film, ListTree, Plus, Radio, Scissors, Shapes, SlidersHorizontal, Upload, X } from "lucide-react";
 
 import { LlmSettings } from "./LlmSettings";
 import { subtitleApi, type SubtitleSettings } from "./subtitleStyle";
@@ -9,8 +9,10 @@ import { StylePanel, useLegacyStyle } from "./StylePanel";
 import { GlossaryPanel } from "./GlossaryPanel";
 import { ShapesPanel, useShapes } from "./ShapesPanel";
 import { TopicSegmentsPanel } from "./TopicSegmentsPanel";
+import { PublishPanel } from "./PublishPanel";
+import { LiveAutomationPanel } from "./LiveAutomationPanel";
 
-import { api, time, parseTime, running, cancellable, statusLabel, fileUrl, clipSegments, bytes, type BurnVariant, type Job, type JobInput, type CompanionConfig, type SubtitleMode, type StorageSnapshot, type BatchResult, type Segment } from "./companionApi";
+import { api, time, parseTime, running, cancellable, statusLabel, fileUrl, clipSegments, bytes, type BurnVariant, type DanmakuBurnConfig, type DanmakuSummary, type Job, type JobInput, type CompanionConfig, type SubtitleMode, type StorageSnapshot, type BatchResult, type Segment } from "./companionApi";
 
 const TOOLS = [
   { id: "subtitle", label: "字幕样式", icon: Captions },
@@ -19,6 +21,8 @@ const TOOLS = [
   { id: "shapes", label: "图形绘制", icon: Shapes },
   { id: "export", label: "导出", icon: ArrowDownToLine },
   { id: "topics", label: "内容切片", icon: ListTree },
+  { id: "publish", label: "投稿", icon: Upload },
+  { id: "automation", label: "自动化&录播", icon: Radio },
 ] as const;
 type Tool = typeof TOOLS[number]["id"];
 const SOURCES = [
@@ -50,6 +54,7 @@ export function Companion() {
   const [error, setError] = useState<string | null>(null);
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>("bilingual");
   const [burnVariant, setBurnVariant] = useState<Record<string, BurnVariant>>({});
+  const [danmakuBurn, setDanmakuBurn] = useState<DanmakuBurnConfig>({ enabled: true, font_size: 40, area_height: 60 });
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [rangePick, setRangePick] = useState<{ start: number | null; end: number | null }>({ start: null, end: null });
@@ -70,6 +75,8 @@ export function Companion() {
   const liveTemplateId = liveTemplate ?? (settings.data?.templates?.some(item=>item.id==='nyaru') ? 'nyaru' : '');
   const legacyStyle = useLegacyStyle();
   const job = detail.data;
+  const danmakuInfo = useQuery({ queryKey: ["companion", "danmaku", job?.id],
+    queryFn: () => api<DanmakuSummary>(`/jobs/${job!.id}/danmaku`), enabled: !!job });
   const visibleJobs = history.data?.map(item => item.id === job?.id ? job : item);
   const busy = visibleJobs?.some(running) || running(job);
   const create = useMutation({ mutationFn: async (payload: JobInput & {file?:File}) => {
@@ -96,7 +103,7 @@ export function Companion() {
   const cancel = useMutation({ mutationFn: (id: string) => api(`/jobs/${id}/cancel`, {}),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion"] }); }, onError: err => setError(err.message) });
   const burn = useMutation({ mutationFn: (payload: { id: string; clip: string; variant: BurnVariant; start?: number; end?: number }) => api(`/jobs/${payload.id}/burn`, {
-      clip: payload.clip, variant: payload.variant, ...(payload.start === undefined ? {} : { start: payload.start, end: payload.end }) }),
+      clip: payload.clip, variant: payload.variant, danmaku: danmakuBurn, ...(payload.start === undefined ? {} : { start: payload.start, end: payload.end }) }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["companion", "job", selectedId] }); },
     onError: err => setError(err.message) });
   const editTranslation = useMutation({ mutationFn: (payload: { id: string; text: string }) => api(`/jobs/${selectedId}/translation/${payload.id}`, { text: payload.text }, "PUT"),
@@ -251,7 +258,11 @@ export function Companion() {
       }}><Icon size={16} />{label}</button>)}
     </nav>
     </div>
-    <main className={`companion-layout ${tool ? "has-drawer" : ""}`}>
+    <main className={`companion-layout ${tool === "automation" ? "is-automation" : tool ? "has-drawer" : ""}`}>
+      {tool === "automation" ? (
+        <LiveAutomationPanel onOpenJob={id => { setSelectedId(id); setTool(null); }} />
+      ) : (
+        <>
       <aside className="companion-sidebar" aria-label="任务面板">
         <form id="companion-task" onSubmit={submit} onInvalid={event => {
           event.preventDefault();
@@ -365,6 +376,30 @@ export function Companion() {
             <a className="ny-button" href={fileUrl(job.id, "transcript.txt", true)}><ArrowDownToLine size={16} />字幕文字 TXT</a>
           </div> : <p className="companion-muted">生成的字幕和视频将出现在这里，可直接下载。</p>}
           {job?.state === "completed" && !job.clips.length && <p className="companion-muted">没有达到阈值的高光，已保留完整字幕。</p>}
+          {job?.state === "completed" && <div className="companion-result companion-danmaku">
+            <div>
+              <strong>切片弹幕</strong>
+              <p>{danmakuInfo.data?.count
+                ? `任务弹幕 ${danmakuInfo.data.count} 条，合成时叠加对应时间段的弹幕`
+                : "任务暂无弹幕文件；导入弹幕后重新合成即可叠加"}</p>
+            </div>
+            <div className="companion-burn">
+              <button type="button" className={`ny-button${danmakuBurn.enabled ? "" : " is-off"}`}
+                onClick={() => setDanmakuBurn(current => ({ ...current, enabled: !current.enabled }))}>
+                {danmakuBurn.enabled ? "弹幕已开启" : "弹幕已关闭"}
+              </button>
+              <label className="companion-danmaku-field">字号
+                <input className="ny-input" type="number" min={12} max={96} value={danmakuBurn.font_size}
+                  aria-label="弹幕字号" disabled={!danmakuBurn.enabled}
+                  onChange={event => setDanmakuBurn(current => ({ ...current, font_size: Math.max(12, Math.min(96, Number(event.target.value) || 40)) }))} />
+              </label>
+              <label className="companion-danmaku-field">区域高度
+                <input className="ny-input" type="number" min={10} max={100} value={danmakuBurn.area_height}
+                  aria-label="弹幕区域高度百分比" disabled={!danmakuBurn.enabled}
+                  onChange={event => setDanmakuBurn(current => ({ ...current, area_height: Math.max(10, Math.min(100, Number(event.target.value) || 60)) }))} />%
+              </label>
+            </div>
+          </div>}
           {job?.state === "completed" && job.has_source && <div className="companion-result">
             <div><strong>完整视频</strong><p>{job.duration ? time(job.duration) : ""} <span>· 全部字幕 — {job.clips.length} 个切片</span></p></div>
             <div className="companion-result-actions">
@@ -467,6 +502,7 @@ export function Companion() {
           {!!job?.clips.length && <p className="companion-footnote">切片字幕从零开始计时；合成视频把所选字幕按当前样式直接烧进画面。</p>}
         </section>
         {tool === "topics" && <TopicSegmentsPanel job={job} onSeek={seekSource} />}
+        {tool === "publish" && <PublishPanel job={job} />}
         </div>
       </aside>
       <div className="companion-workspace">
@@ -511,7 +547,11 @@ export function Companion() {
               segments={clip ? clipSegments(job.segments, clip.start, clip.end) : job.segments}
               zhSegments={clip ? clipSegments(job.zh_segments, clip.start, clip.end) : job.zh_segments}
               bilingualSegments={clip ? clipSegments(job.bilingual_segments, clip.start, clip.end) : job.bilingual_segments}
-              style={legacyStyle.currentStyle} mode={previewMode} shapes={shapesQuery.data?.shapes ?? []}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
+              style={legacyStyle.currentStyle} mode={previewMode} shapes={shapesQuery.data?.shapes ?? []}
+              danmaku={danmakuInfo.data?.count && danmakuBurn.enabled ? {
+                jobId: job.id, offset: clip ? clip.start : 0,
+                fontSize: danmakuBurn.font_size, areaHeight: danmakuBurn.area_height,
+              } : null}><video key={`${job.id}/${preview}`} ref={video} src={fileUrl(job.id, preview)} controls preload="metadata" aria-label={clip ? "切片预览" : "完整视频预览"} onLoadedMetadata={() => { if (seek !== null && video.current) { video.current.currentTime = seek; setSeek(null); } }}>
               {(clip || job.segments.length > 0) && <track key={subtitleFile} kind="subtitles" src={fileUrl(job.id, subtitleFile)} srcLang={previewMode === "original" ? (job.language === "auto" ? "und" : job.language) : "zh"} label={previewMode === "bilingual" ? "中日双语" : previewMode === "zh" ? "译文字幕" : "识别字幕"} default />}
             </video></SubtitlePreview>
             <div className="companion-ruler"><span>00:00</span><span>{time((job.duration ?? 0) / 2)}</span><span>{time(job.duration ?? 0)}</span></div>
@@ -530,6 +570,8 @@ export function Companion() {
           })}</div></details>}
         </section>
       </div>
+        </>
+      )}
     </main>
   </div>;
 }

@@ -1,5 +1,6 @@
 /** 旧版样式字幕预览：多层描边叠层 + X/Y 百分比定位，与烧录合成（ASS）渲染一致。 */
 import { useEffect, useRef, useState, type RefObject, type ReactNode } from 'react';
+import { DanmakuOverlay } from './DanmakuOverlay';
 import { SubtitleOverlay } from './legacyStyle';
 import { ShapeOverlay } from './ShapeOverlay';
 import type { LegacyStyleConfig, Segment, Shape, SubtitleMode } from './companionApi';
@@ -14,12 +15,15 @@ interface Props {
   style: LegacyStyleConfig;
   mode: SubtitleMode;
   shapes?: readonly Shape[];
+  /** 弹幕预览参数；为空表示该任务没有弹幕或未开启 */
+  danmaku?: { jobId: string; offset: number; fontSize: number; areaHeight: number } | null;
   children: ReactNode;
 }
 
-export function SubtitlePreview({ video, source, segments, zhSegments, bilingualSegments, style, mode, shapes = [], children }: Props) {
+export function SubtitlePreview({ video, source, segments, zhSegments, bilingualSegments, style, mode, shapes = [], danmaku = null, children }: Props) {
   const wrapper = useRef<HTMLDivElement>(null);
   const [time, setTime] = useState(0);
+  const [paused, setPaused] = useState(true);
   const [box, setBox] = useState({ width: 0, height: 0, left: 0, top: 0 });
   const [error, setError] = useState('');
   const [styled, setStyled] = useState(true);
@@ -34,10 +38,16 @@ export function SubtitlePreview({ video, source, segments, zhSegments, bilingual
     if (!element) return;
     const update = () => {
       setTime(element.currentTime);
+      setPaused(element.paused);
       const width = element.clientWidth, height = element.clientHeight;
       const ratio = element.videoWidth / element.videoHeight || 16 / 9;
       const imageWidth = Math.min(width, height * ratio), imageHeight = imageWidth / ratio;
-      setBox({ width: imageWidth, height: imageHeight, left: (width - imageWidth) / 2, top: (height - imageHeight) / 2 });
+      // 值不变时保留旧对象，保证下游 memo 组件不会被无意义的重渲染打穿
+      setBox(previous => {
+        const next = { width: imageWidth, height: imageHeight, left: (width - imageWidth) / 2, top: (height - imageHeight) / 2 };
+        return previous.width === next.width && previous.height === next.height
+          && previous.left === next.left && previous.top === next.top ? previous : next;
+      });
       for (const track of Array.from(element.textTracks ?? [])) track.mode = styled ? 'hidden' : 'showing';
     };
     const events = ['timeupdate', 'seeking', 'seeked', 'pause', 'loadedmetadata', 'loadeddata'];
@@ -50,6 +60,9 @@ export function SubtitlePreview({ video, source, segments, zhSegments, bilingual
   const scale = box.height / 1080;
   return <><div ref={wrapper} className="companion-video-wrap subtitle-video-wrapper">{children}
     {shapes.length > 0 && <ShapeOverlay shapes={shapes} scale={scale} style={{ width: box.width, height: box.height, left: box.left, top: box.top }} />}
+    {danmaku && <DanmakuOverlay video={video} jobId={danmaku.jobId} offset={danmaku.offset} paused={paused}
+      fontSize={danmaku.fontSize} areaHeight={danmaku.areaHeight} scale={scale}
+      box={{ width: box.width, height: box.height, left: box.left, top: box.top }} />}
     {styled && <SubtitleOverlay mode={mode} currentTime={time} original={segments} translated={zhSegments} bilingual={bilingualSegments} style={style} scale={scale} box={{ width: box.width, height: box.height, left: box.left, top: box.top }} />}
     {fullscreen && <button type="button" className="ny-button subtitle-fullscreen-exit" onClick={async () => {
       try { await document.exitFullscreen(); } catch (err) { setError(err instanceof Error ? err.message : "无法退出全屏"); }

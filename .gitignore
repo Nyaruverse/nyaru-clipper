@@ -49,3 +49,11 @@ transformers_cache/
 *.ass
 *.vtt
 *.log
+
+# Local workspace junk
+/.trae/
+/streamers/
+/test_*.py
+/nyaru-clipper-*.zip
+/*-topic-segments.txt
+/*.xml

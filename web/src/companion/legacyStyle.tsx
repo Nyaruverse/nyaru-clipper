@@ -7,6 +7,8 @@ export const FALLBACK_FONTS = ["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "
 export const DEFAULT_STYLE: LegacyStyleConfig = {
   original: { font_family: "Microsoft YaHei", font_size: 48, text_color: "#FFFFFF", background_color: "#000000", background_opacity: 0, outlines: [{ color: "#000000", width: 2 }], pos_x: 50, pos_y: 78, align: "center" },
   translated: { font_family: "Microsoft YaHei", font_size: 64, text_color: "#FFFFFF", background_color: "#000000", background_opacity: 0, outlines: [{ color: "#000000", width: 2 }], pos_x: 50, pos_y: 92, align: "center" },
+  show_original: true,
+  show_translated: true,
 };
 
 export function hexToRgba(hex: string, opacity: number): string {
@@ -49,20 +51,21 @@ export function SubtitleOverlay({ mode, currentTime, original, translated, bilin
   /** letterbox 画面盒定位（width/height/left/top） */
   box?: CSSProperties;
 }) {
-  const lines: { key: string; text: string; style: LegacyTextStyle }[] = [];
+  const lines: { key: string; text: string; style: LegacyTextStyle; layer: "original" | "translated" }[] = [];
   const active = (segments: Segment[]) => segments.filter(s => currentTime >= s.start_seconds && currentTime < s.end_seconds);
   if (mode === "bilingual") {
     active(bilingual).forEach((segment, index) => {
       const parts = segment.text.split("\n");
-      lines.push({ key: `t${index}`, text: parts[parts.length - 1], style: style.translated });
-      lines.push({ key: `o${index}`, text: parts.slice(0, -1).join("\n"), style: style.original });
+      lines.push({ key: `t${index}`, text: parts[parts.length - 1], style: style.translated, layer: "translated" });
+      lines.push({ key: `o${index}`, text: parts.slice(0, -1).join("\n"), style: style.original, layer: "original" });
     });
   } else if (mode === "zh") {
-    active(translated).forEach((segment, index) => lines.push({ key: `t${index}`, text: segment.text, style: style.translated }));
+    active(translated).forEach((segment, index) => lines.push({ key: `t${index}`, text: segment.text, style: style.translated, layer: "translated" }));
   } else {
-    active(original).forEach((segment, index) => lines.push({ key: `o${index}`, text: segment.text, style: style.original }));
+    active(original).forEach((segment, index) => lines.push({ key: `o${index}`, text: segment.text, style: style.original, layer: "original" }));
   }
-  return <div className="subtitle-overlay" style={box}>{lines.map(line => (
+  const visible = lines.filter(line => line.layer === "original" ? style.show_original !== false : style.show_translated !== false);
+  return <div className="subtitle-overlay" style={box}>{visible.map(line => (
     <div key={line.key} className="subtitle-overlay-line" style={{
       ...positionCss(line.style),
       fontFamily: line.style.font_family,

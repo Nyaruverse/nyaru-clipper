@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.28.0,<1.0.0",
   "orjson>=3.10.0,<4.0.0",
   "pydantic-settings>=2.6.0,<3.0.0",
+  "pillow>=11.0,<14",
   "PyJWT[crypto]>=2.10.0,<3.0.0",
   "segno>=1.6,<2",
   "scenedetect[opencv-headless]>=0.6.0,<0.7.0",

@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Literal
 
-from app.arctime import media, workflow
+from app.arctime import danmaku, danmaku_render, media, workflow
 from app.arctime import subtitle_style_legacy as subtitle_style
 
 Variant = Literal["bilingual", "zh", "original"]
@@ -76,20 +76,24 @@ def _segment_cues(directory: Path, variant: Variant, start: float, end: float):
 
 def build_segment(directory: Path, source: str, start: float, end: float, variant: Variant,
                   style_store: subtitle_style.StyleStore, shape_pngs: list[Path],
-                  out_name: str, ass_name: str, number: int | None = None) -> None:
-    """精确切片 + 字幕/图形烧录。
+                  out_name: str, ass_name: str, number: int | None = None,
+                  danmaku_name: str | None = None) -> None:
+    """精确切片 + 字幕/图形/弹幕烧录。
 
     -ss/-t 必须作为输入选项（-i 之前）：重编码时帧精确，且解码器输出时间戳自动归零，
     subtitles 滤镜才能匹配局部时间轴的 ASS；放在 -i 之后（输出 seek）即便加 setpts
     也无法让 subtitles 滤镜命中，会导致非零起点段字幕/编号整体丢失。
+    danmaku_name 为已写好的弹幕 ASS（纯文件名），在字幕层之前烧录，保证弹幕位于字幕下方。
     """
     ja_cues, translated = _segment_cues(directory, variant, start, end)
     ass_path = workflow._path(directory, ass_name)
     workflow._publish_text(ass_path, render_segment_ass(ja_cues, translated, style_store.current, variant, number))
+    dm_path = workflow._path(directory, danmaku_name) if danmaku_name else None
     output = workflow._path(directory, out_name)
     output.unlink(missing_ok=True)
 
     duration = max(0.1, end - start)
+    filters = ([f"subtitles={danmaku_name}"] if danmaku_name else []) + [f"subtitles={ass_path.name}"]
     # -ss/-t 只作用于紧随其后的源输入；PNG 输入在其后，不受影响
     inputs = ["-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", source]
     if shape_pngs:
@@ -100,10 +104,10 @@ def build_segment(directory: Path, source: str, start: float, end: float, varian
         for shape_index in range(len(shape_pngs)):
             chain += f"[{previous}][{shape_index + 1}:v]overlay=0:0[s{shape_index}];"
             previous = f"s{shape_index}"
-        video_filter = f"{chain}[{previous}]subtitles={ass_path.name}"
+        video_filter = f"{chain}[{previous}]" + ",".join(filters)
         filter_args = ["-filter_complex", video_filter]
     else:
-        filter_args = ["-vf", f"subtitles={ass_path.name}"]
+        filter_args = ["-vf", ",".join(filters)]
 
     command = [
         media.tool_path("ffmpeg"), "-hide_banner", "-y", *inputs,
@@ -117,6 +121,8 @@ def build_segment(directory: Path, source: str, start: float, end: float, varian
                                 text=True, timeout=_ENCODE_TIMEOUT, check=False)
     finally:
         ass_path.unlink(missing_ok=True)
+        if dm_path is not None:
+            dm_path.unlink(missing_ok=True)
     if result.returncode != 0 or not output.is_file() or output.stat().st_size < 1024:
         tail = (result.stderr or "").strip().splitlines()
         raise ValueError(f"切片 {out_name} 合成失败：{tail[-1] if tail else '未知错误'}")
@@ -158,15 +164,33 @@ def concat_parts(directory: Path, part_names: list[str], out_name: str) -> None:
         raise ValueError(f"组合视频合并失败：{tail[-1] if tail else '时长校验不一致'}")
 
 
+def _segment_danmaku(directory: Path, entries: list, style: danmaku_render.DanmakuStyle | None,
+                     start: float, end: float, name: str) -> str | None:
+    """写出本段对应的弹幕 ASS，返回纯文件名；无弹幕或未开启时返回 None。"""
+    if style is None or not entries:
+        return None
+    content = danmaku_render.build_ass(entries, start=start, end=end, style=style)
+    if not content:
+        return None
+    workflow._publish_text(workflow._path(directory, name), content)
+    return name
+
+
 def generate(directory: Path, segments: list[dict], indices: list[int], mode: Mode, variant: Variant,
-             style_store: subtitle_style.StyleStore, progress: Callable[[int, int, str], None] | None = None) -> dict:
+             style_store: subtitle_style.StyleStore, progress: Callable[[int, int, str], None] | None = None,
+             danmaku_style: danmaku_render.DanmakuStyle | None = None) -> dict:
     """按选中话题段生成视频。返回 {"items": [...], "combined": {...} | None}。
 
     分别生成：某段失败只记录该段失败并继续；组合生成：任一段失败即整体失败。
+    danmaku_style 非空且任务目录有弹幕数据时，把弹幕烧录到切片（位于字幕层下方）。
     """
     source = "source.mp4"
     if not (directory / source).is_file():
         raise ValueError("源视频缺失，无法生成切片视频")
+    dm_entries: list = []
+    if danmaku_style is not None:
+        store = danmaku.read_store(directory) or {}
+        dm_entries = [item for item in (store.get("entries") or []) if isinstance(item, list)]
     width, height = _probe_resolution(directory, source)
     shape_pngs = (subtitle_style.render_shape_pngs(style_store.shapes, directory, "topic", width=width, height=height)
                   if style_store.shapes else [])
@@ -186,16 +210,24 @@ def generate(directory: Path, segments: list[dict], indices: list[int], mode: Mo
                 ass_name = f".topic-part-{number:02d}.{variant}.ass"
                 # 重新生成时清掉可能残留的旧临时段
                 (directory / part_name).unlink(missing_ok=True)
+                dm_name = _segment_danmaku(directory, dm_entries, danmaku_style,
+                                           segment["start_seconds"], segment["end_seconds"],
+                                           f"{ass_name}.dm.ass")
                 build_segment(directory, source, segment["start_seconds"], segment["end_seconds"],
-                              variant, style_store, shape_pngs, part_name, ass_name, number=number)
+                              variant, style_store, shape_pngs, part_name, ass_name, number=number,
+                              danmaku_name=dm_name)
                 part_names.append(part_name)
                 items.append({"index": index, "file": None, "state": "completed", "error": None})
             else:
                 out_name = f"topic-{number:02d}.mp4"
                 ass_name = f".topic-{number:02d}.{variant}.ass"
                 try:
+                    dm_name = _segment_danmaku(directory, dm_entries, danmaku_style,
+                                               segment["start_seconds"], segment["end_seconds"],
+                                               f"{ass_name}.dm.ass")
                     build_segment(directory, source, segment["start_seconds"], segment["end_seconds"],
-                                  variant, style_store, shape_pngs, out_name, ass_name, number=None)
+                                  variant, style_store, shape_pngs, out_name, ass_name, number=None,
+                                  danmaku_name=dm_name)
                     items.append({"index": index, "file": out_name, "state": "completed", "error": None})
                 except ValueError as exc:
                     items.append({"index": index, "file": None, "state": "failed", "error": str(exc)[:300]})

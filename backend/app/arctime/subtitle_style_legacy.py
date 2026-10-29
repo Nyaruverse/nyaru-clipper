@@ -70,6 +70,9 @@ class TextStyle(BaseModel):
 class SubtitleStyleConfig(BaseModel):
     original: TextStyle = Field(default_factory=lambda: TextStyle(pos_y=78.0))
     translated: TextStyle = Field(default_factory=lambda: TextStyle(font_size=64, pos_y=92.0))
+    # 图层开关：关闭后预览与烧录合成都不再绘制对应字幕层
+    show_original: bool = True
+    show_translated: bool = True
 
 
 class Shape(BaseModel):
@@ -238,8 +241,8 @@ def render_ass(segments: list[SubtitleSegment], translated: list[str] | None,
     for index, cue in enumerate(segments):
         start = _format_ass_time(cue.start_seconds)
         end = _format_ass_time(cue.end_seconds)
-        if variant in {"bilingual", "original"}:
+        if variant in {"bilingual", "original"} and style.show_original:
             layer = _cue_events(events, layer, start, end, "Original", style.original, cue.text)
-        if variant in {"bilingual", "zh"}:
+        if variant in {"bilingual", "zh"} and style.show_translated:
             layer = _cue_events(events, layer, start, end, "Translated", style.translated, translated[index])
     return header + "\n" + "\n".join(events) + "\n"

@@ -12,6 +12,7 @@ x/v1/dm/list.so（弹幕池，长视频会截断）+ x/v2/dm/web/seg.so（6 分�
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import math
 import os
 import re
@@ -54,9 +55,32 @@ def cookie_file() -> Path | None:
     return None
 
 
+def _json_cookie_pairs() -> list[str]:
+    """cookies.txt 不存在时，从 biliup 的 cookies.json 里取 cookie_info 兜底。"""
+    path = REPO_ROOT / "data" / "bilibili-cookies.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        items = (payload.get("cookie_info") or {}).get("cookies") or []
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return []
+    pairs: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name, value = str(item.get("name") or ""), str(item.get("value") or "")
+        if name and name not in seen:
+            seen.add(name)
+            pairs.append(f"{name}={value}")
+    return pairs
+
+
 def cookie_header(required: bool = False) -> str:
     path = cookie_file()
     if path is None:
+        pairs = _json_cookie_pairs()
+        if pairs:
+            return "; ".join(pairs)
         if not required:
             return ""
         raise CookieMissing(

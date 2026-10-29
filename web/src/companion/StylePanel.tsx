@@ -123,6 +123,10 @@ export function StylePanel({ style }: { style: LegacyStyleState }) {
   const fonts = fontsQuery.data?.families ?? FALLBACK_FONTS;
   return <>
     <p className="companion-muted">原文与译文可分别设置，修改实时应用到预览，合成视频时使用相同样式。</p>
+    <div className="style-layers">
+      <label><input type="checkbox" checked={currentStyle.show_original !== false} onChange={event => updateStyle({ ...currentStyle, show_original: event.target.checked })} />原文字幕图层</label>
+      <label><input type="checkbox" checked={currentStyle.show_translated !== false} onChange={event => updateStyle({ ...currentStyle, show_translated: event.target.checked })} />译文字幕图层</label>
+    </div>
     <div className="style-templates">
       <label className="ny-field">模板
         <select className="ny-input" value={templatePick} onChange={event => setTemplatePick(event.target.value)}>

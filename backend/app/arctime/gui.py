@@ -155,14 +155,21 @@ def create_app(root: Path, model: Path = DEFAULT_MODEL, threads: int = 4, web_di
         return {"id": manager.submit(None, job_id)}
 
     @app.get("/companion-api/jobs/{job_id}/files/{name}")
-    def file(job_id: str, name: str, download: bool = False):
+    def file(job_id: str, name: str, download: bool = False, alias: str = ""):
         if name.endswith(".vtt"):
             path = manager.artifact(job_id, name.removesuffix(".vtt") + ".srt")
             cues = media.read_subtitles(path) if path.read_text(encoding="utf-8-sig", errors="replace").strip() else []
             content = "WEBVTT\n\n" + re.sub(r"(?<=\d{2}:\d{2}:\d{2}),", ".", media.render_srt(cues))
             return Response(content, media_type="text/vtt")
         path = manager.artifact(job_id, name)
-        return FileResponse(path, filename=path.name if download else None, content_disposition_type="attachment" if download else "inline")
+        # alias 用于下载时的展示文件名（如投稿标题），净化路径分隔符防注入；缺扩展名时补上
+        display = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", alias).strip(" .")[:80] or path.name
+        if alias and not display.lower().endswith(path.suffix.lower()):
+            display += path.suffix
+        # no-cache：同名产物（封面/切片视频/字幕）重新生成后强制浏览器重验证，避免展示旧内容
+        return FileResponse(path, filename=display if download else None,
+                            content_disposition_type="attachment" if download else "inline",
+                            headers={"Cache-Control": "no-cache"})
 
     if (web_dist / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=web_dist / "assets"), name="assets")

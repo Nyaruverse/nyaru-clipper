@@ -83,7 +83,10 @@ class LiveCapture:
                 if attempt < 2 and self.stop.wait(2 ** attempt):
                     break
         finally:
-            self._terminate()
+            try:
+                self._terminate()
+            except Exception:
+                pass
             self.done.set()
 
     def _terminate(self):
@@ -96,8 +99,13 @@ class LiveCapture:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
-        except ProcessLookupError:
-            pass
+        except (ProcessLookupError, OSError, ValueError):
+            # Windows 上 SIGINT 可能无法送达子进程（控制台事件组不存在），直接强杀
+            try:
+                process.kill()
+                process.wait(timeout=5)
+            except (ProcessLookupError, OSError):
+                pass
 
     def chunks(self):
         self.thread = threading.Thread(target=self._record, name='bilibili-capture', daemon=True)

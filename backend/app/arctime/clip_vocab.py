@@ -226,11 +226,38 @@ def _dedupe(ranked: list[tuple[str, float]]) -> list[tuple[str, float]]:
     return picked
 
 
+def _completeness(text: str) -> float:
+    """估计一句字幕作为金句的完整度，0.1–1.0：有句末标点、长度够、不是断句开头。"""
+    body = text.strip()
+    if not body:
+        return .1
+    value = .55
+    if body[-1] in "。！？!?…":
+        value += .30
+    elif body[-1] in "，、,；;：:":
+        value -= .20
+    elif body[-1] in "了呢吧啊呀哦啦嘛":
+        value += .15
+    if len(body) >= 10:
+        value += .10
+    if len(body) >= 18:
+        value += .05
+    if re.match(r"^(然后|所以|但是|那个|就是|因为|而且|还有|不过|其实|嗯|啊|诶|那|这)", body):
+        value -= .15
+    if body.endswith(("的话", "但是", "因为", "所以", "而且", "然后", "不过", "可是", "如果", "虽然", "的")):
+        value -= .15
+    return round(max(.1, min(1.0, value)), 2)
+
+
 def extract_quotes(high: list[tuple[dict, float | None, float | None]], zh_cues: list) -> list[dict]:
-    """用弹幕峰值时刻对齐字幕，挑出可直接当标题用的金句。"""
+    """用弹幕峰值时刻对齐字幕，按「峰值高度 × 文本完整度」单独排序，不跟随切片分数。
+
+    每条候选来自高分切片，但排序只取决于该时刻的弹幕峰值条数与字幕本身的完整度，
+    避免切片分高的段落把一堆断句残片顶到前面。
+    """
     quotes: list[dict] = []
     seen: set[str] = set()
-    for segment, peak, score in high:
+    for segment, peak, height in high:
         if peak is None:
             continue
         start = float(segment.get("start_seconds") or 0)
@@ -245,11 +272,11 @@ def extract_quotes(high: list[tuple[dict, float | None, float | None]], zh_cues:
         if not 4 <= len(text) <= 80 or text in seen:
             continue
         seen.add(text)
+        rank = max(0.0, float(height or 0)) * _completeness(text)
         quotes.append({"text": text, "start": round(float(best.start_seconds), 1),
-                       "score": score})
-        if len(quotes) >= TOP_QUOTES:
-            break
-    return quotes
+                       "score": round(rank, 2)})
+    quotes.sort(key=lambda item: -item["score"])
+    return quotes[:TOP_QUOTES]
 
 
 def session_terms(profile: dict, extracted: list[tuple[str, float]]) -> list[tuple[str, float]]:

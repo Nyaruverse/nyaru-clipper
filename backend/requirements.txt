@@ -26,6 +26,7 @@ numpy==2.4.6
 opencv-python-headless==5.0.0.93
 orjson==3.11.9
 packaging==26.2
+pillow==12.3.0
 platformdirs==4.10.0
 pycparser==3.11
 pydantic==2.13.4

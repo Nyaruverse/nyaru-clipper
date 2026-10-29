@@ -531,6 +531,10 @@ class JobManager:
         combined = topic_clips.get("combined")
         if isinstance(combined, dict) and isinstance(combined.get("file"), str):
             allowed.add(combined["file"])
+        # 切片封面产物（cover-NN.jpg）
+        for segment in self.read_json(directory / "topic_segments.json").get("segments", []):
+            if isinstance(segment, dict) and isinstance(segment.get("cover"), str):
+                allowed.add(segment["cover"])
         # 烧录合成产物（*.burn.{variant}.mp4）
         for clip_burns in self.read_json(directory / "burn.json").get("clips", {}).values():
             if isinstance(clip_burns, dict):

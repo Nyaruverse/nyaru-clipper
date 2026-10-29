@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, Check, Film, ListTree, LogOut, QrCode, RefreshCw, Upload } from "lucide-react";
-import { api, fileUrl, time, parseTime, type BiliAuthStatus, type BiliLoginPoll, type BiliLoginQrCode, type DanmakuSummary, type Job, type TopicClipStore, type TopicSegmentStore } from "./companionApi";
+import { api, coverUrl, fileUrl, time, parseTime, type BiliAuthStatus, type BiliLoginPoll, type BiliLoginQrCode, type DanmakuSummary, type Job, type TopicClipStore, type TopicSegmentStore } from "./companionApi";
 
 type SubtitleMode = "bilingual" | "zh" | "original";
 
@@ -28,6 +28,9 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
   const [selected, setSelected] = useState<number[]>([]);
   const [mode, setMode] = useState<"separate" | "combined">("separate");
   const [variant, setVariant] = useState<SubtitleMode>("bilingual");
+  const [danmakuOn, setDanmakuOn] = useState(true);
+  const [danmakuSize, setDanmakuSize] = useState(40);
+  const [danmakuArea, setDanmakuArea] = useState(60);
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
   const [maxCount, setMaxCount] = useState("");
@@ -130,9 +133,13 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
     },
   });
   const makeClips = useMutation({
-    mutationFn: () => api<TopicClipStore>(`/jobs/${job!.id}/topic-clips`, { indices: selected, mode, variant }),
+    mutationFn: () => api<TopicClipStore>(`/jobs/${job!.id}/topic-clips`, {
+      indices: selected, mode, variant,
+      danmaku: { enabled: danmakuOn, font_size: danmakuSize, area_height: danmakuArea },
+    }),
     onSuccess: data => queryClient.setQueryData(clipsKey, data),
   });
+  // ---- B 站自动投稿已移到顶栏「投稿」页 ----
   const segmentCount = store?.segments?.length ?? 0;
   const allSelected = selected.length > 0 && selected.length === segmentCount;
   const running = makeClips.isPending || clipStore?.state === "running";
@@ -164,7 +171,7 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
         {(store!.range_start != null || store!.range_end != null) && ` · 范围 ${time(store!.range_start ?? 0)}–${store!.range_end != null ? time(store!.range_end) : "结尾"}`}</span>}
     </div>
     <p className="companion-muted">按话题语义自动切分：有翻译时用双语字幕，没有翻译时直接用原文。自动剔除片头片尾、唱歌音乐等环节，只保留杂谈聊天内容（单段约 30 秒–10 分钟，话题相关可合并更长）。时间来自本地字幕，点击时间跳转预览。勾选切片后可批量生成对应视频。</p>
-    <p className="companion-footnote">评分综合弹幕密度、参与人数、刷屏共鸣、说话密度，并叠加响度峰值、笑声/尖叫、热词命中与弹幕峰值形态。热词和可当标题的金句由每次分析时从高分切片的弹幕与字幕中自动提取，并按主播累积画像；静态梗词表已移除，只保留需要人工维护的合规风险词（命中会扣分并标「风险」）。</p>
+    <p className="companion-footnote">评分综合弹幕密度、10 秒峰值密度、参与人数、刷屏共鸣、说话密度，并叠加响度、笑声/尖叫、弹幕形态与热词命中；各维度按本场 95 分位归一后软压缩，再按本场排名微调（−15%~+15%），所以分数只在本场内部可比。评级：95 分以上「推荐」、85–94「高」、75–84「中」、75 以下「低」。热词和可当标题的金句由每次分析时从高分切片的弹幕与字幕中自动提取，并按主播累积画像；静态梗词表已移除，只保留需要人工维护的合规风险词（命中会扣分并标「风险」）。</p>
     {!job && <p className="companion-muted">选择任务后可生成内容切片。</p>}
     {job && job.state !== "completed" && <p className="companion-muted">请等待视频任务完成后再生成内容切片。</p>}
     {job && job.state === "completed" && !hasTranslation && <p className="companion-muted">当前任务没有翻译字幕，将直接基于原文切分；若主播需要翻译，完成翻译后重新生成即可自动切换为双语切片。</p>}
@@ -221,7 +228,7 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
             <img className="topic-login-qr" src={qr.image} alt="B站登录二维码" />
             <div className="topic-login-body">
               <strong>用 B站手机客户端扫码并确认登录</strong>
-              <p className="companion-muted">登录后自动拉取弹幕可拿到完整历史弹幕（长回放不再只返回最新约 1 万条）。Cookie 只保存在本地 data/bilibili-cookies.txt。</p>
+              <p className="companion-muted">登录后自动拉取弹幕可拿到完整历史弹幕（长回放不再只返回最新约 1 万条）。登录 Cookie 保存在本地 data/bilibili-cookies.txt，投稿凭据（含 access_token）另存为 data/bilibili-cookies.json。</p>
               <p className={`topic-login-state is-${qrState?.state ?? "waiting"}`} role="status">
                 {qrState?.state === "success" ? `登录成功${qrState.name ? `：${qrState.name}` : ""}，正在重新拉取弹幕`
                   : qrState?.state === "expired" ? "二维码已过期，请刷新"
@@ -275,6 +282,26 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
               ? "每个切片输出独立视频，并烧录对应时间段字幕"
               : "按勾选先后顺序合并为一个视频，每段开头标注勾选顺序编号"}</span>
           </div>
+          {!!danmaku.data?.count && <div className="topic-bar-row">
+            <span className="topic-bar-label">弹幕</span>
+            <span className="topic-seg">
+              <button type="button" className={danmakuOn ? "is-active" : ""} disabled={running}
+                onClick={() => setDanmakuOn(true)}>开启</button>
+              <button type="button" className={!danmakuOn ? "is-active" : ""} disabled={running}
+                onClick={() => setDanmakuOn(false)}>关闭</button>
+            </span>
+            <label className="topic-dm-field">字号
+              <input className="ny-input topic-dm-num" type="number" min={12} max={96} value={danmakuSize}
+                aria-label="弹幕字号" disabled={running || !danmakuOn}
+                onChange={event => setDanmakuSize(Math.max(12, Math.min(96, Number(event.target.value) || 40)))} />
+            </label>
+            <label className="topic-dm-field">区域高度
+              <input className="ny-input topic-dm-num" type="number" min={10} max={100} value={danmakuArea}
+                aria-label="弹幕区域高度百分比" disabled={running || !danmakuOn}
+                onChange={event => setDanmakuArea(Math.max(10, Math.min(100, Number(event.target.value) || 60)))} />%
+            </label>
+            <span className="topic-bar-hint">速度与 B站一致（约 8 秒穿屏），保留原色；SC 显示为固定卡片</span>
+          </div>}
           <div className="topic-bar-row">
             <button type="button" className="ny-button ny-button--primary"
               disabled={running || selected.length === 0}
@@ -347,7 +374,7 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
                   : String(segment.index + 1).padStart(2, "0")}</span>
                 <div className="topic-heading">
                   <h3>{segment.title}{!segment.analyzed && <span className="topic-badge">未分析</span>}
-                    {segment.score != null && <span className={`topic-score topic-score--${segment.score >= 70 ? "high" : segment.score >= 40 ? "mid" : "low"}`}
+                    {segment.score != null && <span className={`topic-score topic-score--${segment.score >= 95 ? "best" : segment.score >= 85 ? "high" : segment.score >= 75 ? "mid" : "low"}`}
                       title={`弹幕 ${segment.dm_count ?? 0} 条 · ${segment.dm_rate ?? 0} 条/秒 · ${segment.dm_users ?? 0} 人参与`
                         + (segment.dm_peak_time != null ? ` · 10 秒峰值 ${segment.dm_peak ?? 0} 条（${time(segment.dm_peak_time)}）` : "")
                         + (segment.dm_shape ? ` · 形态 ${segment.dm_shape}` : "")
@@ -367,6 +394,16 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
                   {segment.dm_count != null && <> · 弹幕 {segment.dm_count}</>}</span>
               </header>
               <p className="topic-summary">{segment.summary}</p>
+              {segment.post_title && <p className="topic-post-title" onClick={event => event.stopPropagation()}>
+                <span className="topic-post-label">投稿标题</span>
+                <span className="topic-post-text">{segment.post_title}</span>
+                <button type="button" className="topic-copy" title="复制投稿标题"
+                  onClick={() => void navigator.clipboard.writeText(segment.post_title ?? "")}>复制</button>
+              </p>}
+              {segment.cover && job && <div className="topic-cover" onClick={event => event.stopPropagation()}>
+                <img src={coverUrl(job.id, segment)} alt={segment.cover_text || "切片封面"} loading="lazy" />
+                <a className="topic-cover-download" href={fileUrl(job.id, segment.cover, true)} title="下载封面">下载封面</a>
+              </div>}
               {!!segment.hot_words?.length && <div className="topic-hotwords" onClick={event => event.stopPropagation()}>
                 {segment.hot_words.map(term => <span className="topic-hotword" key={term}>{term}</span>)}
               </div>}
@@ -376,7 +413,12 @@ export function TopicSegmentsPanel({ job, onSeek }: { job?: Job; onSeek: (second
               </details>
               {item?.state === "completed" && item.file && job && <div className="topic-product" onClick={event => event.stopPropagation()}>
                 <video controls preload="none" src={fileUrl(job.id, item.file)} />
-                <a className="ny-button" href={fileUrl(job.id, item.file, true)}><ArrowDownToLine size={14} />下载 {item.file}</a>
+                {/* 有封面时打包 zip（解压即得同名文件夹：视频+封面）；无封面时单文件下载，文件名用投稿标题 */}
+                <a className="ny-button" href={segment.cover
+                  ? `/companion-api/jobs/${job.id}/topic-clips/${segment.index}/bundle`
+                  : `${fileUrl(job.id, item.file, true)}&alias=${encodeURIComponent(segment.post_title || "")}`}
+                  title={`${segment.post_title || item.file}${segment.cover ? ".zip（解压后含封面）" : ".mp4"}`}>
+                  <ArrowDownToLine size={14} />下载切片{segment.cover ? "（zip 含封面）" : ""}</a>
               </div>}
               {item?.state === "failed" && <p className="companion-error" role="alert">该切片生成失败：{item.error}</p>}
             </article>;
